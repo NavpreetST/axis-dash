@@ -69,7 +69,7 @@
     </form>
 
     <div class="text-center font-mono text-[10px] text-text-muted">
-      Secured session via AES-256 standard protocols.
+      Session token stored locally for authenticated access.
     </div>
   </div>
 </main>

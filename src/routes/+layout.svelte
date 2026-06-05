@@ -42,7 +42,7 @@
     const unsubscribePage = page.subscribe(() => {
       checkAuth();
       // Reset active tab to dashboard when changing route so child content is visible
-      if ($page.url.pathname === '/orb') {
+      if ($page.url.pathname === base + '/orb') {
         activeTab = 'orb';
       } else {
         activeTab = 'dashboard';
@@ -188,7 +188,7 @@
 
         <!-- Tablet / Mobile Tab switch controls -->
         <div
-          class="flex items-center rounded-xl border border-hairline bg-bg-void/50 p-0.5 font-mono text-[10px] sm:hidden lg:hidden"
+          class="flex items-center rounded-xl border border-hairline bg-bg-void/50 p-0.5 font-mono text-[10px] lg:hidden"
         >
           <button
             onclick={() => (activeTab = 'dashboard')}
@@ -315,7 +315,7 @@
 
           <!-- Chat messages viewport -->
           <div class="flex flex-1 scrollbar-thin flex-col gap-3 overflow-y-auto p-4">
-            {#each $chat as msg (msg.timestamp + '-' + msg.text)}
+            {#each $chat as msg, idx (`${msg.timestamp}-${msg.sender}-${msg.text}-${idx}`)}
               <div class="flex flex-col gap-1 {msg.sender === 'you' ? 'items-end' : 'items-start'}">
                 <span class="font-mono text-[8px] text-text-muted"
                   >{msg.sender === 'you' ? 'YOU' : 'AEGIS'} • {msg.timestamp}</span
