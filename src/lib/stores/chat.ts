@@ -1,6 +1,7 @@
 import { writable } from 'svelte/store';
 
 export interface ChatMessage {
+  id: string;
   sender: 'aegis' | 'you';
   text: string;
   timestamp: string;
@@ -9,6 +10,7 @@ export interface ChatMessage {
 
 const initialMessages: ChatMessage[] = [
   {
+    id: 'seed-chat-1',
     sender: 'aegis',
     text: 'Coherence stable at 0.91. Drift is soft, within tolerance. Nothing urgent on the board.',
     timestamp: '18:04'
@@ -34,19 +36,36 @@ const createChatStore = () => {
       hour12: false
     });
 
+    const userMsgId =
+      typeof crypto !== 'undefined' && crypto.randomUUID
+        ? crypto.randomUUID()
+        : `chat-${Math.random().toString(36).substring(2, 9)}`;
+    const aegisReplyId =
+      typeof crypto !== 'undefined' && crypto.randomUUID
+        ? crypto.randomUUID()
+        : `chat-${Math.random().toString(36).substring(2, 9)}`;
+
     // Append user message
-    update((messages) => [...messages, { sender: 'you', text, timestamp: time }]);
+    update((messages) => [...messages, { id: userMsgId, sender: 'you', text, timestamp: time }]);
 
     // Trigger mock Aegis reply after a short delay
     setTimeout(() => {
       const reply = mockAegisReplies[Math.floor(Math.random() * mockAegisReplies.length)];
-      update((messages) => [...messages, { sender: 'aegis', text: reply, timestamp: time }]);
+      update((messages) => [
+        ...messages,
+        { id: aegisReplyId, sender: 'aegis', text: reply, timestamp: time }
+      ]);
     }, 1500);
+  };
+
+  const clearHistory = () => {
+    update(() => []);
   };
 
   return {
     subscribe,
-    sendMessage
+    sendMessage,
+    clearHistory
   };
 };
 

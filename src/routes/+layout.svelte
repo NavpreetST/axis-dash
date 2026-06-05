@@ -315,7 +315,7 @@
 
           <!-- Chat messages viewport -->
           <div class="flex flex-1 scrollbar-thin flex-col gap-3 overflow-y-auto p-4">
-            {#each $chat as msg, idx (`${msg.timestamp}-${msg.sender}-${msg.text}-${idx}`)}
+            {#each $chat as msg (msg.id)}
               <div class="flex flex-col gap-1 {msg.sender === 'you' ? 'items-end' : 'items-start'}">
                 <span class="font-mono text-[8px] text-text-muted"
                   >{msg.sender === 'you' ? 'YOU' : 'AEGIS'} • {msg.timestamp}</span

@@ -1,6 +1,7 @@
 import { writable } from 'svelte/store';
 
 export interface LogLine {
+  id: string;
   timestamp: string;
   source: string;
   type: 'info' | 'success' | 'warning' | 'error';
@@ -9,24 +10,28 @@ export interface LogLine {
 
 const initialLogs: LogLine[] = [
   {
+    id: 'seed-log-1',
     timestamp: '14:22:08',
     source: 'tick',
     type: 'info',
     message: 'orb pulse • coherence 0.912 • drift 0.04'
   },
   {
+    id: 'seed-log-2',
     timestamp: '14:22:06',
     source: 'mem',
     type: 'success',
     message: 'embedding flushed • 1,284 vec • 38ms'
   },
   {
+    id: 'seed-log-3',
     timestamp: '14:22:03',
     source: 'sys',
     type: 'info',
     message: 'gemini ok • groq ok • rpd 37/240'
   },
   {
+    id: 'seed-log-4',
     timestamp: '14:21:58',
     source: 'task',
     type: 'success',
@@ -34,7 +39,7 @@ const initialLogs: LogLine[] = [
   }
 ];
 
-const mockMessages: Omit<LogLine, 'timestamp'>[] = [
+const mockMessages: Omit<LogLine, 'timestamp' | 'id'>[] = [
   { source: 'tick', type: 'info', message: 'orb pulse • coherence 0.914 • drift 0.03' },
   { source: 'sys', type: 'info', message: 'model check • latency 182ms' },
   { source: 'mem', type: 'success', message: 'episodic memory consolidation finished' },
@@ -48,9 +53,13 @@ const createLogsStore = () => {
   const { subscribe, update } = writable<LogLine[]>(initialLogs);
   let timer: ReturnType<typeof setTimeout> | null = null;
 
-  const addLog = (log: Omit<LogLine, 'timestamp'>) => {
+  const addLog = (log: Omit<LogLine, 'timestamp' | 'id'>) => {
     const time = new Date().toLocaleTimeString('en-US', { hour12: false });
-    update((logs) => [{ timestamp: time, ...log }, ...logs].slice(0, 100));
+    const id =
+      typeof crypto !== 'undefined' && crypto.randomUUID
+        ? crypto.randomUUID()
+        : `log-${Math.random().toString(36).substring(2, 9)}`;
+    update((logs) => [{ id, timestamp: time, ...log }, ...logs].slice(0, 100));
   };
 
   const start = () => {
@@ -77,11 +86,16 @@ const createLogsStore = () => {
     }
   };
 
+  const clearLogs = () => {
+    update(() => []);
+  };
+
   return {
     subscribe,
     start,
     stop,
-    addLog
+    addLog,
+    clearLogs
   };
 };
 

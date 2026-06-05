@@ -149,7 +149,7 @@
         <span class="font-mono text-[10px] text-text-muted">stream: /var/helios/aegis.log</span>
       </div>
       <div class="flex flex-1 scrollbar-thin flex-col gap-1 overflow-y-auto pr-2 font-mono text-xs">
-        {#each $logs as log, idx (`${log.timestamp}-${log.source}-${log.message}-${idx}`)}
+        {#each $logs as log (log.id)}
           <div class="flex gap-3 rounded p-0.5 leading-relaxed transition hover:bg-white/5">
             <span class="shrink-0 text-text-muted">{log.timestamp}</span>
             <span
