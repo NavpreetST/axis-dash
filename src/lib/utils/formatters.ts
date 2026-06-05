@@ -37,7 +37,7 @@ export function rpdOverBudget(used: number, budget: number): boolean {
  */
 export function rpdPercent(used: number, budget: number): number {
   if (budget <= 0) return 0;
-  return Math.min(100, (used / budget) * 100);
+  return Math.max(0, Math.min(100, (used / budget) * 100));
 }
 
 /**

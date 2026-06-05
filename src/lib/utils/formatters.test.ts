@@ -108,6 +108,10 @@ describe('rpdPercent', () => {
   it('returns 100 when exactly at budget', () => {
     expect(rpdPercent(240, 240)).toBe(100);
   });
+
+  it('clamps to 0 when used is negative', () => {
+    expect(rpdPercent(-10, 240)).toBe(0);
+  });
 });
 
 // ── formatTickRate ──────────────────────────────────────────────

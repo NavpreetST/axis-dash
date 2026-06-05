@@ -173,7 +173,7 @@
             <span class="text-hairline">•</span>
             <span
               >RATE: <strong class="text-text-primary"
-                >{$telemetry.connected ? formatTickRate($telemetry.tick_rate) : '0'} tick/s</strong
+                >{$telemetry.connected ? formatTickRate($telemetry.tick_rate) : '--'} tick/s</strong
               ></span
             >
           </div>
