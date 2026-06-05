@@ -7,7 +7,8 @@
     formatTickRate,
     pamThreshold,
     rpdPercent,
-    rpdOverBudget
+    rpdOverBudget,
+    NeuroBusPanel
   } from '$lib';
   import KpiCard from '$lib/components/KpiCard.svelte';
 
@@ -107,29 +108,7 @@
       >
     </div>
 
-    <div class="grid flex-1 grid-cols-1 items-center gap-6 md:grid-cols-2">
-      {#each Object.entries($telemetry.neurobus) as [key, val] (key)}
-        <div class="flex flex-col gap-2">
-          <div class="flex justify-between font-mono text-xs">
-            <span class="text-text-muted capitalize">{key}</span>
-            <span class="text-text-primary">{val}</span>
-          </div>
-          <div class="h-2.5 w-full overflow-hidden rounded-full bg-hairline">
-            <div
-              class="h-full rounded-full transition-all duration-500
-                {key === 'reward' ? 'bg-accent-amber' : ''}
-                {key === 'novelty' ? 'bg-signal-blue' : ''}
-                {key === 'attention' ? 'bg-text-primary' : ''}
-                {key === 'patience' ? 'bg-accent-violet' : ''}
-                {key === 'threat' ? 'bg-signal-red' : ''}
-                {key === 'trust' ? 'bg-signal-green' : ''}
-              "
-              style="width: {val * 100}%"
-            ></div>
-          </div>
-        </div>
-      {/each}
-    </div>
+    <NeuroBusPanel />
   </div>
 
   <!-- Live Log Panel -->

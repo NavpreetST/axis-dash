@@ -48,3 +48,41 @@ export function formatTickRate(rate: number): string {
   if (!Number.isFinite(rate)) return '--';
   return rate.toFixed(1);
 }
+
+export interface SparklinePoint {
+  x: number;
+  y: number;
+}
+
+/**
+ * Scale an array of numbers into x, y coordinates for a sparkline SVG.
+ * Normalizes values based on the min/max of the data array.
+ * Centers flat or single-value datasets vertically.
+ */
+export function scaleSparkline(data: number[], width: number, height: number): SparklinePoint[] {
+  if (!data || data.length === 0) return [];
+  const n = data.length;
+
+  if (n === 1) {
+    return [{ x: width / 2, y: height / 2 }];
+  }
+
+  let min = data[0];
+  let max = data[0];
+  for (let i = 1; i < n; i++) {
+    const v = data[i];
+    if (v < min) min = v;
+    if (v > max) max = v;
+  }
+
+  const range = max - min;
+  const points: SparklinePoint[] = [];
+
+  for (let i = 0; i < n; i++) {
+    const x = (i / (n - 1)) * width;
+    const y = range === 0 ? height / 2 : height - ((data[i] - min) / range) * height;
+    points.push({ x: +x.toFixed(2), y: +y.toFixed(2) });
+  }
+
+  return points;
+}
