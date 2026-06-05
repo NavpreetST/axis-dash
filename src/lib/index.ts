@@ -6,5 +6,7 @@ export {
   formatTickRate,
   pamThreshold,
   rpdOverBudget,
-  rpdPercent
+  rpdPercent,
+  scaleSparkline
 } from './utils/formatters';
+export { default as NeuroBusPanel } from './components/NeuroBusPanel.svelte';
