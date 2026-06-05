@@ -39,3 +39,12 @@ export function rpdPercent(used: number, budget: number): number {
   if (budget <= 0) return 0;
   return Math.min(100, (used / budget) * 100);
 }
+
+/**
+ * Format a tick rate value to exactly 1 decimal place.
+ * Prevents layout shift from variable-width numbers (e.g. 9.8 vs 10.0123).
+ */
+export function formatTickRate(rate: number): string {
+  if (!Number.isFinite(rate)) return '--';
+  return rate.toFixed(1);
+}

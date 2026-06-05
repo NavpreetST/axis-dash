@@ -1,6 +1,14 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
-  import { telemetry, logs, formatUptime, pamThreshold, rpdPercent, rpdOverBudget } from '$lib';
+  import {
+    telemetry,
+    logs,
+    formatUptime,
+    formatTickRate,
+    pamThreshold,
+    rpdPercent,
+    rpdOverBudget
+  } from '$lib';
   import KpiCard from '$lib/components/KpiCard.svelte';
 
   // Start the store loops on mount
@@ -16,6 +24,7 @@
 
   // ── Reactive derived values for KPI cards ────────────────────
   let uptimeDisplay = $derived(formatUptime($telemetry.uptime_seconds));
+  let tickDisplay = $derived(formatTickRate($telemetry.tick_rate));
   let pamBucket = $derived(pamThreshold($telemetry.pam));
   let rpdPct = $derived(rpdPercent($telemetry.rpd_used, $telemetry.rpd_budget));
   let rpdOver = $derived(rpdOverBudget($telemetry.rpd_used, $telemetry.rpd_budget));
@@ -58,7 +67,7 @@
     <!-- Tick Rate -->
     <KpiCard
       label="Tick Rate"
-      value={String($telemetry.tick_rate)}
+      value={tickDisplay}
       unit="tick/s"
       subtitle="rolling 60s avg"
       connected={$telemetry.connected}

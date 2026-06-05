@@ -3,7 +3,7 @@
   import { page } from '$app/stores';
   import { goto } from '$app/navigation';
   import { base } from '$app/paths';
-  import { telemetry, chat } from '$lib';
+  import { telemetry, chat, formatUptime, formatTickRate } from '$lib';
   import './layout.css';
 
   // Import Lucide Icons
@@ -54,13 +54,6 @@
       unsubscribePage();
     };
   });
-
-  // Uptime formatting helper
-  function formatUptime(seconds: number): string {
-    const h = Math.floor(seconds / 3600);
-    const m = Math.floor((seconds % 3600) / 60);
-    return `${h}h ${m}m`;
-  }
 
   function handleSendChat() {
     if (!chatInput.trim()) return;
@@ -180,7 +173,7 @@
             <span class="text-hairline">•</span>
             <span
               >RATE: <strong class="text-text-primary"
-                >{$telemetry.connected ? $telemetry.tick_rate : '0'} tick/s</strong
+                >{$telemetry.connected ? formatTickRate($telemetry.tick_rate) : '0'} tick/s</strong
               ></span
             >
           </div>

@@ -1,5 +1,11 @@
 import { describe, it, expect } from 'vitest';
-import { formatUptime, pamThreshold, rpdOverBudget, rpdPercent } from './formatters';
+import {
+  formatUptime,
+  pamThreshold,
+  rpdOverBudget,
+  rpdPercent,
+  formatTickRate
+} from './formatters';
 
 // ── formatUptime ────────────────────────────────────────────────
 describe('formatUptime', () => {
@@ -101,5 +107,32 @@ describe('rpdPercent', () => {
 
   it('returns 100 when exactly at budget', () => {
     expect(rpdPercent(240, 240)).toBe(100);
+  });
+});
+
+// ── formatTickRate ──────────────────────────────────────────────
+describe('formatTickRate', () => {
+  it('formats to exactly 1 decimal place', () => {
+    expect(formatTickRate(9.8)).toBe('9.8');
+  });
+
+  it('pads whole numbers with .0', () => {
+    expect(formatTickRate(10)).toBe('10.0');
+  });
+
+  it('truncates extra decimals', () => {
+    expect(formatTickRate(9.8123)).toBe('9.8');
+  });
+
+  it('formats zero', () => {
+    expect(formatTickRate(0)).toBe('0.0');
+  });
+
+  it('returns -- for NaN', () => {
+    expect(formatTickRate(NaN)).toBe('--');
+  });
+
+  it('returns -- for Infinity', () => {
+    expect(formatTickRate(Infinity)).toBe('--');
   });
 });
