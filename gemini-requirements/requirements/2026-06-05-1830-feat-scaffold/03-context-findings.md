@@ -1,6 +1,7 @@
 # Technical Context & Findings
 
 ## Architecture & Tech Stack
+
 - **Framework**: SvelteKit (Svelte 5)
 - **Language**: TypeScript (Strict Mode)
 - **Styling**: Tailwind CSS v4.0 (CSS-first, Vite-native plugin, no `tailwind.config.js`)
@@ -8,6 +9,7 @@
 - **Linter & Formatter**: ESLint + Prettier
 
 ## Proposed Directory Structure (to be created by scaffold)
+
 ```
 /
 ├── .svelte-kit/
@@ -34,7 +36,9 @@
 ```
 
 ## Mock Telemetry Store Implementation (Task 1 Scope)
+
 To simulate the backend WS and SSE streams client-side, we will implement:
+
 1. **`telemetry.ts`**:
    - Updates every 1000ms (1 Hz) to simulate the FastAPI `/state` payload.
    - Emits mock parameters:
@@ -53,5 +57,6 @@ To simulate the backend WS and SSE streams client-side, we will implement:
    - Generates simulated delayed agent replies when a new user message is submitted to mimic the `/chat` WebSocket.
 
 ## External Integration & Deployment
+
 - Automated deployments via Vercel GitHub integration.
 - Since we are in `C:\Users\Navdeep\Desktop\Code\helios-dash`, we will initialize the project directly here.

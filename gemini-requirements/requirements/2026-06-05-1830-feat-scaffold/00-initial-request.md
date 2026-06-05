@@ -1,6 +1,7 @@
 # Initial Request: Task 1 (feat/scaffold)
 
 ## User Input
+
 - **Dashboard name:** AXIS — Aegis eXecution Intelligence Surface
 - **GitHub owner:** NavpreetST — repo name: `NavpreetST/axis-dash`
 - **Mock backend:** Not running yet — wire the UI to hardcoded mock data first, connect the real FastAPI backend later.

@@ -17,14 +17,14 @@ This is a **monitoring operator tool**, not a marketing page. Every element on s
 
 Pick one — update repo name, page titles, and the top bar once decided. Until then the codebase uses `helios-dash` and the UI header reads **HELIOS**.
 
-| Acronym | Expansion | Vibe |
-| --- | --- | --- |
-| **AXIS** | Aegis eXecution Intelligence Surface | Clean, sharp, operational |
-| **NOVA** | Neural Operations & Visibility Aggregator | Warm, expansive |
-| **PULSE** | Process & Unit Live Signal Environment | Alive, heartbeat feel |
-| **ORBIT** | Operational Runtime & Brain Intelligence Terminal | Spatial, cool |
-| **NEXUS** | Neural EXecution & Understanding Surface | Connected, central |
-| **VISTA** | Visual Intelligence & Status Telemetry Aggregator | Clear, panoramic |
+| Acronym   | Expansion                                         | Vibe                      |
+| --------- | ------------------------------------------------- | ------------------------- |
+| **AXIS**  | Aegis eXecution Intelligence Surface              | Clean, sharp, operational |
+| **NOVA**  | Neural Operations & Visibility Aggregator         | Warm, expansive           |
+| **PULSE** | Process & Unit Live Signal Environment            | Alive, heartbeat feel     |
+| **ORBIT** | Operational Runtime & Brain Intelligence Terminal | Spatial, cool             |
+| **NEXUS** | Neural EXecution & Understanding Surface          | Connected, central        |
+| **VISTA** | Visual Intelligence & Status Telemetry Aggregator | Clear, panoramic          |
 
 ---
 
@@ -37,18 +37,18 @@ Decisions locked 2026-06-05. Do not change framework, host, or repo type without
 
 </aside>
 
-| Layer | Choice | Notes |
-| --- | --- | --- |
-| Framework | **SvelteKit** (Vite + TypeScript, adapter-vercel) | No React. No Next.js. |
-| Hosting | **Vercel** Hobby (deploy from GitHub) | Per-PR preview URLs automatic |
-| Repo | **GitHub** public repo | Verify owner: NavpreetST |
-| Styling | **Tailwind CSS** | Design tokens as CSS vars |
-| Charts | **uPlot** (or Chart.js if simpler) | Lightweight, fast redraws |
-| 3D Orb | **Three.js via Threlte** | Deferred — placeholder panel for now |
-| Animation | **Motion** (ex-Framer Motion) + Svelte transitions + GSAP | Respect prefers-reduced-motion |
-| Transport | Native WebSocket + SSE + fetch | No socket.io |
-| Auth | Single bearer token (env var `HELIOS_TOKEN`) | Route guard on all pages except /login |
-| Code review | **CodeRabbit** (free, public repos) + Aegis human gate | Install on repo before first PR |
+| Layer       | Choice                                                    | Notes                                  |
+| ----------- | --------------------------------------------------------- | -------------------------------------- |
+| Framework   | **SvelteKit** (Vite + TypeScript, adapter-vercel)         | No React. No Next.js.                  |
+| Hosting     | **Vercel** Hobby (deploy from GitHub)                     | Per-PR preview URLs automatic          |
+| Repo        | **GitHub** public repo                                    | Verify owner: NavpreetST               |
+| Styling     | **Tailwind CSS**                                          | Design tokens as CSS vars              |
+| Charts      | **uPlot** (or Chart.js if simpler)                        | Lightweight, fast redraws              |
+| 3D Orb      | **Three.js via Threlte**                                  | Deferred — placeholder panel for now   |
+| Animation   | **Motion** (ex-Framer Motion) + Svelte transitions + GSAP | Respect prefers-reduced-motion         |
+| Transport   | Native WebSocket + SSE + fetch                            | No socket.io                           |
+| Auth        | Single bearer token (env var `HELIOS_TOKEN`)              | Route guard on all pages except /login |
+| Code review | **CodeRabbit** (free, public repos) + Aegis human gate    | Install on repo before first PR        |
 
 ---
 
@@ -65,19 +65,19 @@ The **Lovable cockpit screenshot** is the target visual. Build to match it. Do n
 
 ### Colour tokens
 
-| Token | Hex | Use |
-| --- | --- | --- |
-| `bg/void` | `#16141E` | App background (warm dark navy) |
-| `bg/panel` | `#181B26` | Card surface — glass effect, ~75% opacity |
-| `hairline` | `#2A3145` | 1px card borders, 40% opacity |
-| `accent/cyan` | `#5FD0E0` | Primary accent, live glow, progress bars |
+| Token           | Hex       | Use                                       |
+| --------------- | --------- | ----------------------------------------- |
+| `bg/void`       | `#16141E` | App background (warm dark navy)           |
+| `bg/panel`      | `#181B26` | Card surface — glass effect, ~75% opacity |
+| `hairline`      | `#2A3145` | 1px card borders, 40% opacity             |
+| `accent/cyan`   | `#5FD0E0` | Primary accent, live glow, progress bars  |
 | `accent/violet` | `#9B8CE0` | Secondary accent, gradient pair with cyan |
-| `accent/amber` | `#F0B95C` | Reward signal, warnings, RPD bar |
-| `text/primary` | `#F0ECE3` | Body text — warm off-white |
-| `text/muted` | `#938E9E` | Labels, panel titles, captions |
-| `signal/green` | `#4FC78A` | Trust, healthy states |
-| `signal/red` | `#E86A6A` | Threat, errors |
-| `signal/blue` | `#3B82F6` | Novelty |
+| `accent/amber`  | `#F0B95C` | Reward signal, warnings, RPD bar          |
+| `text/primary`  | `#F0ECE3` | Body text — warm off-white                |
+| `text/muted`    | `#938E9E` | Labels, panel titles, captions            |
+| `signal/green`  | `#4FC78A` | Trust, healthy states                     |
+| `signal/red`    | `#E86A6A` | Threat, errors                            |
+| `signal/blue`   | `#3B82F6` | Novelty                                   |
 
 ### Typography
 
@@ -96,17 +96,17 @@ The **Lovable cockpit screenshot** is the target visual. Build to match it. Do n
 
 ## Routes
 
-| Route | Screen | v1 scope |
-| --- | --- | --- |
-| `/` | **Cockpit** | Full build — see panel inventory below |
-| `/roadmap` | **Roadmap** | Placeholder page (data source TBD) |
-| `/todo` | **Todo** | Placeholder page (data source TBD) |
-| `/orb` | **Neural Orb** | Placeholder — full-bleed dark + "orb offline" text |
-| `/memory` | **Memory** | Placeholder page |
-| `/logs` | **Logs** | Full log stream with filters (reuse Live Log component) |
-| `/drift` | **Drift** | Placeholder page |
-| `/commits` | **Commits** | Placeholder page |
-| `/login` | **Login** | Bearer token entry — no route guard here |
+| Route      | Screen         | v1 scope                                                |
+| ---------- | -------------- | ------------------------------------------------------- |
+| `/`        | **Cockpit**    | Full build — see panel inventory below                  |
+| `/roadmap` | **Roadmap**    | Placeholder page (data source TBD)                      |
+| `/todo`    | **Todo**       | Placeholder page (data source TBD)                      |
+| `/orb`     | **Neural Orb** | Placeholder — full-bleed dark + "orb offline" text      |
+| `/memory`  | **Memory**     | Placeholder page                                        |
+| `/logs`    | **Logs**       | Full log stream with filters (reuse Live Log component) |
+| `/drift`   | **Drift**      | Placeholder page                                        |
+| `/commits` | **Commits**    | Placeholder page                                        |
+| `/login`   | **Login**      | Bearer token entry — no route guard here                |
 
 SvelteKit client-side routing. Each route = its own `+page.svelte`. All routes except `/login` require a valid token in localStorage.
 
@@ -116,53 +116,53 @@ SvelteKit client-side routing. Each route = its own `+page.svelte`. All routes e
 
 All endpoints served by the **FastAPI mock backend** (already scaffolded).
 
-| Endpoint | Type | Notes |
-| --- | --- | --- |
-| `WS /state` | WebSocket | 1 Hz state snapshot — uptime, tick, PAM, RPD, neurobus, hidden_state |
-| `WS /chat` | WebSocket | Chat send/receive |
-| `SSE /logs` | Server-Sent Events | Streaming log line objects |
-| `GET /api/commits` | REST | Recent commit list |
-| `GET /api/roadmap` | REST | Roadmap items (source TBD) |
-| `GET /api/todo` | REST | Todo items |
-| `GET /api/memory` | REST | Memory summary |
-| `GET /api/diagnostic` | REST | System diagnostic |
-| `GET /api/drift` | REST | Drift report (claims vs reality) |
+| Endpoint              | Type               | Notes                                                                |
+| --------------------- | ------------------ | -------------------------------------------------------------------- |
+| `WS /state`           | WebSocket          | 1 Hz state snapshot — uptime, tick, PAM, RPD, neurobus, hidden_state |
+| `WS /chat`            | WebSocket          | Chat send/receive                                                    |
+| `SSE /logs`           | Server-Sent Events | Streaming log line objects                                           |
+| `GET /api/commits`    | REST               | Recent commit list                                                   |
+| `GET /api/roadmap`    | REST               | Roadmap items (source TBD)                                           |
+| `GET /api/todo`       | REST               | Todo items                                                           |
+| `GET /api/memory`     | REST               | Memory summary                                                       |
+| `GET /api/diagnostic` | REST               | System diagnostic                                                    |
+| `GET /api/drift`      | REST               | Drift report (claims vs reality)                                     |
 
 Auth: `Authorization: Bearer <token>` on all requests. Token stored in localStorage after login.
 
 ### `/state` WebSocket payload fields
 
-| Field | Type | Notes |
-| --- | --- | --- |
-| `uptime_seconds` | number | Format as `14h 22m` in UI |
-| `tick_rate` | float | Rolling 60s average |
-| `pam` | float 0–1 | Green ≥ 0.90 / amber 0.83–0.89 / red < 0.83 |
-| `rpd_used` | int | Gemini calls used today |
-| `rpd_budget` | int | Always 240 at Phase 0 |
-| `provider` | string | Active renderer: `gemini-2.5-flash`, `groq`, or `template` |
-| `neurobus.reward` | float 0–1 | Gold bar |
-| `neurobus.novelty` | float 0–1 | Blue bar |
-| `neurobus.attention` | float 0–1 | Off-white bar |
-| `neurobus.patience` | float 0–1 | Violet bar |
-| `neurobus.threat` | float 0–1 | Red bar |
-| `neurobus.trust` | float 0–1 | Green bar |
-| `hidden_state` | float[][] | 8×8 matrix for heatmap (later phase) |
-| `connected` | bool | False = show daemon-offline state |
+| Field                | Type      | Notes                                                      |
+| -------------------- | --------- | ---------------------------------------------------------- |
+| `uptime_seconds`     | number    | Format as `14h 22m` in UI                                  |
+| `tick_rate`          | float     | Rolling 60s average                                        |
+| `pam`                | float 0–1 | Green ≥ 0.90 / amber 0.83–0.89 / red < 0.83                |
+| `rpd_used`           | int       | Gemini calls used today                                    |
+| `rpd_budget`         | int       | Always 240 at Phase 0                                      |
+| `provider`           | string    | Active renderer: `gemini-2.5-flash`, `groq`, or `template` |
+| `neurobus.reward`    | float 0–1 | Gold bar                                                   |
+| `neurobus.novelty`   | float 0–1 | Blue bar                                                   |
+| `neurobus.attention` | float 0–1 | Off-white bar                                              |
+| `neurobus.patience`  | float 0–1 | Violet bar                                                 |
+| `neurobus.threat`    | float 0–1 | Red bar                                                    |
+| `neurobus.trust`     | float 0–1 | Green bar                                                  |
+| `hidden_state`       | float[][] | 8×8 matrix for heatmap (later phase)                       |
+| `connected`          | bool      | False = show daemon-offline state                          |
 
 ---
 
 ## Panel inventory — Cockpit v1
 
-| Panel | Data | Key UI elements |
-| --- | --- | --- |
-| **KPI — Uptime** | `uptime_seconds` | Big mono number formatted `14h 22m`, subtitle "since last restart" |
-| **KPI — Tick rate** | `tick_rate` | Big number + "tick/s", subtitle "rolling 60s avg" |
-| **KPI — PAM** | `pam` | Big number + thin gradient progress bar, colour changes by threshold |
-| **KPI — RPD** | `rpd_used / rpd_budget` | Fraction `37 / 240`  • thin amber progress bar |
-| **Signal State** (hero) | `neurobus.*` | 6 horizontal gauge bars, colour-coded, label left, value right |
-| **System** | `provider`, `rpd_used` | Provider rows with status pill (ok / standby / error) + RPD usage bar |
-| **Live Log** | `SSE /logs` | Streaming mono lines — timestamp + `[source]` tag + colour by type + filter dropdown |
-| **Aegis Chat** | `WS /chat` | Bubble list (Aegis vs You), thin coloured affect border, 📎 memory chip, prompt chips, mic + send input |
+| Panel                   | Data                    | Key UI elements                                                                                         |
+| ----------------------- | ----------------------- | ------------------------------------------------------------------------------------------------------- |
+| **KPI — Uptime**        | `uptime_seconds`        | Big mono number formatted `14h 22m`, subtitle "since last restart"                                      |
+| **KPI — Tick rate**     | `tick_rate`             | Big number + "tick/s", subtitle "rolling 60s avg"                                                       |
+| **KPI — PAM**           | `pam`                   | Big number + thin gradient progress bar, colour changes by threshold                                    |
+| **KPI — RPD**           | `rpd_used / rpd_budget` | Fraction `37 / 240` • thin amber progress bar                                                           |
+| **Signal State** (hero) | `neurobus.*`            | 6 horizontal gauge bars, colour-coded, label left, value right                                          |
+| **System**              | `provider`, `rpd_used`  | Provider rows with status pill (ok / standby / error) + RPD usage bar                                   |
+| **Live Log**            | `SSE /logs`             | Streaming mono lines — timestamp + `[source]` tag + colour by type + filter dropdown                    |
+| **Aegis Chat**          | `WS /chat`              | Bubble list (Aegis vs You), thin coloured affect border, 📎 memory chip, prompt chips, mic + send input |
 
 ---
 
@@ -221,17 +221,17 @@ One task = one branch = one PR. Keep PRs small and focused.
 
 ### Suggested first sprint (Tasks 1–9)
 
-| # | Branch | Scope |
-| --- | --- | --- |
-| 1 | `feat/scaffold` | SvelteKit project, Tailwind, adapter-vercel, folder structure, mock WS server |
-| 2 | `feat/layout-shell` | App shell: left nav rail, top bar, route layout, design token CSS vars, theme |
-| 3 | `feat/kpi-cards` | 4 KPI cards wired to `/state` WS — uptime, tick, PAM, RPD |
-| 4 | `feat/signal-state` | Signal State hero panel — 6 gauge bars wired to `neurobus.*` |
-| 5 | `feat/system-panel` | System card — provider rows, status pills, RPD bar |
-| 6 | `feat/live-log` | SSE log stream, colour-coded by type, filter dropdown |
-| 7 | `feat/chat` | Aegis chat panel — WS, bubbles, affect borders, prompt chips, input |
-| 8 | `feat/login` | Login page + bearer token route guard |
-| 9 | `feat/placeholder-routes` | Skeleton pages for /roadmap /todo /memory /drift /commits /orb |
+| #   | Branch                    | Scope                                                                         |
+| --- | ------------------------- | ----------------------------------------------------------------------------- |
+| 1   | `feat/scaffold`           | SvelteKit project, Tailwind, adapter-vercel, folder structure, mock WS server |
+| 2   | `feat/layout-shell`       | App shell: left nav rail, top bar, route layout, design token CSS vars, theme |
+| 3   | `feat/kpi-cards`          | 4 KPI cards wired to `/state` WS — uptime, tick, PAM, RPD                     |
+| 4   | `feat/signal-state`       | Signal State hero panel — 6 gauge bars wired to `neurobus.*`                  |
+| 5   | `feat/system-panel`       | System card — provider rows, status pills, RPD bar                            |
+| 6   | `feat/live-log`           | SSE log stream, colour-coded by type, filter dropdown                         |
+| 7   | `feat/chat`               | Aegis chat panel — WS, bubbles, affect borders, prompt chips, input           |
+| 8   | `feat/login`              | Login page + bearer token route guard                                         |
+| 9   | `feat/placeholder-routes` | Skeleton pages for /roadmap /todo /memory /drift /commits /orb                |
 
 ### Vercel setup steps
 
@@ -245,24 +245,24 @@ One task = one branch = one PR. Keep PRs small and focused.
 
 ## Handoff checklist
 
-- [ ]  Pick a dashboard name from the acronym list and update repo + UI
-- [ ]  Confirm GitHub repo owner (NavpreetST vs NavpreetD) and create `<name>-dash` public repo
-- [ ]  Share the Lovable cockpit screenshot with Antigravity as the visual target
-- [ ]  Connect GitHub repo to Vercel (Hobby)
-- [ ]  Install CodeRabbit on the repo
-- [ ]  Give Antigravity Task 1 (scaffold only — not the whole app)
-- [ ]  Verify FastAPI mock backend is accessible for Antigravity to test against
+- [ ] Pick a dashboard name from the acronym list and update repo + UI
+- [ ] Confirm GitHub repo owner (NavpreetST vs NavpreetD) and create `<name>-dash` public repo
+- [ ] Share the Lovable cockpit screenshot with Antigravity as the visual target
+- [ ] Connect GitHub repo to Vercel (Hobby)
+- [ ] Install CodeRabbit on the repo
+- [ ] Give Antigravity Task 1 (scaffold only — not the whole app)
+- [ ] Verify FastAPI mock backend is accessible for Antigravity to test against
 
 ---
 
 ## Deferred — do not build yet
 
-| Item | When |
-| --- | --- |
-| 3D Neural Orb (Three.js / Threlte) | When orb is live and trained |
-| `/roadmap` and `/todo` live data | After Notion DB is set up |
-| `/drift` live comparison | After diagnostic endpoint is wired |
-| Custom domain (`.dev` via Name.com) | When site is live and stable |
-| Dedicated server / systemd | Post Phase 0 |
-| Light mode | Probably never — confirm |
-| Hidden State 8×8 heatmap | Later phase — omit from v1 |
+| Item                                | When                               |
+| ----------------------------------- | ---------------------------------- |
+| 3D Neural Orb (Three.js / Threlte)  | When orb is live and trained       |
+| `/roadmap` and `/todo` live data    | After Notion DB is set up          |
+| `/drift` live comparison            | After diagnostic endpoint is wired |
+| Custom domain (`.dev` via Name.com) | When site is live and stable       |
+| Dedicated server / systemd          | Post Phase 0                       |
+| Light mode                          | Probably never — confirm           |
+| Hidden State 8×8 heatmap            | Later phase — omit from v1         |

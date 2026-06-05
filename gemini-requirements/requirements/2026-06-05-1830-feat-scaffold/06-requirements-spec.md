@@ -1,11 +1,13 @@
 # Requirements Specification: Task 1 (feat/scaffold)
 
 ## 1. Problem Statement & Solution Overview
+
 This requirement details the initial project setup, dependencies, configuration files, build pipeline, and developer mock-telemetry stores for **AXIS (Aegis eXecution Intelligence Surface)**, a SvelteKit web application designed as an operator control cockpit for the Aegis AI daemon.
 
 The scaffold will lay the groundwork for SvelteKit, integrate Tailwind CSS v4.0, configure standard linting/formatting, set up the deploy pipeline via Vercel, and implement frontend-only stores simulating real-time telemetry inputs (uptime, tick rate, PAM, RPD, NeuroBus, live logs, chat) with a connection-drop simulator for offline states.
 
 ## 2. Functional Requirements
+
 - **Framework & Routing**: SvelteKit (Svelte 5) initialized in minimal mode.
 - **Mock Telemetry Data Store**:
   - A client-side simulated data source that publishes state updates at 1 Hz.
@@ -26,6 +28,7 @@ The scaffold will lay the groundwork for SvelteKit, integrate Tailwind CSS v4.0,
   - Novelty (`signal/blue`): `#3B82F6`
 
 ## 3. Technical Requirements & File Paths
+
 - **Vite Configuration (`vite.config.ts`)**: Integrate the `@tailwindcss/vite` plugin and SvelteKit.
 - **Global Styling (`src/app.css`)**: Import Tailwind CSS (`@import "tailwindcss";`) and configure the theme tokens using the `@theme` directive.
 - **Svelte Layout (`src/routes/+layout.svelte`)**: Import `src/app.css` and render Svelte children components.
@@ -36,10 +39,12 @@ The scaffold will lay the groundwork for SvelteKit, integrate Tailwind CSS v4.0,
   - `chat.ts`: Writable store simulating the WebSocket chat session (agent replies simulated locally).
 
 ## 4. Linting & Formatting Rules
+
 - **ESLint (`eslint.config.js`)**: Modern config for TypeScript/Svelte projects.
 - **Prettier (`prettier.config.js` / `.prettierrc`)**: Enforce single quotes (`singleQuote: true`), semicolons (`semi: true`), and a 2-space indentation.
 
 ## 5. Acceptance Criteria
+
 - [ ] Project successfully builds without errors (`npm run build`).
 - [ ] Tailwind CSS v4.0 is fully integrated and successfully styles components.
 - [ ] Prettier formatting and ESLint rules are applied cleanly without conflicts.
