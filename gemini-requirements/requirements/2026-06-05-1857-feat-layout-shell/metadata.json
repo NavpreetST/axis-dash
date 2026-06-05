@@ -1,12 +1,12 @@
 {
   "id": "feat-layout-shell",
   "started": "2026-06-05T18:57:37Z",
-  "lastUpdated": "2026-06-05T19:00:46Z",
-  "status": "active",
-  "phase": "context",
+  "lastUpdated": "2026-06-05T19:03:00Z",
+  "status": "complete",
+  "phase": "complete",
   "progress": {
     "discovery": { "answered": 5, "total": 5 },
-    "detail": { "answered": 0, "total": 0 }
+    "detail": { "answered": 5, "total": 5 }
   },
   "contextFiles": ["src/routes/+layout.svelte", "src/routes/layout.css", "instructions.md"],
   "relatedFeatures": ["feat-scaffold"]
