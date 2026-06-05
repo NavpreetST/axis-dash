@@ -17,3 +17,27 @@
   --font-sans: 'Inter', sans-serif;
   --font-mono: 'JetBrains Mono', monospace;
 }
+
+/* ── KPI Card hover glow (CSS-only, no scale) ─────────────────── */
+.kpi-card {
+  transition:
+    border-color 200ms ease,
+    box-shadow 200ms ease,
+    background-color 200ms ease;
+}
+.kpi-card:hover {
+  border-color: rgba(95, 208, 224, 0.3);
+  box-shadow: 0 0 12px rgba(95, 208, 224, 0.08);
+  background-color: rgba(24, 27, 38, 0.85);
+}
+
+/* ── Bar glow variants for threshold colours ───────────────────── */
+.bar-glow-green {
+  box-shadow: 0 0 6px rgba(79, 199, 138, 0.4);
+}
+.bar-glow-amber {
+  box-shadow: 0 0 6px rgba(240, 185, 92, 0.4);
+}
+.bar-glow-red {
+  box-shadow: 0 0 6px rgba(232, 106, 106, 0.4);
+}
