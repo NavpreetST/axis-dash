@@ -1,11 +1,13 @@
 # Technical Context & Findings
 
 ## Codebase Status & Context
+
 - The project is successfully scaffolded with SvelteKit and Tailwind CSS v4.0.
 - Main global theme is configured in `src/routes/layout.css`.
 - Real-time simulation stores are live in `src/lib/stores`.
 
 ## Proposed Layout Structure
+
 - **Root Layout (`src/routes/+layout.svelte`)**:
   - Implements the overall shell grid layout:
     - Left Nav Rail (fixed `w-16` / `64px`, icons representing the 8 routes, tooltips on hover).
@@ -27,7 +29,9 @@
   - Commits: `GitCommit`
 
 ## Route Directories & Placeholders
+
 To support clean SvelteKit client-side routing without 404 errors, we will create minimal placeholder pages for all routes linked in the nav rail:
+
 - `src/routes/roadmap/+page.svelte`
 - `src/routes/todo/+page.svelte`
 - `src/routes/orb/+page.svelte`

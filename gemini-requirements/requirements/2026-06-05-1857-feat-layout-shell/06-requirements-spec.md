@@ -1,9 +1,11 @@
 # Requirements Specification: Task 2 (feat/layout-shell)
 
 ## 1. Problem Statement & Solution Overview
+
 This requirement covers the design, styling, security, and responsive structure of the global **AXIS (Aegis eXecution Intelligence Surface)** app shell. It moves the chat terminal, status indicators, and navigation elements from individual page scope into the global layout shell to enable persistent access. It also sets up standard placeholders for all linked routes to allow client-side page routing without errors.
 
 ## 2. Functional Requirements
+
 - **App Layout Shell**:
   - Left-docked Icon Navigation Rail (fixed `w-16` / `64px` width) displaying the 8 cockpit routes.
   - Persistent Top Bar Header displaying status signals (connection, uptime, tick rate, PAM, and RPD).
@@ -24,6 +26,7 @@ This requirement covers the design, styling, security, and responsive structure 
   - Install `lucide-svelte` to render clean, consistent icons.
 
 ## 3. Technical Requirements & File Paths
+
 - **Route Layout (`src/routes/+layout.svelte`)**:
   - Implements the grid shell.
   - Houses the persistent chat drawer, nav rail, and status header.
@@ -34,6 +37,7 @@ This requirement covers the design, styling, security, and responsive structure 
   - Strip the Aegis Chat component out (since it is moved to `+layout.svelte`) and expand the telemetry and Signal state components to fill the layout space.
 
 ## 4. Acceptance Criteria
+
 - [ ] `lucide-svelte` dependency installed successfully.
 - [ ] Nav rail shows all 8 routes, highlighting the active one in cyan, and displays tooltips on hover.
 - [ ] Aegis Chat is persistent on the right side and usable from any routed subpage.
