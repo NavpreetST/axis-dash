@@ -23,7 +23,7 @@
 
   let uptimeDisplay = $derived(formatUptime($telemetry.uptime_seconds));
   let tickDisplay = $derived(formatTickRate($telemetry.tick_rate));
-  let pamBucket = $derived(pamThreshold($telemetry.pam));
+  let pamBucket = $derived($telemetry.pam !== null ? pamThreshold($telemetry.pam) : 'amber');
   let rpdPct = $derived(rpdPercent($telemetry.rpd_used, $telemetry.rpd_budget));
 
   // RPD near or over budget logic: >= 85% of budget
@@ -88,7 +88,7 @@
       >
     </div>
     <div class="my-1.5 flex items-baseline">
-      {#if $telemetry.connected}
+      {#if $telemetry.connected && $telemetry.pam !== null}
         <span
           class="font-mono text-[30px] font-bold tracking-tight {pamColorMap[
             pamBucket
@@ -105,7 +105,7 @@
       {/if}
     </div>
     <div class="h-1.5 w-full overflow-hidden rounded-full bg-hairline/25">
-      {#if $telemetry.connected}
+      {#if $telemetry.connected && $telemetry.pam !== null}
         <div
           class="h-full rounded-full transition-all duration-300 {pamBarMap[pamBucket]} {pamGlowMap[
             pamBucket

@@ -1,10 +1,12 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
   import { logs, NeuroBusPanel, KpiStrip, telemetry } from '$lib';
+  import { config } from '$lib/config';
 
-  // Start the store loops on mount
   onMount(() => {
-    logs.start();
+    if (!config.useLiveBridge) {
+      logs.start();
+    }
   });
 
   onDestroy(() => {
@@ -70,5 +72,3 @@
     </div>
   </div>
 </div>
-
-
