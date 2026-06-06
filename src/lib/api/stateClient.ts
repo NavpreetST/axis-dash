@@ -1,9 +1,20 @@
 import { telemetry, type TelemetryData } from '$lib/stores/telemetry';
 import { applyAuthToUrl, buildWsUrl } from '$lib/api/client';
 
+/** Upper bound (ms) for the exponential reconnect backoff. */
 const MAX_RECONNECT_DELAY = 30000;
+/** Initial reconnect delay (ms); doubled per attempt up to {@link MAX_RECONNECT_DELAY}. */
 const INITIAL_RECONNECT_DELAY = 1000;
 
+/**
+ * WebSocket client for the live `/state` stream.
+ *
+ * Connects to the bridge, parses each JSON frame into a partial
+ * `TelemetryData` update, and forwards it to the telemetry store.
+ * Reconnects with capped exponential backoff on close or error and
+ * flips `telemetry.connected` to mirror the socket state so the UI
+ * falls back to `--` placeholders while disconnected.
+ */
 export function createStateClient() {
   let ws: WebSocket | null = null;
   let reconnectAttempts = 0;
@@ -22,6 +33,7 @@ export function createStateClient() {
 
     ws.onopen = () => {
       reconnectAttempts = 0;
+      telemetry.setConnected(true);
     };
 
     ws.onmessage = (event) => {

@@ -1,9 +1,24 @@
 import { logs, type LogLine } from '$lib/stores/logs';
 import { applyAuthToUrl, buildSseUrl } from '$lib/api/client';
 
+/** Upper bound (ms) for the exponential reconnect backoff. */
 const MAX_RECONNECT_DELAY = 30000;
+/**
+ * Initial reconnect delay (ms) for the logs stream. Slightly longer
+ * than the state/chat clients (1000ms) so the first reconnect attempt
+ * does not collide with the state/chat sockets hammering the bridge
+ * during a cold start. Doubled per attempt up to {@link MAX_RECONNECT_DELAY}.
+ */
 const INITIAL_RECONNECT_DELAY = 2000;
 
+/**
+ * Server-Sent Events client for the live `/logs` stream.
+ *
+ * Each event payload is parsed as JSON and converted into the existing
+ * `LogLine` shape, then pushed into the logs store. Malformed payloads
+ * are coerced into a generic `info` entry so nothing is silently dropped.
+ * Reconnects with capped exponential backoff on error.
+ */
 export function createLogsClient() {
   let es: EventSource | null = null;
   let reconnectAttempts = 0;
@@ -19,6 +34,10 @@ export function createLogsClient() {
       scheduleReconnect();
       return;
     }
+
+    es.onopen = () => {
+      reconnectAttempts = 0;
+    };
 
     es.onmessage = (event) => {
       try {
@@ -62,6 +81,7 @@ export function createLogsClient() {
     if (es) {
       es.onmessage = null;
       es.onerror = null;
+      es.onopen = null;
       es.close();
       es = null;
     }

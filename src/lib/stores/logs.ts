@@ -1,5 +1,6 @@
 import { writable } from 'svelte/store';
 
+/** A single rendered log line. The dashboard caps the live list at 100 entries. */
 export interface LogLine {
   id: string;
   timestamp: string;
@@ -49,23 +50,35 @@ const mockMessages: Omit<LogLine, 'timestamp' | 'id'>[] = [
   { source: 'tick', type: 'info', message: 'PAM check • Coherence stable at 0.91' }
 ];
 
+const MAX_LOGS = 100;
+
 const createLogsStore = () => {
   const { subscribe, update } = writable<LogLine[]>(initialLogs);
   let timer: ReturnType<typeof setTimeout> | null = null;
 
+  /**
+   * Prepend a new log line, stamping it with the current local time
+   * and a unique id. The store trims to the most recent
+   * {@link MAX_LOGS} entries.
+   */
   const addLog = (log: Omit<LogLine, 'timestamp' | 'id'>) => {
     const time = new Date().toLocaleTimeString('en-US', { hour12: false });
     const id =
       typeof crypto !== 'undefined' && crypto.randomUUID
         ? crypto.randomUUID()
         : `log-${Math.random().toString(36).substring(2, 9)}`;
-    update((logs) => [{ id, timestamp: time, ...log }, ...logs].slice(0, 100));
+    update((logs) => [{ id, timestamp: time, ...log }, ...logs].slice(0, MAX_LOGS));
   };
 
+  /**
+   * Start the mock log scheduler. Adds a random mock entry every
+   * 3–8 seconds. Idempotent — subsequent calls are no-ops. Should
+   * only be used when live bridge is disabled.
+   */
   const start = () => {
     if (timer) return;
     const scheduleNext = () => {
-      const delay = Math.random() * 5000 + 3000; // 3 to 8 seconds
+      const delay = Math.random() * 5000 + 3000;
       timer = setTimeout(() => {
         const template = mockMessages[Math.floor(Math.random() * mockMessages.length)];
         addLog({
@@ -79,6 +92,7 @@ const createLogsStore = () => {
     scheduleNext();
   };
 
+  /** Stop the mock log scheduler. Idempotent. */
   const stop = () => {
     if (timer) {
       clearTimeout(timer);
@@ -86,6 +100,7 @@ const createLogsStore = () => {
     }
   };
 
+  /** Empty the log list. */
   const clearLogs = () => {
     update(() => []);
   };
@@ -99,4 +114,9 @@ const createLogsStore = () => {
   };
 };
 
+/**
+ * Shared logs store. Drives both the dashboard log strip and the full
+ * logs page. In live mode entries are pushed by the SSE client; in
+ * mock mode the internal scheduler fills it.
+ */
 export const logs = createLogsStore();

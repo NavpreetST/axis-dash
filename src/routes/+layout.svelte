@@ -277,7 +277,9 @@
               >
             </div>
             <span class="font-mono text-[9px] text-accent-violet"
-              >PAM COHERENCE: {$telemetry.pam !== null ? $telemetry.pam : '--'}</span
+              >PAM COHERENCE: {$telemetry.connected && $telemetry.pam !== null
+                ? $telemetry.pam
+                : '--'}</span
             >
           </div>
 
