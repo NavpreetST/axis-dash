@@ -1,16 +1,6 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
-  import {
-    telemetry,
-    logs,
-    formatUptime,
-    formatTickRate,
-    pamThreshold,
-    rpdPercent,
-    rpdOverBudget,
-    NeuroBusPanel
-  } from '$lib';
-  import KpiCard from '$lib/components/KpiCard.svelte';
+  import { telemetry, logs, NeuroBusPanel, KpiStrip } from '$lib';
 
   // Start the store loops on mount
   onMount(() => {
@@ -22,30 +12,6 @@
     telemetry.stop();
     logs.stop();
   });
-
-  // ── Reactive derived values for KPI cards ────────────────────
-  let uptimeDisplay = $derived(formatUptime($telemetry.uptime_seconds));
-  let tickDisplay = $derived(formatTickRate($telemetry.tick_rate));
-  let pamBucket = $derived(pamThreshold($telemetry.pam));
-  let rpdPct = $derived(rpdPercent($telemetry.rpd_used, $telemetry.rpd_budget));
-  let rpdOver = $derived(rpdOverBudget($telemetry.rpd_used, $telemetry.rpd_budget));
-
-  // PAM colour mapping
-  const pamColorMap = {
-    green: 'text-signal-green',
-    amber: 'text-accent-amber',
-    red: 'text-signal-red'
-  } as const;
-  const pamBarMap = {
-    green: 'bg-signal-green',
-    amber: 'bg-accent-amber',
-    red: 'bg-signal-red'
-  } as const;
-  const pamGlowMap = {
-    green: 'bar-glow-green',
-    amber: 'bar-glow-amber',
-    red: 'bar-glow-red'
-  } as const;
 </script>
 
 <svelte:head>
@@ -54,48 +20,8 @@
 
 <!-- Main Grid Content — always visible, cards handle offline inline -->
 <div class="flex h-full flex-col gap-6">
-  <!-- KPI Cards Row -->
-  <div class="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-    <!-- Uptime -->
-    <KpiCard
-      label="Uptime"
-      value={uptimeDisplay}
-      subtitle="since last restart"
-      valueColorClass="text-accent-cyan"
-      connected={$telemetry.connected}
-    />
-
-    <!-- Tick Rate -->
-    <KpiCard
-      label="Tick Rate"
-      value={tickDisplay}
-      unit="tick/s"
-      subtitle="rolling 60s avg"
-      connected={$telemetry.connected}
-    />
-
-    <!-- PAM Coherence -->
-    <KpiCard
-      label="PAM Coherence"
-      value={String($telemetry.pam)}
-      valueColorClass={pamColorMap[pamBucket]}
-      barPercent={$telemetry.pam * 100}
-      barColorClass={pamBarMap[pamBucket]}
-      barGlowClass={pamGlowMap[pamBucket]}
-      connected={$telemetry.connected}
-    />
-
-    <!-- RPD Usage -->
-    <KpiCard
-      label="RPD Usage"
-      value="{$telemetry.rpd_used} / {$telemetry.rpd_budget}"
-      valueColorClass={rpdOver ? 'text-signal-red' : 'text-accent-amber'}
-      barPercent={rpdPct}
-      barColorClass={rpdOver ? 'bg-signal-red' : 'bg-accent-amber'}
-      barGlowClass={rpdOver ? 'bar-glow-red' : 'bar-glow-amber'}
-      connected={$telemetry.connected}
-    />
-  </div>
+  <!-- KPI Strip -->
+  <KpiStrip />
 
   <!-- Signal State (Hero Panel) -->
   <div class="flex flex-1 flex-col gap-4 rounded-[20px] border border-hairline bg-bg-panel p-6">
