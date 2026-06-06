@@ -58,12 +58,12 @@ describe('telemetry store', () => {
 
     it('has the correct initial neurobus values', () => {
       const state = get(telemetry);
-      expect(state.neurobus.reward).toEqual([0.72]);
-      expect(state.neurobus.novelty).toEqual([0.45]);
-      expect(state.neurobus.attention).toEqual([0.88]);
-      expect(state.neurobus.patience).toEqual([0.65]);
-      expect(state.neurobus.threat).toEqual([0.08]);
-      expect(state.neurobus.trust).toEqual([0.92]);
+      expect(state.neurobus.reward).toBe(0.72);
+      expect(state.neurobus.novelty).toBe(0.45);
+      expect(state.neurobus.attention).toBe(0.88);
+      expect(state.neurobus.patience).toBe(0.65);
+      expect(state.neurobus.threat).toBe(0.08);
+      expect(state.neurobus.trust).toBe(0.92);
     });
   });
 
@@ -229,7 +229,7 @@ describe('telemetry store', () => {
       telemetry.stop();
     });
 
-    it('keeps all neurobus values within [0, 1] across many ticks and limits array to 60', () => {
+    it('keeps all neurobus values within [0, 1] across many ticks', () => {
       vi.useFakeTimers();
 
       telemetry.start();
@@ -238,11 +238,8 @@ describe('telemetry store', () => {
         const { neurobus } = get(telemetry);
         const keys = Object.keys(neurobus) as (keyof Neurobus)[];
         for (const key of keys) {
-          expect(neurobus[key].length).toBeLessThanOrEqual(60);
-          for (const val of neurobus[key]) {
-            expect(val).toBeGreaterThanOrEqual(0);
-            expect(val).toBeLessThanOrEqual(1);
-          }
+          expect(neurobus[key]).toBeGreaterThanOrEqual(0);
+          expect(neurobus[key]).toBeLessThanOrEqual(1);
         }
       }
 
@@ -339,13 +336,10 @@ describe('telemetry store', () => {
       expect(neurobus).toHaveProperty('trust');
     });
 
-    it('all neurobus values are arrays of numbers', () => {
+    it('all neurobus values are numbers', () => {
       const { neurobus } = get(telemetry);
       for (const val of Object.values(neurobus)) {
-        expect(val).toBeInstanceOf(Array);
-        for (const element of val) {
-          expect(element).toBeTypeOf('number');
-        }
+        expect(val).toBeTypeOf('number');
       }
     });
 

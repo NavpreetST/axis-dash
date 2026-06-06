@@ -4,8 +4,7 @@ import {
   pamThreshold,
   rpdOverBudget,
   rpdPercent,
-  formatTickRate,
-  scaleSparkline
+  formatTickRate
 } from './formatters';
 
 // ── formatUptime ────────────────────────────────────────────────
@@ -139,33 +138,5 @@ describe('formatTickRate', () => {
 
   it('returns -- for Infinity', () => {
     expect(formatTickRate(Infinity)).toBe('--');
-  });
-});
-
-// ── scaleSparkline ──────────────────────────────────────────────
-describe('scaleSparkline', () => {
-  it('returns empty array for empty input', () => {
-    expect(scaleSparkline([], 100, 50)).toEqual([]);
-  });
-
-  it('returns centered point for single-value array', () => {
-    expect(scaleSparkline([0.5], 100, 50)).toEqual([{ x: 50, y: 25 }]);
-  });
-
-  it('centers flat datasets vertically', () => {
-    expect(scaleSparkline([0.5, 0.5, 0.5], 100, 50)).toEqual([
-      { x: 0, y: 25 },
-      { x: 50, y: 25 },
-      { x: 100, y: 25 }
-    ]);
-  });
-
-  it('scales normal values to use full height and width', () => {
-    const points = scaleSparkline([0.2, 0.8, 0.5], 100, 50);
-    expect(points).toEqual([
-      { x: 0, y: 50 },
-      { x: 50, y: 0 },
-      { x: 100, y: 25 }
-    ]);
   });
 });
