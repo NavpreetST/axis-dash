@@ -36,7 +36,7 @@
 </script>
 
 <div
-  class="kpi-strip flex h-14 w-full items-center overflow-hidden rounded-[20px] border border-hairline bg-bg-panel backdrop-blur-md"
+  class="kpi-strip flex h-14 w-full shrink-0 items-center overflow-hidden rounded-[20px] border border-hairline bg-bg-panel backdrop-blur-md"
 >
   <!-- Uptime -->
   <div class="flex h-full flex-1 items-center justify-between border-r border-hairline/30 px-5">

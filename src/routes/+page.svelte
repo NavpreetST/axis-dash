@@ -38,7 +38,9 @@
   </div>
 
   <!-- Live Log Panel -->
-  <div class="flex h-60 flex-col gap-2 rounded-[20px] border border-hairline bg-bg-panel p-6">
+  <div
+    class="flex h-60 shrink-0 flex-col gap-2 rounded-[20px] border border-hairline bg-bg-panel p-6"
+  >
     <div class="flex items-center justify-between border-b border-hairline pb-2">
       <h2 class="font-sans text-xs font-semibold tracking-wider text-text-muted uppercase">
         Live System Logs
