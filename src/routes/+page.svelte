@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
-  import { logs, NeuroBusPanel, KpiStrip } from '$lib';
+  import { logs, NeuroBusPanel, KpiStrip, telemetry } from '$lib';
 
   // Start the store loops on mount
   onMount(() => {
@@ -45,7 +45,7 @@
       </h2>
       <span class="font-mono text-[10px] text-text-muted">stream: /var/helios/aegis.log</span>
     </div>
-    <div class="flex flex-1 flex-col gap-1 overflow-y-auto pr-2 font-mono text-xs">
+    <div class="flex flex-1 scrollbar-thin flex-col gap-1 overflow-y-auto pr-2 font-mono text-xs">
       {#each $logs as log (log.id)}
         <div class="flex gap-3 rounded p-0.5 leading-relaxed transition hover:bg-white/5">
           <span class="shrink-0 text-text-muted">{log.timestamp}</span>

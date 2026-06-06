@@ -248,7 +248,10 @@ describe('telemetry store', () => {
           expect(neurobus[key]).toBeGreaterThanOrEqual(0);
           expect(neurobus[key]).toBeLessThanOrEqual(1);
 
-          expect(neurobusHistory[key].length).toBeLessThanOrEqual(60);
+          const len = neurobusHistory[key].length;
+          expect(len).toBeLessThanOrEqual(60);
+          if (i >= 59) expect(len).toBe(60);
+          expect(neurobusHistory[key][len - 1]).toBe(neurobus[key]);
           for (const val of neurobusHistory[key]) {
             expect(val).toBeGreaterThanOrEqual(0);
             expect(val).toBeLessThanOrEqual(1);
