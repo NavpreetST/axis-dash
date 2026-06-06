@@ -52,15 +52,4 @@
   </div>
 </div>
 
-<style>
-  .scrollbar-thin::-webkit-scrollbar {
-    width: 4px;
-  }
-  .scrollbar-thin::-webkit-scrollbar-track {
-    background: transparent;
-  }
-  .scrollbar-thin::-webkit-scrollbar-thumb {
-    background: var(--color-hairline);
-    border-radius: 4px;
-  }
-</style>
+
