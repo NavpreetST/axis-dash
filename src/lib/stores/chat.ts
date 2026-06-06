@@ -5,7 +5,7 @@ export interface ChatMessage {
   sender: 'aegis' | 'you';
   text: string;
   timestamp: string;
-  affect?: string; // Optional indicator of emotional state/theme
+  affect?: string;
 }
 
 const initialMessages: ChatMessage[] = [
@@ -26,8 +26,11 @@ const mockAegisReplies = [
   'Diagnostics clear. System operating at 9.8 tick/s.'
 ];
 
+type LiveSender = (text: string) => boolean;
+
 const createChatStore = () => {
   const { subscribe, update } = writable<ChatMessage[]>(initialMessages);
+  let liveSender: LiveSender | null = null;
 
   const sendMessage = (text: string) => {
     const time = new Date().toLocaleTimeString('en-US', {
@@ -40,15 +43,18 @@ const createChatStore = () => {
       typeof crypto !== 'undefined' && crypto.randomUUID
         ? crypto.randomUUID()
         : `chat-${Math.random().toString(36).substring(2, 9)}`;
+
+    update((messages) => [...messages, { id: userMsgId, sender: 'you', text, timestamp: time }]);
+
+    if (liveSender && liveSender(text)) {
+      return;
+    }
+
     const aegisReplyId =
       typeof crypto !== 'undefined' && crypto.randomUUID
         ? crypto.randomUUID()
         : `chat-${Math.random().toString(36).substring(2, 9)}`;
 
-    // Append user message
-    update((messages) => [...messages, { id: userMsgId, sender: 'you', text, timestamp: time }]);
-
-    // Trigger mock Aegis reply after a short delay
     setTimeout(() => {
       const reply = mockAegisReplies[Math.floor(Math.random() * mockAegisReplies.length)];
       update((messages) => [
@@ -62,10 +68,20 @@ const createChatStore = () => {
     update(() => []);
   };
 
+  const pushMessage = (msg: ChatMessage) => {
+    update((messages) => [...messages, msg]);
+  };
+
+  const setLiveSender = (sender: LiveSender | null) => {
+    liveSender = sender;
+  };
+
   return {
     subscribe,
     sendMessage,
-    clearHistory
+    clearHistory,
+    pushMessage,
+    setLiveSender
   };
 };
 

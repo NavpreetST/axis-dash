@@ -4,6 +4,8 @@
   import { goto } from '$app/navigation';
   import { base } from '$app/paths';
   import { telemetry, chat } from '$lib';
+  import { config } from '$lib/config';
+  import { startBridge, stopBridge, type BridgeClients } from '$lib/api/bridge';
   import './layout.css';
 
   // Import Lucide Icons
@@ -28,7 +30,14 @@
 
   // Route guard auth check
   onMount(() => {
-    telemetry.start();
+    let bridge: BridgeClients | null = null;
+
+    if (config.useLiveBridge) {
+      bridge = startBridge();
+      chat.setLiveSender((text) => bridge!.chat.send(text));
+    } else {
+      telemetry.start();
+    }
 
     const checkAuth = () => {
       const token = localStorage.getItem('HELIOS_TOKEN');
@@ -50,7 +59,12 @@
     });
 
     return () => {
-      telemetry.stop();
+      if (bridge) {
+        chat.setLiveSender(null);
+        stopBridge(bridge);
+      } else {
+        telemetry.stop();
+      }
       unsubscribePage();
     };
   });
@@ -263,7 +277,7 @@
               >
             </div>
             <span class="font-mono text-[9px] text-accent-violet"
-              >PAM COHERENCE: {$telemetry.pam}</span
+              >PAM COHERENCE: {$telemetry.pam !== null ? $telemetry.pam : '--'}</span
             >
           </div>
 

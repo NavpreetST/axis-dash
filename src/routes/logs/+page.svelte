@@ -1,9 +1,12 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
   import { logs } from '$lib';
+  import { config } from '$lib/config';
 
   onMount(() => {
-    logs.start();
+    if (!config.useLiveBridge) {
+      logs.start();
+    }
   });
 
   onDestroy(() => {
@@ -51,5 +54,3 @@
     {/each}
   </div>
 </div>
-
-
