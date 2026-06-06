@@ -15,7 +15,9 @@
   <title>AXIS - Logs</title>
 </svelte:head>
 
-<div class="flex h-full flex-col gap-4 rounded-[20px] border border-hairline bg-bg-panel p-6">
+<div
+  class="mx-auto flex h-full w-full max-w-[1100px] flex-col gap-4 rounded-[20px] border border-hairline bg-bg-panel p-6"
+>
   <div class="flex items-center justify-between border-b border-hairline pb-3">
     <div>
       <h2 class="font-mono text-sm font-bold tracking-widest text-text-primary uppercase">

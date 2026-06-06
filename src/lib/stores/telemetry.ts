@@ -9,6 +9,15 @@ export interface Neurobus {
   trust: number;
 }
 
+export interface NeurobusHistory {
+  reward: number[];
+  novelty: number[];
+  attention: number[];
+  patience: number[];
+  threat: number[];
+  trust: number[];
+}
+
 export interface TelemetryData {
   uptime_seconds: number;
   tick_rate: number;
@@ -18,6 +27,7 @@ export interface TelemetryData {
   provider: string;
   connected: boolean;
   neurobus: Neurobus;
+  neurobusHistory: NeurobusHistory;
 }
 
 const initialData: TelemetryData = {
@@ -35,6 +45,14 @@ const initialData: TelemetryData = {
     patience: 0.65,
     threat: 0.08,
     trust: 0.92
+  },
+  neurobusHistory: {
+    reward: [0.72],
+    novelty: [0.45],
+    attention: [0.88],
+    patience: [0.65],
+    threat: [0.08],
+    trust: [0.92]
   }
 };
 
@@ -86,12 +104,22 @@ const createTelemetryStore = () => {
           ).toFixed(2)
         };
 
+        const nextNeurobusHistory = {
+          reward: [...state.neurobusHistory.reward, nextNeurobus.reward].slice(-60),
+          novelty: [...state.neurobusHistory.novelty, nextNeurobus.novelty].slice(-60),
+          attention: [...state.neurobusHistory.attention, nextNeurobus.attention].slice(-60),
+          patience: [...state.neurobusHistory.patience, nextNeurobus.patience].slice(-60),
+          threat: [...state.neurobusHistory.threat, nextNeurobus.threat].slice(-60),
+          trust: [...state.neurobusHistory.trust, nextNeurobus.trust].slice(-60)
+        };
+
         return {
           ...state,
           uptime_seconds: nextUptime,
           tick_rate: nextTickRate,
           pam: nextPam,
-          neurobus: nextNeurobus
+          neurobus: nextNeurobus,
+          neurobusHistory: nextNeurobusHistory
         };
       });
     }, 1000);

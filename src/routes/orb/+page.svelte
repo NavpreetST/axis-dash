@@ -3,7 +3,7 @@
 </svelte:head>
 
 <div
-  class="flex h-full flex-col items-center justify-center rounded-[20px] border border-hairline bg-[#0d0c11] p-12 text-center"
+  class="mx-auto flex h-full w-full max-w-[1100px] flex-col items-center justify-center rounded-[20px] border border-hairline bg-[#0d0c11] p-12 text-center"
 >
   <div
     class="mb-6 flex h-24 w-24 animate-spin items-center justify-center rounded-full border border-dashed border-text-muted/30"

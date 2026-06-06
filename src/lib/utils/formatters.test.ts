@@ -4,7 +4,8 @@ import {
   pamThreshold,
   rpdOverBudget,
   rpdPercent,
-  formatTickRate
+  formatTickRate,
+  scaleSparkline
 } from './formatters';
 
 // ── formatUptime ────────────────────────────────────────────────
@@ -116,19 +117,9 @@ describe('rpdPercent', () => {
 
 // ── formatTickRate ──────────────────────────────────────────────
 describe('formatTickRate', () => {
-  it('formats to exactly 1 decimal place', () => {
-    expect(formatTickRate(9.8)).toBe('9.8');
-  });
-
-  it('pads whole numbers with .0', () => {
+  it('formats positive finite number to exactly 1 decimal digit', () => {
+    expect(formatTickRate(9.845)).toBe('9.8');
     expect(formatTickRate(10)).toBe('10.0');
-  });
-
-  it('truncates extra decimals', () => {
-    expect(formatTickRate(9.8123)).toBe('9.8');
-  });
-
-  it('formats zero', () => {
     expect(formatTickRate(0)).toBe('0.0');
   });
 
@@ -138,5 +129,33 @@ describe('formatTickRate', () => {
 
   it('returns -- for Infinity', () => {
     expect(formatTickRate(Infinity)).toBe('--');
+  });
+});
+
+// ── scaleSparkline ──────────────────────────────────────────────
+describe('scaleSparkline', () => {
+  it('returns empty array for empty input', () => {
+    expect(scaleSparkline([], 100, 50)).toEqual([]);
+  });
+
+  it('returns centered point for single-value array', () => {
+    expect(scaleSparkline([0.5], 100, 50)).toEqual([{ x: 50, y: 25 }]);
+  });
+
+  it('centers flat datasets vertically', () => {
+    expect(scaleSparkline([0.5, 0.5, 0.5], 100, 50)).toEqual([
+      { x: 0, y: 25 },
+      { x: 50, y: 25 },
+      { x: 100, y: 25 }
+    ]);
+  });
+
+  it('scales normal values to use full height and width', () => {
+    const points = scaleSparkline([0.2, 0.8, 0.5], 100, 50);
+    expect(points).toEqual([
+      { x: 0, y: 50 },
+      { x: 50, y: 0 },
+      { x: 100, y: 25 }
+    ]);
   });
 });
