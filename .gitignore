@@ -24,3 +24,7 @@ vite.config.ts.timestamp-*
 
 # Gemini/AI Requirement specs
 gemini-requirements/
+
+# Antigravity project-local config
+.agent/
+
