@@ -15,6 +15,7 @@ it does not import aegis.* runtime modules.
 from __future__ import annotations
 
 import asyncio
+import hmac
 import json
 import logging
 import os
@@ -24,9 +25,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect, status
 from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.types import ASGIApp
 
 log = logging.getLogger("web.server")
 
@@ -58,7 +61,90 @@ TICK_RATE_HZ = 1.0
 PAM_UNRESOLVED = None
 COHERENCE_UNRESOLVED = None
 
+# ---- Auth + CORS config ---------------------------------------------------
+
+# Token read from env. Never hardcoded, never logged, never committed.
+HELIOS_TOKEN: str | None = os.getenv("HELIOS_TOKEN") or None
+
+# CORS allowlist: comma-separated env var. Default includes AXIS on Vercel
+# (placeholder) and localhost:5173 for local dev. Override via env.
+_DEFAULT_ALLOWED_ORIGINS = (
+    "http://localhost:5173,"
+    "https://axis-helios.vercel.app"
+)
+ALLOWED_ORIGINS: set[str] = {
+    o.strip() for o in os.getenv("ALLOWED_ORIGINS", _DEFAULT_ALLOWED_ORIGINS).split(",")
+    if o.strip()
+}
+
+# WebSocket close codes (RFC 6455). 4401 = application-defined auth failure.
+WS_CLOSE_POLICY_VIOLATION = 1008
+WS_CLOSE_APP_AUTH_FAILED = 4401
+
+
+def _extract_bearer(header_val: str | None) -> str | None:
+    if not header_val:
+        return None
+    parts = header_val.split(None, 1)
+    if len(parts) == 2 and parts[0].lower() == "bearer":
+        return parts[1].strip()
+    return None
+
+
+def _token_matches(provided: str | None) -> bool:
+    """Constant-time compare of provided token against HELIOS_TOKEN."""
+    if not HELIOS_TOKEN or not provided:
+        return False
+    return hmac.compare_digest(provided, HELIOS_TOKEN)
+
+
+def _check_token(request: Request) -> bool:
+    """Check token from Authorization: Bearer header OR ?token= query param.
+
+    Returns True if the token matches HELIOS_TOKEN. False if missing or wrong.
+    Does not raise; callers decide how to respond.
+    """
+    bearer = _extract_bearer(request.headers.get("authorization"))
+    query_token = request.query_params.get("token")
+    return _token_matches(bearer) or _token_matches(query_token)
+
+
+# ---- CORS middleware (explicit allowlist) ---------------------------------
+
+
+class CORSMiddleware(BaseHTTPMiddleware):
+    """Explicit-origin CORS. Reflects the request Origin if it's in the
+    allowlist; never uses "*" because auth is involved (credentials mode)."""
+
+    def __init__(self, app: ASGIApp, allowed_origins: set[str]) -> None:
+        super().__init__(app)
+        self.allowed_origins = allowed_origins
+
+    async def dispatch(self, request, call_next):
+        origin = request.headers.get("origin")
+        # Reflect origin only if it's in the allowlist; else omit the header.
+        allow_origin = origin if origin in self.allowed_origins else None
+
+        if request.method == "OPTIONS":
+            # Preflight: respond with CORS headers and 204.
+            resp = StreamingResponse(iter([]), status_code=204)
+        else:
+            resp = await call_next(request)
+
+        if allow_origin:
+            resp.headers["Access-Control-Allow-Origin"] = allow_origin
+            resp.headers["Vary"] = "Origin"
+            resp.headers["Access-Control-Allow-Credentials"] = "true"
+            resp.headers["Access-Control-Allow-Methods"] = "GET, POST, OPTIONS"
+            resp.headers["Access-Control-Allow-Headers"] = (
+                "Authorization, Content-Type"
+            )
+            resp.headers["Access-Control-Max-Age"] = "600"
+        return resp
+
+
 app = FastAPI(title="Helios Orb", docs_url=None, redoc_url=None)
+app.add_middleware(CORSMiddleware, allowed_origins=ALLOWED_ORIGINS)
 
 
 def _load_json(path: Path) -> dict[str, Any]:
@@ -338,8 +424,18 @@ def _build_state() -> dict[str, Any]:
     }
 
 
+# ---- P0 bridge: /state (WS, auth via header or ?token=) -------------------
+
+
 @app.websocket("/state")
 async def state_ws(ws: WebSocket) -> None:
+    # Auth check before accept. Check both Authorization header and ?token=.
+    if not _check_token(ws):
+        # Accept then close with app-defined auth code so the client sees
+        # a proper WebSocket close (4401) instead of an opaque HTTP 403.
+        await ws.accept()
+        await ws.close(code=WS_CLOSE_APP_AUTH_FAILED, reason="auth_failed")
+        return
     await ws.accept()
     log.info("orb /state connected")
     try:
@@ -352,16 +448,21 @@ async def state_ws(ws: WebSocket) -> None:
         log.warning("orb /state error: %s", e)
 
 
-# ---- P0 bridge: /health ----------------------------------------------------
+# ---- P0 bridge: /health (Bearer header only) ------------------------------
 
 
 @app.get("/health")
-async def health() -> dict[str, Any]:
+async def health(request: Request) -> dict[str, Any]:
     """Lightweight liveness + daemon introspection.
 
     Always 200; `ok` is true iff the bridge is running. `connected` reflects
     state-file freshness (see STALE_THRESHOLD_SECONDS).
+
+    Auth: Authorization: Bearer <HELIOS_TOKEN> header only. Query-param
+    token is NOT accepted on /health (keeps the public health check simple).
     """
+    if not _token_matches(_extract_bearer(request.headers.get("authorization"))):
+        raise HTTPException(status_code=401, detail="auth_required")
     orb_meta = _load_state_meta("orb_state.json")
     rend_meta = _load_state_meta("renderer_state.json")
     return {
@@ -386,7 +487,7 @@ async def health() -> dict[str, Any]:
     }
 
 
-# ---- P0 bridge: /chat (websocket <-> aegis unix socket) -------------------
+# ---- P0 bridge: /chat (WS, auth via header or ?token=) --------------------
 
 
 @app.websocket("/chat")
@@ -400,7 +501,18 @@ async def chat_ws(ws: WebSocket) -> None:
 
     The bridge never invents a reply. On socket error / timeout / disconnect
     it sends a structured JSON error frame and closes.
+
+    Auth: Authorization: Bearer <HELIOS_TOKEN> header OR ?token=<HELIOS_TOKEN>
+    query param. Browsers can't set Authorization on WS, so query-param is
+    the primary path for AXIS.
     """
+    if not _check_token(ws):
+        # Accept then close with app-defined auth code so the client sees
+        # a proper WebSocket close (4401) instead of an opaque HTTP 403.
+        await ws.accept()
+        await ws.close(code=WS_CLOSE_APP_AUTH_FAILED, reason="auth_failed")
+        return
+
     await ws.accept()
     if not SOCK_PATH.exists():
         await ws.send_text(json.dumps({
@@ -470,7 +582,7 @@ async def chat_ws(ws: WebSocket) -> None:
         log.info("orb /chat disconnected")
 
 
-# ---- P0 bridge: /logs (SSE tail of the eventlog) --------------------------
+# ---- P0 bridge: /logs (SSE, auth via header or ?token=) -------------------
 
 
 _FILENAME_RE = re.compile(r"^\d{4}-\d{2}-\d{2}\.jsonl$")
@@ -539,8 +651,16 @@ async def _tail_eventlog():
 
 
 @app.get("/logs")
-async def logs_sse() -> StreamingResponse:
-    """Server-Sent Events stream of /var/lib/aegis/events/YYYY-MM-DD.jsonl."""
+async def logs_sse(request: Request) -> StreamingResponse:
+    """Server-Sent Events stream of /var/lib/aegis/events/YYYY-MM-DD.jsonl.
+
+    Auth: Authorization: Bearer <HELIOS_TOKEN> header OR ?token=<HELIOS_TOKEN>
+    query param. EventSource can't set Authorization headers, so query-param
+    is the primary path for AXIS.
+    """
+    if not _check_token(request):
+        raise HTTPException(status_code=401, detail="auth_required")
+
     async def event_stream():
         async for evt in _tail_eventlog():
             if evt.get("_heartbeat"):
