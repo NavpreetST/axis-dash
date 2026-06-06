@@ -72,21 +72,3 @@
     </div>
   </div>
 </div>
-
-<style>
-  /* Scrollbar styles */
-  .scrollbar-thin::-webkit-scrollbar {
-    width: 4px;
-    height: 4px;
-  }
-  .scrollbar-thin::-webkit-scrollbar-track {
-    background: transparent;
-  }
-  .scrollbar-thin::-webkit-scrollbar-thumb {
-    background: var(--color-hairline);
-    border-radius: 4px;
-  }
-  .scrollbar-thin::-webkit-scrollbar-thumb:hover {
-    background: var(--color-text-muted);
-  }
-</style>
