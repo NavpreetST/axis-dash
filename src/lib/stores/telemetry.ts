@@ -1,6 +1,15 @@
 import { writable } from 'svelte/store';
 
 export interface Neurobus {
+  reward: number;
+  novelty: number;
+  attention: number;
+  patience: number;
+  threat: number;
+  trust: number;
+}
+
+export interface NeurobusHistory {
   reward: number[];
   novelty: number[];
   attention: number[];
@@ -18,6 +27,7 @@ export interface TelemetryData {
   provider: string;
   connected: boolean;
   neurobus: Neurobus;
+  neurobusHistory: NeurobusHistory;
 }
 
 const initialData: TelemetryData = {
@@ -29,6 +39,14 @@ const initialData: TelemetryData = {
   provider: 'gemini-2.5-flash',
   connected: true,
   neurobus: {
+    reward: 0.72,
+    novelty: 0.45,
+    attention: 0.88,
+    patience: 0.65,
+    threat: 0.08,
+    trust: 0.92
+  },
+  neurobusHistory: {
     reward: [0.72],
     novelty: [0.45],
     attention: [0.88],
@@ -58,24 +76,41 @@ const createTelemetryStore = () => {
           Math.min(1.0, state.pam + (Math.random() - 0.5) * 0.02)
         ).toFixed(2);
 
-        // Randomly update NeuroBus values slightly and maintain a rolling 60s history
-        const getNextVal = (currentHistory: number[], step: number): number => {
-          const lastVal = currentHistory[currentHistory.length - 1];
-          return +Math.max(0, Math.min(1, lastVal + (Math.random() - 0.5) * step)).toFixed(2);
+        // Randomly update NeuroBus values slightly
+        const nextNeurobus = {
+          reward: +Math.max(
+            0,
+            Math.min(1, state.neurobus.reward + (Math.random() - 0.5) * 0.05)
+          ).toFixed(2),
+          novelty: +Math.max(
+            0,
+            Math.min(1, state.neurobus.novelty + (Math.random() - 0.5) * 0.03)
+          ).toFixed(2),
+          attention: +Math.max(
+            0,
+            Math.min(1, state.neurobus.attention + (Math.random() - 0.5) * 0.02)
+          ).toFixed(2),
+          patience: +Math.max(
+            0,
+            Math.min(1, state.neurobus.patience + (Math.random() - 0.5) * 0.04)
+          ).toFixed(2),
+          threat: +Math.max(
+            0,
+            Math.min(1, state.neurobus.threat + (Math.random() - 0.5) * 0.01)
+          ).toFixed(2),
+          trust: +Math.max(
+            0,
+            Math.min(1, state.neurobus.trust + (Math.random() - 0.5) * 0.03)
+          ).toFixed(2)
         };
 
-        const nextNeurobus = {
-          reward: [...state.neurobus.reward, getNextVal(state.neurobus.reward, 0.05)].slice(-60),
-          novelty: [...state.neurobus.novelty, getNextVal(state.neurobus.novelty, 0.03)].slice(-60),
-          attention: [
-            ...state.neurobus.attention,
-            getNextVal(state.neurobus.attention, 0.02)
-          ].slice(-60),
-          patience: [...state.neurobus.patience, getNextVal(state.neurobus.patience, 0.04)].slice(
-            -60
-          ),
-          threat: [...state.neurobus.threat, getNextVal(state.neurobus.threat, 0.01)].slice(-60),
-          trust: [...state.neurobus.trust, getNextVal(state.neurobus.trust, 0.03)].slice(-60)
+        const nextNeurobusHistory = {
+          reward: [...state.neurobusHistory.reward, nextNeurobus.reward].slice(-60),
+          novelty: [...state.neurobusHistory.novelty, nextNeurobus.novelty].slice(-60),
+          attention: [...state.neurobusHistory.attention, nextNeurobus.attention].slice(-60),
+          patience: [...state.neurobusHistory.patience, nextNeurobus.patience].slice(-60),
+          threat: [...state.neurobusHistory.threat, nextNeurobus.threat].slice(-60),
+          trust: [...state.neurobusHistory.trust, nextNeurobus.trust].slice(-60)
         };
 
         return {
@@ -83,7 +118,8 @@ const createTelemetryStore = () => {
           uptime_seconds: nextUptime,
           tick_rate: nextTickRate,
           pam: nextPam,
-          neurobus: nextNeurobus
+          neurobus: nextNeurobus,
+          neurobusHistory: nextNeurobusHistory
         };
       });
     }, 1000);

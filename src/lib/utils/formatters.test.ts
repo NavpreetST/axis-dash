@@ -117,19 +117,9 @@ describe('rpdPercent', () => {
 
 // ── formatTickRate ──────────────────────────────────────────────
 describe('formatTickRate', () => {
-  it('formats to exactly 1 decimal place', () => {
-    expect(formatTickRate(9.8)).toBe('9.8');
-  });
-
-  it('pads whole numbers with .0', () => {
+  it('formats positive finite number to exactly 1 decimal digit', () => {
+    expect(formatTickRate(9.845)).toBe('9.8');
     expect(formatTickRate(10)).toBe('10.0');
-  });
-
-  it('truncates extra decimals', () => {
-    expect(formatTickRate(9.8123)).toBe('9.8');
-  });
-
-  it('formats zero', () => {
     expect(formatTickRate(0)).toBe('0.0');
   });
 

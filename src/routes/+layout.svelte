@@ -3,7 +3,7 @@
   import { page } from '$app/stores';
   import { goto } from '$app/navigation';
   import { base } from '$app/paths';
-  import { telemetry, chat, formatUptime, formatTickRate } from '$lib';
+  import { telemetry, chat } from '$lib';
   import './layout.css';
 
   // Import Lucide Icons
@@ -162,21 +162,6 @@
               : 'bg-signal-red'}"
           ></div>
           <span class="text-sm font-bold tracking-widest text-text-primary uppercase">AXIS</span>
-          <div
-            class="hidden items-center gap-1.5 border-l border-hairline pl-3 font-mono text-[10px] text-text-muted md:flex"
-          >
-            <span
-              >UPTIME: <strong class="text-accent-cyan"
-                >{$telemetry.connected ? formatUptime($telemetry.uptime_seconds) : '--'}</strong
-              ></span
-            >
-            <span class="text-hairline">•</span>
-            <span
-              >RATE: <strong class="text-text-primary"
-                >{$telemetry.connected ? formatTickRate($telemetry.tick_rate) : '--'} tick/s</strong
-              ></span
-            >
-          </div>
         </div>
 
         <!-- Tablet / Mobile Tab switch controls -->
@@ -212,37 +197,13 @@
           </button>
         </div>
 
-        <!-- Persistent mini Status metrics (Desktop View) -->
-        <div class="hidden items-center gap-4 font-mono text-[10px] lg:flex">
-          <!-- PAM coherence -->
-          <div class="flex items-center gap-2">
-            <span class="text-text-muted">PAM:</span>
-            <span
-              class="font-bold {$telemetry.pam >= 0.9
-                ? 'text-signal-green'
-                : $telemetry.pam >= 0.83
-                  ? 'text-accent-amber'
-                  : 'text-signal-red'}"
-            >
-              {$telemetry.pam}
-            </span>
-          </div>
-          <!-- RPD -->
-          <div class="flex items-center gap-2 border-l border-hairline pl-4">
-            <span class="text-text-muted">RPD:</span>
-            <span class="font-bold text-accent-amber"
-              >{$telemetry.rpd_used} / {$telemetry.rpd_budget}</span
-            >
-          </div>
-        </div>
-
         <!-- Mobile-only Telemetry Status Pill -->
         <div class="flex items-center gap-2 font-mono text-[9px] sm:hidden">
           {#if $telemetry.connected}
             <span
               class="rounded border border-signal-green/20 bg-signal-green/10 px-2 py-0.5 font-semibold text-signal-green uppercase"
             >
-              {$telemetry.pam} PAM
+              ONLINE
             </span>
           {:else}
             <span
@@ -351,18 +312,3 @@
     </div>
   </div>
 {/if}
-
-<style>
-  /* Custom scrollbar layout styling */
-  .scrollbar-thin::-webkit-scrollbar {
-    width: 4px;
-    height: 4px;
-  }
-  .scrollbar-thin::-webkit-scrollbar-track {
-    background: transparent;
-  }
-  .scrollbar-thin::-webkit-scrollbar-thumb {
-    background: var(--color-hairline);
-    border-radius: 4px;
-  }
-</style>

@@ -10,3 +10,4 @@ export {
   scaleSparkline
 } from './utils/formatters';
 export { default as NeuroBusPanel } from './components/NeuroBusPanel.svelte';
+export { default as KpiStrip } from './components/KpiStrip.svelte';

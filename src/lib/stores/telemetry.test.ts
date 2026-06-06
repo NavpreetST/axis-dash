@@ -58,12 +58,19 @@ describe('telemetry store', () => {
 
     it('has the correct initial neurobus values', () => {
       const state = get(telemetry);
-      expect(state.neurobus.reward).toEqual([0.72]);
-      expect(state.neurobus.novelty).toEqual([0.45]);
-      expect(state.neurobus.attention).toEqual([0.88]);
-      expect(state.neurobus.patience).toEqual([0.65]);
-      expect(state.neurobus.threat).toEqual([0.08]);
-      expect(state.neurobus.trust).toEqual([0.92]);
+      expect(state.neurobus.reward).toBe(0.72);
+      expect(state.neurobus.novelty).toBe(0.45);
+      expect(state.neurobus.attention).toBe(0.88);
+      expect(state.neurobus.patience).toBe(0.65);
+      expect(state.neurobus.threat).toBe(0.08);
+      expect(state.neurobus.trust).toBe(0.92);
+
+      expect(state.neurobusHistory.reward).toEqual([0.72]);
+      expect(state.neurobusHistory.novelty).toEqual([0.45]);
+      expect(state.neurobusHistory.attention).toEqual([0.88]);
+      expect(state.neurobusHistory.patience).toEqual([0.65]);
+      expect(state.neurobusHistory.threat).toEqual([0.08]);
+      expect(state.neurobusHistory.trust).toEqual([0.92]);
     });
   });
 
@@ -229,17 +236,23 @@ describe('telemetry store', () => {
       telemetry.stop();
     });
 
-    it('keeps all neurobus values within [0, 1] across many ticks and limits array to 60', () => {
+    it('keeps all neurobus values within [0, 1] across many ticks and caps history to 60', () => {
       vi.useFakeTimers();
 
       telemetry.start();
       for (let i = 0; i < 200; i++) {
         vi.advanceTimersByTime(1000);
-        const { neurobus } = get(telemetry);
+        const { neurobus, neurobusHistory } = get(telemetry);
         const keys = Object.keys(neurobus) as (keyof Neurobus)[];
         for (const key of keys) {
-          expect(neurobus[key].length).toBeLessThanOrEqual(60);
-          for (const val of neurobus[key]) {
+          expect(neurobus[key]).toBeGreaterThanOrEqual(0);
+          expect(neurobus[key]).toBeLessThanOrEqual(1);
+
+          const len = neurobusHistory[key].length;
+          expect(len).toBeLessThanOrEqual(60);
+          if (i >= 59) expect(len).toBe(60);
+          expect(neurobusHistory[key][len - 1]).toBe(neurobus[key]);
+          for (const val of neurobusHistory[key]) {
             expect(val).toBeGreaterThanOrEqual(0);
             expect(val).toBeLessThanOrEqual(1);
           }
@@ -339,12 +352,15 @@ describe('telemetry store', () => {
       expect(neurobus).toHaveProperty('trust');
     });
 
-    it('all neurobus values are arrays of numbers', () => {
-      const { neurobus } = get(telemetry);
+    it('all neurobus values are numbers and history values are arrays of numbers', () => {
+      const { neurobus, neurobusHistory } = get(telemetry);
       for (const val of Object.values(neurobus)) {
-        expect(val).toBeInstanceOf(Array);
-        for (const element of val) {
-          expect(element).toBeTypeOf('number');
+        expect(val).toBeTypeOf('number');
+      }
+      for (const historyArr of Object.values(neurobusHistory)) {
+        expect(historyArr).toBeInstanceOf(Array);
+        for (const val of historyArr) {
+          expect(val).toBeTypeOf('number');
         }
       }
     });
@@ -359,6 +375,7 @@ describe('telemetry store', () => {
       expect(state).toHaveProperty('provider');
       expect(state).toHaveProperty('connected');
       expect(state).toHaveProperty('neurobus');
+      expect(state).toHaveProperty('neurobusHistory');
     });
   });
 });
