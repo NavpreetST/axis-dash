@@ -1,4 +1,29 @@
 /**
+ * Resolved configuration for the live Helios bridge.
+ *
+ * Reads Vite public env vars at build/dev time. Defaults use secure
+ * `https` / `wss` schemes against `localhost` (treated as a secure
+ * context by browsers, so local dev against a non-TLS bridge works),
+ * and live mode is OFF by default — the dashboard runs on the seeded
+ * mock data until `PUBLIC_USE_LIVE_BRIDGE` is set to a truthy value.
+ *
+ * NOTE: uses SvelteKit's `$env/static/public` rather than
+ * `import.meta.env.PUBLIC_*`. The SvelteKit Vite plugin only inlines
+ * `import.meta.env.PUBLIC_*` in Svelte components / route modules —
+ * in plain `.ts` files it stays `undefined`, which is why the live
+ * bridge never engaged even with the env vars set. `$env/static/public`
+ * is reliably inlined everywhere at build time.
+ *
+ * Validation runs once at module load: insecure schemes are allowed for
+ * loopback hosts and flagged in the console for everything else.
+ */
+import {
+  PUBLIC_HELIOS_API_URL,
+  PUBLIC_HELIOS_WS_URL,
+  PUBLIC_USE_LIVE_BRIDGE
+} from '$env/static/public';
+
+/**
  * Hosts that browsers treat as secure contexts even over plain http/ws.
  * Used by {@link validateHeliosUrls} to permit insecure schemes only
  * for local development.
@@ -68,30 +93,18 @@ function validateHeliosUrls(api: string, ws: string): { api: URL; ws: URL } {
   return { api: parsedApi, ws: parsedWs };
 }
 
-/**
- * Resolved configuration for the live Helios bridge.
- *
- * Reads Vite public env vars at build/dev time. Defaults use secure
- * `https` / `wss` schemes against `localhost` (treated as a secure
- * context by browsers, so local dev against a non-TLS bridge works),
- * and live mode is OFF by default — the dashboard runs on the seeded
- * mock data until `PUBLIC_USE_LIVE_BRIDGE` is set to a truthy value.
- *
- * Validation runs once at module load: insecure schemes are allowed for
- * loopback hosts and flagged in the console for everything else.
- */
 export const config = {
   /** Base URL for HTTP and SSE endpoints exposed by the Helios bridge. */
-  heliosApiUrl: import.meta.env.PUBLIC_HELIOS_API_URL ?? 'https://localhost:8080',
+  heliosApiUrl: PUBLIC_HELIOS_API_URL ?? 'https://localhost:8080',
   /** Base URL for WebSocket endpoints exposed by the Helios bridge. */
-  heliosWsUrl: import.meta.env.PUBLIC_HELIOS_WS_URL ?? 'wss://localhost:8080',
+  heliosWsUrl: PUBLIC_HELIOS_WS_URL ?? 'wss://localhost:8080',
   /**
    * Master switch for the live bridge. True when `PUBLIC_USE_LIVE_BRIDGE`
    * resolves to a truthy string (`true` / `1` / `yes` / `on` / `enabled`,
    * case-insensitive). Any other value (including unset) keeps the
    * dashboard on mock data.
    */
-  useLiveBridge: parseBool(import.meta.env.PUBLIC_USE_LIVE_BRIDGE)
+  useLiveBridge: parseBool(PUBLIC_USE_LIVE_BRIDGE)
 } as const;
 
 // Run validation once at module load. Failures to parse are surfaced by
@@ -106,7 +119,7 @@ validateHeliosUrls(config.heliosApiUrl, config.heliosWsUrl);
 // fastest way to see whether the variable is unset, mistyped, or just
 // stale relative to the last build.
 if (typeof console !== 'undefined') {
-  const raw = import.meta.env.PUBLIC_USE_LIVE_BRIDGE;
+  const raw = PUBLIC_USE_LIVE_BRIDGE;
   console.info('[helios] config', {
     useLiveBridge: config.useLiveBridge,
     heliosApiUrl: config.heliosApiUrl,
