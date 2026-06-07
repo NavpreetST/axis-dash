@@ -19,6 +19,7 @@ import json
 import logging
 import os
 from pathlib import Path
+from urllib.parse import quote
 
 log = logging.getLogger(__name__)
 
@@ -119,7 +120,10 @@ async def _upload_file(
 
     headers = {
         "Authorization": upload_token,
-        "X-Bz-File-Name": file_name,
+        "X-Bz-File-Name": quote(
+            file_name,
+            safe="ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._-/~!$'*;=:@",
+        ),
         "Content-Type": "application/octet-stream",
         "Content-Length": str(len(file_content)),
         "X-Bz-Content-Sha1": content_sha1,
