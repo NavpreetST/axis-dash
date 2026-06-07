@@ -23,6 +23,7 @@ from aegis.renderer import dispatcher
 from aegis.hive import text_encoder
 from aegis.mnemosyne import write, retrieve
 from aegis.observability import turns
+from aegis.observability import eventlog, supabase_sync, b2_sync
 from aegis.mnemosyne.db import CONN as _MNEMO_CONN, seed_if_empty as _seed_if_empty
 from aegis.renderer.gemini import validate_sku as _validate_sku
 
@@ -85,7 +86,10 @@ async def main() -> None:
         asyncio.create_task(neurobus.run()),
         asyncio.create_task(ncp.run()),
         asyncio.create_task(dispatcher.run()),
-        asyncio.create_task(turns.run()),  # B2 turn-log writer
+        asyncio.create_task(turns.run()),  # turn-log writer
+        asyncio.create_task(eventlog.run()),  # eventlog JSONL writer
+        asyncio.create_task(supabase_sync.run()),  # Supabase mirror (optional)
+        asyncio.create_task(b2_sync.run()),  # B2 cold backup (optional)
         asyncio.create_task(write.run()),
         asyncio.create_task(retrieve.run()),
         asyncio.create_task(serve_unix_socket()),
