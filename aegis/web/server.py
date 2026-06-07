@@ -78,7 +78,6 @@ ALLOWED_ORIGINS: set[str] = {
 }
 
 # WebSocket close codes (RFC 6455). 4401 = application-defined auth failure.
-WS_CLOSE_POLICY_VIOLATION = 1008
 WS_CLOSE_APP_AUTH_FAILED = 4401
 
 
@@ -585,7 +584,6 @@ async def chat_ws(ws: WebSocket) -> None:
 # ---- P0 bridge: /logs (SSE, auth via header or ?token=) -------------------
 
 
-_FILENAME_RE = re.compile(r"^\d{4}-\d{2}-\d{2}\.jsonl$")
 
 
 def _today_eventlog_path() -> Path:
@@ -668,15 +666,6 @@ async def logs_sse(request: Request) -> StreamingResponse:
     if not _check_token(request):
         raise HTTPException(status_code=401, detail="auth_required")
 
-    origin = request.headers.get("origin")
-    cors_headers = {}
-    if origin and origin in ALLOWED_ORIGINS:
-        cors_headers = {
-            "Access-Control-Allow-Origin": origin,
-            "Access-Control-Allow-Credentials": "true",
-            "Vary": "Origin",
-        }
-
     async def event_stream():
         # Yield an initial comment to flush headers immediately.
         # EventSource / browser needs the response headers right away.
@@ -692,7 +681,6 @@ async def logs_sse(request: Request) -> StreamingResponse:
         headers={
             "Cache-Control": "no-cache",
             "X-Accel-Buffering": "no",
-            **cors_headers,
         },
     )
 

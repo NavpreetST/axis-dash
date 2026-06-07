@@ -63,23 +63,28 @@ def _build_orb_snapshot() -> dict:
     """Build the richer orb snapshot for the web server.
 
     Best-effort: if optional imports fail, fall back to safe defaults.
+    Import errors are logged at debug; the tick loop must never be killed
+    by a missing optional module.
     """
     now = datetime.now(timezone.utc).isoformat()
     snap: dict = {"updated_at": now, **asdict(STATE)}
     try:
         from aegis.brain.ncp import hidden_state_vec
         snap["h"] = hidden_state_vec()
-    except Exception:
+    except (ImportError, ModuleNotFoundError) as e:
+        log.debug("orb snapshot: hidden_state_vec unavailable — %s", e)
         snap["h"] = []
     try:
         from aegis.renderer import _is_speaking as _spk
         snap["is_speaking"] = _spk
-    except Exception:
+    except (ImportError, ModuleNotFoundError) as e:
+        log.debug("orb snapshot: _is_speaking unavailable — %s", e)
         snap["is_speaking"] = False
     try:
         from aegis.mnemosyne.write import pop_last_event
         snap["mnemosyne_event"] = pop_last_event()
-    except Exception:
+    except (ImportError, ModuleNotFoundError) as e:
+        log.debug("orb snapshot: pop_last_event unavailable — %s", e)
         snap["mnemosyne_event"] = None
     return snap
 
@@ -103,13 +108,13 @@ async def run() -> None:
                     NEUROBUS_STATE_PATH,
                     {"updated_at": now, **asdict(STATE)},
                 )
-            except (OSError, ValueError) as e:
+            except (OSError, ValueError, TypeError) as e:
                 log.warning("neurobus: failed to write neurobus_state — %s", e)
             # Write the richer orb snapshot for the web server.
             try:
                 orb_path = _orb_state_dir() / "orb_state.json"
                 atomic_write_json(orb_path, _build_orb_snapshot())
-            except (OSError, ValueError) as e:
+            except (OSError, ValueError, TypeError) as e:
                 log.warning("neurobus: failed to write orb_state — %s", e)
 
     async def on_sense() -> None:
