@@ -115,7 +115,10 @@ branch). This local copy is for quick reference.
   to the neurobus state write in `aegis/nexus/neurobus.py:on_tick`.
 - **`_find_daemon_pid()` scans /proc on every WS tick** — runs at 1 Hz per
   connected client. Fine for 1-2 clients, but will add up if AXIS opens
-  multiple WebSockets. Consider caching the PID with a TTL.
+  multiple WebSockets. Consider caching the PID with a TTL. Note: the
+  `/health` double-call correctness issue (Bug 5) was already fixed by
+  computing `daemon_pid` once and threading it through
+  `_daemon_uptime_seconds_for_pid()`.
 
 ### Infrastructure / operational
 - **`/run/aegis/` directory missing** — the live launch uses
@@ -159,7 +162,7 @@ branch). This local copy is for quick reference.
 
 ## Verification (current state, 2026-06-07)
 
-```
+```text
 Auth tests: 9/9 pass
   WS /state ?token=  fields=14  (was 13, +coherence)
   WS /state Bearer   fields=14
