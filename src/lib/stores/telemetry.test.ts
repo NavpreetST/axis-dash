@@ -1,4 +1,4 @@
-import { describe, it, expect, afterEach, vi } from 'vitest';
+import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest';
 import { get } from 'svelte/store';
 
 // Re-import the factory so each test gets a fresh store instance
@@ -385,6 +385,223 @@ describe('telemetry store', () => {
       expect(state).toHaveProperty('connected');
       expect(state).toHaveProperty('neurobus');
       expect(state).toHaveProperty('neurobusHistory');
+    });
+  });
+
+  // --- Live bridge contract ---
+  // The Helios /state WebSocket sends a 14-field JSON frame on every
+  // tick. These tests pin the dashboard-side parsing contract so the
+  // three nuances called out in the contract doc stay correct:
+  //   1. `connected: false` at idle is expected (the renderer only
+  //      writes on chat turns, so the daemon-state file is stale when
+  //      no turn is in flight). The transport is still healthy. The
+  //      dashboard MUST key liveness off the WS lifecycle, not the
+  //      frame's `connected` field.
+  //   2. `pam` is hardcoded null on the wire — the bridge has no
+  //      runtime source for it. The store MUST preserve null (not
+  //      coerce to 0 or `undefined`) so the UI renders `--`.
+  //   3. `tick_id` is always 0 and `tick_rate` is the documented
+  //      constant 1.0. The store accepts them as plain numbers; no
+  //      special-casing is required, but the contract test pins the
+  //      shape so a future bridge change surfaces as a test diff.
+  describe('live /state frame contract', () => {
+    // A representative frame shape matching what the live Helios
+    // bridge emits. Includes every field the store consumes, plus the
+    // two extra fields the bridge sends that the store intentionally
+    // does not model (`tick_id`, `last_action_type`).
+    const liveFrame: Partial<TelemetryData> = {
+      uptime_seconds: 75114,
+      tick_rate: 1.0,
+      pam: null,
+      rpd_used: 18,
+      rpd_budget: 240,
+      provider: 'gemini',
+      connected: false,
+      is_speaking: false,
+      neurobus: {
+        reward: 0.42,
+        novelty: 0.31,
+        attention: 0.55,
+        patience: 0.61,
+        threat: 0.05,
+        trust: 0.78
+      }
+    };
+
+    beforeEach(() => {
+      // Start each contract test from the unknown snapshot so prior
+      // mock-mode ticks don't pollute the assertions. We don't go
+      // through `start()` here because the contract tests are about
+      // pure `applyLiveFrame` semantics, not the interval.
+      telemetry.resetToUnknown();
+    });
+
+    it('applies every known field from a live frame', () => {
+      telemetry.applyLiveFrame(liveFrame);
+      const s = get(telemetry);
+      expect(s.uptime_seconds).toBe(75114);
+      expect(s.tick_rate).toBe(1.0);
+      expect(s.pam).toBeNull();
+      expect(s.rpd_used).toBe(18);
+      expect(s.rpd_budget).toBe(240);
+      expect(s.provider).toBe('gemini');
+      expect(s.is_speaking).toBe(false);
+      expect(s.neurobus).toEqual(liveFrame.neurobus);
+    });
+
+    it('appends to neurobus history for every channel present in the frame', () => {
+      telemetry.applyLiveFrame(liveFrame);
+      const s = get(telemetry);
+      for (const key of Object.keys(s.neurobus) as (keyof Neurobus)[]) {
+        expect(s.neurobusHistory[key]).toEqual([liveFrame.neurobus![key]]);
+      }
+    });
+
+    it('ignores unknown / future bridge fields without throwing', () => {
+      // Bridge may add fields the store hasn't modelled yet. The
+      // store must accept the frame and not crash on unknown keys.
+      expect(() => {
+        telemetry.applyLiveFrame({
+          ...liveFrame,
+          tick_id: 0,
+          last_action_type: 'idle',
+          mnemosyne_event: null,
+          h: [0.0, 0.0, 0.5]
+        } as Partial<TelemetryData>);
+      }).not.toThrow();
+      // Sanity: known fields still landed.
+      const s = get(telemetry);
+      expect(s.uptime_seconds).toBe(75114);
+    });
+
+    it('keeps a missing field at its previous value (no overwrite with undefined)', () => {
+      telemetry.applyLiveFrame(liveFrame);
+      const after = get(telemetry);
+      telemetry.applyLiveFrame({ uptime_seconds: 99999 }); // only uptime
+      const s = get(telemetry);
+      expect(s.uptime_seconds).toBe(99999);
+      expect(s.tick_rate).toBe(after.tick_rate);
+      expect(s.pam).toBeNull();
+      expect(s.rpd_used).toBe(18);
+      expect(s.rpd_budget).toBe(240);
+      expect(s.provider).toBe('gemini');
+    });
+
+    it('accepts tick_id / tick_rate of their documented contract values', () => {
+      // tick_id is always 0, tick_rate is always 1.0 — pinned here so
+      // any future bridge change is a deliberate test update.
+      const frame1 = { ...liveFrame, tick_id: 0, tick_rate: 1.0 };
+      telemetry.applyLiveFrame(frame1 as Partial<TelemetryData>);
+      expect(get(telemetry).tick_rate).toBe(1.0);
+
+      const frame2 = { ...liveFrame, tick_id: 0, tick_rate: 1.0 };
+      telemetry.applyLiveFrame(frame2 as Partial<TelemetryData>);
+      expect(get(telemetry).tick_rate).toBe(1.0);
+    });
+  });
+
+  // --- Freshness / connected guard ---
+  // The frame's `connected` field is daemon-health metadata: the
+  // Helios renderer only writes the daemon-state file on chat
+  // turns, so when no turn is in flight the field is `false` even
+  // though the bridge WebSocket itself is fully open. The dashboard
+  // would flicker every frame between `--` and the real values if
+  // we let the frame flip `state.connected`. The WS lifecycle
+  // (`onopen` / `onclose`) is the sole owner of that flag.
+  describe('freshness / connected guard', () => {
+    it('does NOT let a frame with connected:false flip the store flag while the WS is open', () => {
+      // Simulate the WS having just opened.
+      telemetry.setConnected(true);
+      expect(get(telemetry).connected).toBe(true);
+
+      // Bridge sends a frame with connected:false (renderer idle,
+      // no chat turn in flight). The store MUST keep `connected: true`
+      // because the transport is healthy.
+      telemetry.applyLiveFrame({
+        uptime_seconds: 100,
+        tick_rate: 1.0,
+        pam: null,
+        connected: false
+      });
+
+      expect(get(telemetry).connected).toBe(true);
+    });
+
+    it('does NOT let a frame with connected:true revive a closed WS', () => {
+      // Simulate the WS having just closed.
+      telemetry.setConnected(false);
+      expect(get(telemetry).connected).toBe(false);
+
+      // A frame arriving during a reconnect attempt (race: in-flight
+      // from before the close) MUST NOT mark us as connected. Only
+      // `setConnected(true)` — called from `ws.onopen` — can do that.
+      telemetry.applyLiveFrame({
+        uptime_seconds: 200,
+        tick_rate: 1.0,
+        pam: null,
+        connected: true
+      });
+
+      expect(get(telemetry).connected).toBe(false);
+    });
+
+    it('preserves the connected flag through many frames with mixed values', () => {
+      telemetry.setConnected(true);
+      for (let i = 0; i < 20; i++) {
+        telemetry.applyLiveFrame({
+          uptime_seconds: 1000 + i,
+          tick_rate: 1.0,
+          pam: null,
+          connected: i % 2 === 0 // alternates, but the WS is "open"
+        });
+      }
+      expect(get(telemetry).connected).toBe(true);
+      expect(get(telemetry).uptime_seconds).toBe(1019);
+    });
+  });
+
+  // --- pam:null invariant ---
+  // `pam` is hardcoded null on the wire — the bridge has no runtime
+  // source for it (per the Helios contract doc). The store must
+  // preserve null (not coerce to 0 or `undefined`) and the UI
+  // renders `--` for null. Without this invariant, the KPI strip
+  // would either show a fake `0.00` (misleading) or crash the
+  // `pamThreshold` color function.
+  describe('pam:null invariant', () => {
+    it('preserves an explicit null pam from the frame', () => {
+      telemetry.resetToUnknown();
+      expect(get(telemetry).pam).toBeNull();
+      telemetry.applyLiveFrame({ uptime_seconds: 100, tick_rate: 1.0, pam: null });
+      expect(get(telemetry).pam).toBeNull();
+    });
+
+    it('keeps the previous pam value when the frame omits the field', () => {
+      telemetry.resetToUnknown();
+      telemetry.applyLiveFrame({ uptime_seconds: 100, tick_rate: 1.0, pam: 0.91 });
+      expect(get(telemetry).pam).toBe(0.91);
+      telemetry.applyLiveFrame({ uptime_seconds: 200, tick_rate: 1.0 }); // no pam
+      expect(get(telemetry).pam).toBe(0.91);
+    });
+
+    it('treats pam:0 as a real value, not a missing value', () => {
+      telemetry.resetToUnknown();
+      telemetry.applyLiveFrame({ uptime_seconds: 100, tick_rate: 1.0, pam: 0 });
+      expect(get(telemetry).pam).toBe(0);
+      // 0 is a valid PAM reading; it is NOT null and the UI must
+      // render `0.00`, not `--`. This guards against an over-eager
+      // truthiness check (`frame.pam || state.pam`) that would lose it.
+    });
+
+    it('round-trips a sequence of (real, null, real, omitted) without losing values', () => {
+      telemetry.resetToUnknown();
+      telemetry.applyLiveFrame({ uptime_seconds: 1, tick_rate: 1.0, pam: 0.42 });
+      expect(get(telemetry).pam).toBe(0.42);
+      telemetry.applyLiveFrame({ uptime_seconds: 2, tick_rate: 1.0, pam: null });
+      expect(get(telemetry).pam).toBeNull();
+      telemetry.applyLiveFrame({ uptime_seconds: 3, tick_rate: 1.0, pam: 0.55 });
+      expect(get(telemetry).pam).toBe(0.55);
+      telemetry.applyLiveFrame({ uptime_seconds: 4, tick_rate: 1.0 }); // omitted
+      expect(get(telemetry).pam).toBe(0.55);
     });
   });
 });
