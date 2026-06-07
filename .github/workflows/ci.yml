@@ -1,0 +1,76 @@
+name: ci
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    name: lint (ruff)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+
+      - name: Install ruff
+        run: uv pip install --system 'ruff>=0.4'
+
+      - name: Ruff check
+        run: ruff check .
+
+  unit-tests:
+    name: unit tests (pytest)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+
+      # Install the aegis package itself without the heavy ML runtime deps
+      # (torch / sentence-transformers / ncps / numpy) which the current
+      # unit-test surface does not need. This keeps CI fast and cache-friendly.
+      # When tests start needing those deps we promote to a full `uv sync`.
+      - name: Install aegis (no deps) + test tools
+        run: |
+          uv pip install --system -e . --no-deps
+          uv pip install --system 'pytest>=8' 'pytest-asyncio>=0.23'
+
+      - name: Pytest
+        run: pytest -q tests
+
+  drift-arch-guard:
+    # Blocking gate per Phase 4 step 1. Today this runs a stub that exits 0;
+    # the job is wired here so the moment real drift / architecture checks
+    # land in scripts/drift_arch_guard.sh, the gate is already in place.
+    name: drift / arch guard
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run drift / arch guard
+        run: bash scripts/drift_arch_guard.sh
