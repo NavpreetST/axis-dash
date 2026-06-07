@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "aegis-event",
+  "type": "object",
+  "required": ["schema_version","timestamp","source","event_type","payload","severity","provenance","sensitivity"],
+  "properties": {
+    "schema_version": { "type": "integer", "const": 1 },
+    "timestamp": { "type": "string", "format": "date-time" },
+    "source": { "enum": ["notion","antigravity","opencode","helios","aegis","coderabbit","ci","navpreets"] },
+    "event_type": { "enum": ["chat_turn","error","task_created","task_updated","task_done","pr_opened","review_posted","gate_result","merge","drift_flag"] },
+    "payload": { "type": "object" },
+    "severity": { "enum": ["info","warn","error","critical"] },
+    "provenance": { "type": "object" },
+    "sensitivity": { "enum": ["public","internal","secret"] }
+  },
+  "additionalProperties": false
+}
