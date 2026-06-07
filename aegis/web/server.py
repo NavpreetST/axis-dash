@@ -402,6 +402,187 @@ def _daemon_uptime_seconds_for_pid(pid: int | None) -> int | None:
     return int(elapsed)
 
 
+# ---- Phase 3 (P1): runtime-truth / drift-watchdog -----------------------
+
+import subprocess as _subprocess
+
+# Cached at first call — commit and socket path are stable for the
+# bridge's lifetime. State-dependent fields are recomputed each call.
+_RUNTIME_CACHE: dict | None = None
+
+# NCP dims are a documented constant from the daemon startup log
+# (aegis/main.py logs "ncp brain online; params=41361"). The hidden
+# state size is 64 per the orb_state.json shape.
+NCP_PARAMS = 41361
+NCP_HIDDEN_SIZE = 64
+
+# Repo path for git rev lookup. Override via env for portable config.
+_REPO_DIR = os.getenv("AEGIS_REPO_DIR", "/opt/aegis")
+
+# Memory backend path per README §Architecture.
+_MEMORY_DB = Path(
+    os.getenv("AEGIS_MEMORY_DB", str(Path.home() / ".local/share/aegis/mnemosyne.db"))
+)
+
+
+def _git_short_commit() -> str | None:
+    """Return the short git commit hash, or None on failure."""
+    try:
+        out = _subprocess.run(
+            ["git", "rev-parse", "--short", "HEAD"],
+            cwd=_REPO_DIR,
+            capture_output=True,
+            text=True,
+            timeout=2,
+        )
+        if out.returncode == 0:
+            return out.stdout.strip() or None
+    except (FileNotFoundError, _subprocess.TimeoutExpired, OSError):
+        pass
+    return None
+
+
+def _detect_launch_method(pid: int | None) -> str:
+    """Heuristic launch method from the daemon's /proc/<pid>/cmdline.
+
+    Returns "nohup", "systemd", "direct", or "unknown".
+    """
+    if pid is None:
+        return "unknown"
+    try:
+        with open(f"/proc/{pid}/cmdline", "rb") as f:
+            cmdline = b" ".join(f.read().split(b"\x00")).decode("utf-8", "replace").lower()
+    except (FileNotFoundError, ProcessLookupError, PermissionError, OSError):
+        return "unknown"
+    if "nohup" in cmdline:
+        return "nohup"
+    # Check parent PID — if it's 1 (init/systemd), likely launched by systemd
+    try:
+        with open(f"/proc/{pid}/stat", "r") as f:
+            stat = f.read()
+        rpar = stat.rfind(")")
+        if rpar >= 0:
+            fields = stat[rpar + 1:].split()
+            if len(fields) >= 3:
+                ppid = int(fields[1])
+                if ppid == 1:
+                    return "systemd"
+    except (FileNotFoundError, ProcessLookupError, PermissionError, ValueError, OSError):
+        pass
+    return "direct"
+
+
+def _renderer_chain(rend_data: dict) -> list[str]:
+    """Extract renderer chain order from renderer_state.json.
+
+    Prefers the explicit `chain` field; falls back to provider keys sorted.
+    """
+    chain = rend_data.get("chain")
+    if isinstance(chain, list) and chain:
+        return [str(p) for p in chain if isinstance(p, str)]
+    providers = rend_data.get("providers") or {}
+    if isinstance(providers, dict) and providers:
+        return sorted(providers.keys())
+    return []
+
+
+def _budget(rend_data: dict) -> dict:
+    """Extract per-provider daily budget from renderer_state.json."""
+    providers = rend_data.get("providers") or {}
+    if not isinstance(providers, dict):
+        return {}
+    out = {}
+    for name, cfg in providers.items():
+        if not isinstance(cfg, dict):
+            continue
+        used = cfg.get("local_daily_used")
+        budget = cfg.get("local_daily_budget")
+        if used is not None or budget is not None:
+            out[name] = {
+                "used": int(used) if isinstance(used, (int, float)) else None,
+                "budget": int(budget) if isinstance(budget, (int, float)) else None,
+                "window": cfg.get("quota_window"),
+            }
+    return out
+
+
+def _known_issues(
+    orb_meta: dict, rend_meta: dict, daemon_pid: int | None
+) -> list[str]:
+    """Dynamic drift detection. Empty list = no known issues.
+
+    Each issue is a short tag like "state_stale:orb_state.json".
+    """
+    issues: list[str] = []
+
+    # State file freshness
+    if not orb_meta.get("exists"):
+        issues.append("state_missing:orb_state.json")
+    elif orb_meta.get("age_seconds") is not None and orb_meta["age_seconds"] > STALE_THRESHOLD_SECONDS:
+        issues.append("state_stale:orb_state.json")
+
+    if not rend_meta.get("exists"):
+        issues.append("state_missing:renderer_state.json")
+    elif rend_meta.get("age_seconds") is not None and rend_meta["age_seconds"] > STALE_THRESHOLD_SECONDS:
+        issues.append("state_stale:renderer_state.json")
+
+    # Socket staleness: file exists but daemon not running
+    try:
+        sock_exists = SOCK_PATH.exists()
+    except OSError:
+        sock_exists = False
+    if sock_exists and daemon_pid is None:
+        issues.append(f"socket_orphaned:{SOCK_PATH}")
+
+    # Token not configured
+    if not HELIOS_TOKEN:
+        issues.append("token_unset:HELIOS_TOKEN")
+
+    # Memory DB missing
+    if not _MEMORY_DB.exists():
+        issues.append(f"memory_db_missing:{_MEMORY_DB}")
+
+    return issues
+
+
+def _runtime_meta() -> dict:
+    """Build the runtime meta block for /state and /health.
+
+    Cached on first call for stable fields (commit, socket_path).
+    State-dependent fields (known_issues, budget) are recomputed each
+    call by reading fresh state files.
+    """
+    global _RUNTIME_CACHE
+    if _RUNTIME_CACHE is None:
+        _RUNTIME_CACHE = {
+            "commit": _git_short_commit(),
+            "socket_path": str(SOCK_PATH),
+        }
+
+    # Recomputed each call (fresh state)
+    orb_meta = _load_state_meta("orb_state.json")
+    rend_meta = _load_state_meta("renderer_state.json")
+    rend_data = rend_meta["data"]
+    daemon_pid = _find_daemon_pid()
+
+    meta = dict(_RUNTIME_CACHE)  # shallow copy
+    meta["launch_method"] = _detect_launch_method(daemon_pid)
+    meta["renderer_chain"] = _renderer_chain(rend_data)
+    meta["memory_backend"] = {
+        "type": "sqlite",
+        "path": str(_MEMORY_DB),
+        "exists": _MEMORY_DB.exists(),
+    }
+    meta["ncp"] = {
+        "params": NCP_PARAMS,
+        "hidden_size": NCP_HIDDEN_SIZE,
+    }
+    meta["budget"] = _budget(rend_data)
+    meta["known_issues"] = _known_issues(orb_meta, rend_meta, daemon_pid)
+
+    return meta
+
+
 def _build_state() -> dict[str, Any]:
     orb_meta = _load_state_meta("orb_state.json")
     rend_meta = _load_state_meta("renderer_state.json")
@@ -440,6 +621,9 @@ def _build_state() -> dict[str, Any]:
         "tick_rate": TICK_RATE_HZ,
         "pam": PAM_UNRESOLVED,
         "coherence": COHERENCE_UNRESOLVED,
+        # Phase 3 (P1): runtime-truth / drift-watchdog. ADDITIVE field.
+        # Does not change any of the 14 fields above.
+        "runtime": _runtime_meta(),
     }
 
 
@@ -514,6 +698,9 @@ async def health(request: Request) -> dict[str, Any]:
         "tick_rate": TICK_RATE_HZ,
         "pam": PAM_UNRESOLVED,
         "coherence": COHERENCE_UNRESOLVED,
+        # Phase 3 (P1): runtime-truth / drift-watchdog. Same shape as
+        # the /state runtime field for consistency.
+        "runtime": _runtime_meta(),
     }
 
 
