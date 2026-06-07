@@ -24,8 +24,6 @@ import sys
 
 import httpx
 from aegis.renderer import _quota
-
-from aegis.nexus.bus import BUS
 from aegis.renderer import QuotaExhausted, TransientError
 
 log = logging.getLogger(__name__)

@@ -23,8 +23,7 @@ import logging
 import time
 
 from aegis.nexus.bus import BUS
-from aegis.renderer import QuotaExhausted, TransientError, RendererError, _is_speaking as _set_speaking_flag
-from aegis.renderer import gemini, fallback, groq
+from aegis.renderer import QuotaExhausted, TransientError, RendererError
 
 log = logging.getLogger(__name__)
 
@@ -67,7 +66,8 @@ async def run() -> None:
             log.info("dispatcher: intent skipped: action=%s", intent.get("action"))
             continue
 
-        import aegis.renderer as _renderer; _renderer._is_speaking = True
+        import aegis.renderer as _renderer
+        _renderer._is_speaking = True
         result = await _render_with_chain(intent)
         await BUS.publish("action.speak", result)
         _renderer._is_speaking = False
