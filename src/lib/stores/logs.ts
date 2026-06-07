@@ -29,7 +29,17 @@ const initialLogs: LogLine[] = [
     timestamp: '14:22:03',
     source: 'sys',
     type: 'info',
-    message: 'gemini ok • groq ok • rpd 37/240'
+    // RPD/usage figures were intentionally removed: the dashboard
+    // reports them on the KPI strip from `$telemetry.rpd_used` /
+    // `$telemetry.rpd_budget`, but the value shown here was a hardcoded
+    // seed string that never updated. In live mode the bridge sends
+    // the real RPD via /state, and the seed text would have been
+    // visibly stale (e.g. seed says 37/240, KPI says 18/240). A clean
+    // refresh never reconciles them because the seed is permanent
+    // initial state. Provider status (gemini / groq reachability) is
+    // still useful as decorative seed content; the numeric RPD claim
+    // is not, so it has been dropped.
+    message: 'gemini ok • groq ok'
   },
   {
     id: 'seed-log-4',
