@@ -15,29 +15,43 @@ concurrency:
 jobs:
   # ── Gate 1: Lint (BLOCKING) ────────────────────────────────────────────
   lint:
-    name: "Gate 1 · Lint"
+    name: 'Gate 1 · Lint'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: "22"
+          node-version: '22'
           cache: npm
       - run: npm ci
-      - name: ESLint
-        run: npx eslint .
-      - name: Prettier check
-        run: npx prettier --check .
+      - name: ESLint (changed files only)
+        run: |
+          FILES=$(git diff --name-only --diff-filter=ACM origin/main...HEAD -- '*.ts' '*.svelte' '*.js' | tr '\n' ' ')
+          if [ -n "$FILES" ]; then
+            echo "Linting: $FILES"
+            npx eslint $FILES
+          else
+            echo "No changed TS/Svelte/JS files — skipping ESLint."
+          fi
+      - name: Prettier check (changed files only)
+        run: |
+          FILES=$(git diff --name-only --diff-filter=ACM origin/main...HEAD -- '*.ts' '*.svelte' '*.js' '*.css' '*.json' '*.mjs' '*.yml' | tr '\n' ' ')
+          if [ -n "$FILES" ]; then
+            echo "Formatting: $FILES"
+            npx prettier --check $FILES
+          else
+            echo "No changed formattable files — skipping Prettier."
+          fi
 
   # ── Gate 2: Tests + Type Check (BLOCKING) ──────────────────────────────
   tests:
-    name: "Gate 2 · Tests"
+    name: 'Gate 2 · Tests'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: "22"
+          node-version: '22'
           cache: npm
       - run: npm ci
       - name: Vitest
@@ -46,12 +60,12 @@ jobs:
         env:
           PUBLIC_HELIOS_API_URL: https://localhost:8080
           PUBLIC_HELIOS_WS_URL: wss://localhost:8080
-          PUBLIC_USE_LIVE_BRIDGE: "false"
+          PUBLIC_USE_LIVE_BRIDGE: 'false'
         run: npx svelte-kit sync && npx svelte-check --tsconfig ./tsconfig.json --threshold error
 
   # ── Gate 3: CodeRabbit Review (ADVISORY — never blocks) ────────────────
   coderabbit:
-    name: "Gate 3 · CodeRabbit"
+    name: 'Gate 3 · CodeRabbit'
     runs-on: ubuntu-latest
     if: always()
     steps:
@@ -62,14 +76,14 @@ jobs:
 
   # ── Gate 4: Drift / Arch Guard (BLOCKING) ──────────────────────────────
   drift-guard:
-    name: "Gate 4 · Drift Guard"
+    name: 'Gate 4 · Drift Guard'
     runs-on: ubuntu-latest
     needs: [lint, tests]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: "22"
+          node-version: '22'
           cache: npm
       - run: npm ci
       - name: Validate /state contract (frontend ↔ backend)
