@@ -71,7 +71,7 @@ function extractInterfaceFields(source) {
 
 function extractApplyLiveFrameFields(source) {
   const fnMatch = source.match(
-    /const\s+applyLiveFrame\s*=\s*\([^)]*\)\s*=>\s*\{([\s\S]*?)\n  \};/
+    /const\s+applyLiveFrame\s*=\s*\([^)]*\)\s*=>\s*\{([\s\S]*?)\n[\s]{2}\};/
   );
   if (!fnMatch) return null;
 

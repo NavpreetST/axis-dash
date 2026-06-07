@@ -43,6 +43,10 @@ jobs:
       - name: Vitest
         run: npx vitest run
       - name: Svelte Check
+        env:
+          PUBLIC_HELIOS_API_URL: https://localhost:8080
+          PUBLIC_HELIOS_WS_URL: wss://localhost:8080
+          PUBLIC_USE_LIVE_BRIDGE: "false"
         run: npx svelte-kit sync && npx svelte-check --tsconfig ./tsconfig.json --threshold error
 
   # ── Gate 3: CodeRabbit Review (ADVISORY — never blocks) ────────────────
