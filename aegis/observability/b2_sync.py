@@ -54,7 +54,7 @@ def _save_manifest(manifest: dict[str, str]) -> None:
         log.warning("b2: failed to save manifest — %s", e)
 
 
-def _sha256(path: Path) -> str:
+def _sha256_sync(path: Path) -> str:
     h = hashlib.sha256()
     with open(path, "rb") as f:
         for chunk in iter(lambda: f.read(8192), b""):
@@ -62,12 +62,20 @@ def _sha256(path: Path) -> str:
     return h.hexdigest()
 
 
-def _sha1(path: Path) -> str:
+def _sha1_sync(path: Path) -> str:
     h = hashlib.sha1()
     with open(path, "rb") as f:
         for chunk in iter(lambda: f.read(8192), b""):
             h.update(chunk)
     return h.hexdigest()
+
+
+async def _sha256(path: Path) -> str:
+    return await asyncio.to_thread(_sha256_sync, path)
+
+
+async def _sha1(path: Path) -> str:
+    return await asyncio.to_thread(_sha1_sync, path)
 
 
 async def _get_b2_auth() -> dict:
@@ -177,7 +185,7 @@ async def run() -> None:
 
             for fpath in jsonl_files:
                 fname = fpath.name
-                current_hash = _sha256(fpath)
+                current_hash = await _sha256(fpath)
 
                 # Skip if already uploaded with same hash
                 if manifest.get(fname) == current_hash:

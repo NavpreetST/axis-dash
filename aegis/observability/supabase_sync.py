@@ -18,7 +18,7 @@ log = logging.getLogger(__name__)
 
 # Supabase REST API config — read from secrets.env via aegis.main bootstrap
 SUPABASE_URL = os.getenv("SUPABASE_URL", "")
-SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_KEY", "")
+SUPABASE_SERVICE_KEY = os.getenv("SUPABASE_SERVICE_KEY", "")
 TABLE_NAME = "events"
 
 # Batch settings — upsert N events at a time, flush every M seconds
@@ -30,7 +30,7 @@ _required_fields = frozenset({
     "payload", "severity", "provenance", "sensitivity",
 })
 
-_enabled = bool(SUPABASE_URL and SUPABASE_KEY)
+_enabled = bool(SUPABASE_URL and SUPABASE_SERVICE_KEY)
 
 
 def _validate_event(event: dict) -> bool:
@@ -44,8 +44,8 @@ async def _upsert_batch(batch: list[dict]) -> None:
 
     url = f"{SUPABASE_URL}/rest/v1/{TABLE_NAME}"
     headers = {
-        "apikey": SUPABASE_KEY,
-        "Authorization": f"Bearer {SUPABASE_KEY}",
+        "apikey": SUPABASE_SERVICE_KEY,
+        "Authorization": f"Bearer {SUPABASE_SERVICE_KEY}",
         "Content-Type": "application/json",
         "Prefer": "resolution=merge-duplicates",
     }
@@ -88,19 +88,17 @@ async def run() -> None:
         return
 
     buffer: list[dict] = []
-    last_flush = asyncio.get_event_loop().time()
 
     async def _flush() -> None:
-        nonlocal buffer, last_flush
+        nonlocal buffer
         if not buffer:
             return
         batch = list(buffer)
         buffer = []
-        last_flush = asyncio.get_event_loop().time()
         await _upsert_batch(batch)
 
     async def _listen() -> None:
-        nonlocal buffer, last_flush
+        nonlocal buffer
         while True:
             try:
                 msg = await asyncio.wait_for(q.get(), timeout=FLUSH_INTERVAL_SECONDS)
