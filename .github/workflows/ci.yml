@@ -29,19 +29,19 @@ jobs:
       - run: npm ci
       - name: ESLint (changed files only)
         run: |
-          FILES=$(git diff --name-only --diff-filter=ACM origin/main...HEAD -- '*.ts' '*.svelte' '*.js' | tr '\n' ' ')
+          FILES=$(git diff --name-only --diff-filter=ACM origin/main...HEAD -- '*.ts' '*.svelte' '*.js' | xargs)
           if [ -n "$FILES" ]; then
             echo "Linting: $FILES"
-            npx eslint "$FILES"
+            npx eslint $FILES
           else
             echo "No changed TS/Svelte/JS files — skipping ESLint."
           fi
       - name: Prettier check (changed files only)
         run: |
-          FILES=$(git diff --name-only --diff-filter=ACM origin/main...HEAD -- '*.ts' '*.svelte' '*.js' '*.css' '*.json' '*.mjs' '*.yml' | tr '\n' ' ')
+          FILES=$(git diff --name-only --diff-filter=ACM origin/main...HEAD -- '*.ts' '*.svelte' '*.js' '*.css' '*.json' '*.mjs' '*.yml' | xargs)
           if [ -n "$FILES" ]; then
             echo "Formatting: $FILES"
-            npx prettier --check "$FILES"
+            npx prettier --check $FILES
           else
             echo "No changed formattable files — skipping Prettier."
           fi
