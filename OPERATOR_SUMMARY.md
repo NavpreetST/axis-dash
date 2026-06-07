@@ -1,8 +1,8 @@
 # Helios Bridge — Complete Operator Handoff Summary
 
 **Date:** 2026-06-07
-**Branch:** `feat/bridge-query-auth`
-**PR:** https://github.com/NavpreetST/helios/pull/2
+**Branch:** `feat/post-merge-cleanup`
+**PR:** https://github.com/NavpreetST/helios/pull/6
 **Status:** Ready for merge. All 4 CodeRabbit reviews resolved. 9/9 auth tests pass.
 
 ---
@@ -198,7 +198,7 @@ class CORSMiddleware(BaseHTTPMiddleware):
 
 ## 7. Verification (Current State)
 
-```
+```text
 Auth tests: 9/9 pass
   WS /state ?token=  fields=14
   WS /state Bearer   fields=14
@@ -219,7 +219,7 @@ State files: orb_state.json + neurobus_state.json updating every 1s
 
 ## 8. Commit Log (11 Commits, All Pushed)
 
-```
+```text
 7e98829 docs: add OPERATOR_SUMMARY.md handoff for Navpreet
 dcdf95f docs(todo): address CodeRabbit review 4 on TODO.md
 495e159 docs: update TODO.md with CodeRabbit bug report resolutions
@@ -284,15 +284,15 @@ cf9d2f7 web: fix SSE CORS and flush headers immediately
 
 ## 10. Live State on Box
 
-```
-Daemon:  /opt/aegis/.venv/bin/python -m aegis.main  (PID 124842)
+```text
+Daemon:  <virtualenv_path>/bin/python -m aegis.main  (PID <pid>)
 Socket:  /tmp/aegis.sock
-Bridge:  /opt/aegis/.venv/bin/python -m aegis.web.server  (PID 123388)
-Env:     HELIOS_TOKEN=test-token-12345
+Bridge:  <virtualenv_path>/bin/python -m aegis.web.server  (PID <pid>)
+Env:     HELIOS_TOKEN=<REDACTED_TOKEN>
          AEGIS_SOCK=/tmp/aegis.sock
          ALLOWED_ORIGINS=https://axis-dash.vercel.app,http://localhost:5173
-Tunnel:  https://shoot-effect-seeker-marvel.trycloudflare.com → localhost:8080
-Vercel:  PUBLIC_HELIOS_TOKEN=test-token-12345
+Tunnel:  <tunnel_url> → localhost:8080
+Vercel:  PUBLIC_HELIOS_TOKEN=<REDACTED_TOKEN>
          Bridge URL points at the tunnel
 ```
 
@@ -300,15 +300,15 @@ Vercel:  PUBLIC_HELIOS_TOKEN=test-token-12345
 
 ```bash
 # Daemon
-cd /opt/aegis && nohup /opt/aegis/.venv/bin/python -m aegis.main \
+cd <project_dir> && nohup <virtualenv_path>/bin/python -m aegis.main \
   > /tmp/aegis-main.log 2>&1 & disown
 
 # Bridge
-cd /opt/aegis && HELIOS_TOKEN=<your-token> \
+cd <project_dir> && HELIOS_TOKEN=<your-token> \
   AEGIS_SOCK=/tmp/aegis.sock \
   ALLOWED_ORIGINS='https://axis-dash.vercel.app,http://localhost:5173' \
-  PYTHONPATH=/opt/aegis \
-  nohup /opt/aegis/.venv/bin/python -m aegis.web.server \
+  PYTHONPATH=<project_dir> \
+  nohup <virtualenv_path>/bin/python -m aegis.web.server \
   > /tmp/aegis-web.log 2>&1 & disown
 ```
 

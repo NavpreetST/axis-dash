@@ -67,4 +67,19 @@ def log_event(
                 f.flush()
                 os.fsync(f.fileno())
     except Exception as e:
-        print(f"[log_event FAILED] {e}: {line}", file=sys.stderr)
+        _ = sensitivity
+        try:
+            parsed = json.loads(line)
+            if parsed.get("sensitivity") == "secret":
+                parsed["payload"] = "<REDACTED>"
+                sanitized = json.dumps(parsed, ensure_ascii=False)
+            else:
+                subset = {
+                    "timestamp": parsed.get("timestamp"),
+                    "source": parsed.get("source"),
+                    "event_type": parsed.get("event_type")
+                }
+                sanitized = json.dumps(subset, ensure_ascii=False)
+            print(f"[log_event FAILED] {e}: {sanitized}", file=sys.stderr)
+        except Exception:
+            print(f"[log_event FAILED] {e} (failed to parse event line for sensitivity check in log_event)", file=sys.stderr)

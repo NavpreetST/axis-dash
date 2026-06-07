@@ -63,7 +63,8 @@ async def serve_unix_socket() -> None:
                     await writer.drain()
                     
                     from aegis.eventlog import log_event
-                    log_event(
+                    await asyncio.to_thread(
+                        log_event,
                         source="aegis",
                         event_type="chat_turn",
                         payload={
@@ -117,7 +118,8 @@ async def main() -> None:
             t.cancel()
     except Exception as e:
         from aegis.eventlog import log_event
-        log_event(
+        await asyncio.to_thread(
+            log_event,
             source="aegis",
             event_type="error",
             payload={"where": "main_loop", "err": str(e)},

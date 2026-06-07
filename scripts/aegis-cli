@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Aegis CLI — unix socket client.
 
-Default socket resolution: env $AEGIS_SOCK → /tmp/aegis.sock (foreground dev).
+Default socket resolution: env $AEGIS_SOCK → first existing path in DEFAULTS.
+DEFAULTS lists fallback paths: /tmp/aegis.sock and /run/aegis/aegis.sock.
 First existing path wins.
 
 Usage:
@@ -15,7 +16,7 @@ import threading
 import time
 from pathlib import Path
 
-DEFAULTS = ["/tmp/aegis.sock"]
+DEFAULTS = ["/tmp/aegis.sock", "/run/aegis/aegis.sock"]
 
 
 def _resolve_sock() -> str:

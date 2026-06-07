@@ -1,7 +1,7 @@
-"""Drift / arch guard — enforce the 14-field /state contract.
+"""Drift / arch guard — enforce the 15-field /state contract.
 
 This test prevents accidental field additions, removals, or type changes
-in the /state WebSocket response.  The 14 top-level keys and their types
+in the /state WebSocket response.  The 15 top-level keys and their types
 are FROZEN — any change MUST be reviewed by Navpreet and reflected here
 before merge.
 
@@ -28,6 +28,7 @@ _STATE_FIELDS: frozenset[str] = frozenset({
     "tick_rate",
     "pam",
     "coherence",
+    "runtime",
 })
 
 # neurobus sub-schema: exactly 6 float keys.
@@ -57,6 +58,7 @@ _FIELD_TYPES: dict[str, tuple[type | None, ...]] = {
     "tick_rate": (float,),
     "pam": (type(None),),
     "coherence": (type(None),),
+    "runtime": (dict,),
 }
 
 
@@ -98,6 +100,7 @@ def _build_state_from_files(
         "tick_rate": 1.0,
         "pam": None,
         "coherence": None,
+        "runtime": {},
     }
 
 

@@ -532,7 +532,7 @@ def _known_issues(
     except OSError:
         sock_exists = False
     if sock_exists and daemon_pid is None:
-        issues.append(f"socket_orphaned:{SOCK_PATH}")
+        issues.append(f"socket_orphaned:{SOCK_PATH.name}")
 
     # Token not configured
     if not HELIOS_TOKEN:
@@ -540,17 +540,16 @@ def _known_issues(
 
     # Memory DB missing
     if not _MEMORY_DB.exists():
-        issues.append(f"memory_db_missing:{_MEMORY_DB}")
+        issues.append(f"memory_db_missing:{_MEMORY_DB.name}")
 
     return issues
 
 
-def _runtime_meta() -> dict:
+def _runtime_meta(orb_meta: dict, rend_meta: dict, daemon_pid: int | None) -> dict:
     """Build the runtime meta block for /state and /health.
 
     Cached on first call for stable fields (commit, socket_path).
-    State-dependent fields (known_issues, budget) are recomputed each
-    call by reading fresh state files.
+    State-dependent fields (known_issues, budget) are precomputed and passed.
     """
     global _RUNTIME_CACHE
     if _RUNTIME_CACHE is None:
@@ -559,18 +558,14 @@ def _runtime_meta() -> dict:
             "socket_path": str(SOCK_PATH),
         }
 
-    # Recomputed each call (fresh state)
-    orb_meta = _load_state_meta("orb_state.json")
-    rend_meta = _load_state_meta("renderer_state.json")
     rend_data = rend_meta["data"]
-    daemon_pid = _find_daemon_pid()
 
     meta = dict(_RUNTIME_CACHE)  # shallow copy
     meta["launch_method"] = _detect_launch_method(daemon_pid)
     meta["renderer_chain"] = _renderer_chain(rend_data)
     meta["memory_backend"] = {
         "type": "sqlite",
-        "path": str(_MEMORY_DB),
+        "path": _MEMORY_DB.name,
         "exists": _MEMORY_DB.exists(),
     }
     meta["ncp"] = {
@@ -587,6 +582,7 @@ def _build_state() -> dict[str, Any]:
     orb_meta = _load_state_meta("orb_state.json")
     rend_meta = _load_state_meta("renderer_state.json")
     neuro_file = _load_json(STATE_DIR / "neurobus_state.json")
+    daemon_pid = _find_daemon_pid()
 
     orb = orb_meta["data"]
 
@@ -617,13 +613,13 @@ def _build_state() -> dict[str, Any]:
         "rpd_used": renderer["rpd_used"],
         "rpd_budget": renderer["rpd_budget"],
         "connected": _connected(orb_meta, rend_meta),
-        "uptime_seconds": _daemon_uptime_seconds(),
+        "uptime_seconds": _daemon_uptime_seconds_for_pid(daemon_pid),
         "tick_rate": TICK_RATE_HZ,
         "pam": PAM_UNRESOLVED,
         "coherence": COHERENCE_UNRESOLVED,
         # Phase 3 (P1): runtime-truth / drift-watchdog. ADDITIVE field.
         # Does not change any of the 14 fields above.
-        "runtime": _runtime_meta(),
+        "runtime": _runtime_meta(orb_meta, rend_meta, daemon_pid),
     }
 
 
@@ -700,7 +696,7 @@ async def health(request: Request) -> dict[str, Any]:
         "coherence": COHERENCE_UNRESOLVED,
         # Phase 3 (P1): runtime-truth / drift-watchdog. Same shape as
         # the /state runtime field for consistency.
-        "runtime": _runtime_meta(),
+        "runtime": _runtime_meta(orb_meta, rend_meta, daemon_pid),
     }
 
 

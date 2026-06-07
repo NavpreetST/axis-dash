@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""CI drift / arch guard — enforce the 14-field /state contract.
+"""CI drift / arch guard — enforce the 15-field /state contract.
 
 Parses aegis/web/server.py and extracts the keys returned by _build_state().
 Fails if:
-  - The field count differs from 14
+  - The field count differs from 15
   - Any field name has changed
   - Any field has been removed
 
@@ -34,9 +34,10 @@ EXPECTED_FIELDS: frozenset[str] = frozenset({
     "tick_rate",
     "pam",
     "coherence",
+    "runtime",
 })
 
-EXPECTED_COUNT = len(EXPECTED_FIELDS)  # 14
+EXPECTED_COUNT = len(EXPECTED_FIELDS)  # 15
 
 
 def _extract_return_keys_from_source(source: str) -> list[str] | None:
