@@ -93,18 +93,44 @@ function validateHeliosUrls(api: string, ws: string): { api: URL; ws: URL } {
   return { api: parsedApi, ws: parsedWs };
 }
 
+// `??` does not catch empty strings — the vitest stub returns `''` for
+// "unset", and a real `.env` with `PUBLIC_HELIOS_API_URL=` would too.
+// Both should fall back to the loopback defaults so URL parsing below
+// cannot throw on a blank value.
+const resolvedApiUrl =
+  typeof PUBLIC_HELIOS_API_URL === 'string' && PUBLIC_HELIOS_API_URL.length > 0
+    ? PUBLIC_HELIOS_API_URL
+    : 'https://localhost:8080';
+const resolvedWsUrl =
+  typeof PUBLIC_HELIOS_WS_URL === 'string' && PUBLIC_HELIOS_WS_URL.length > 0
+    ? PUBLIC_HELIOS_WS_URL
+    : 'wss://localhost:8080';
+
 export const config = {
   /** Base URL for HTTP and SSE endpoints exposed by the Helios bridge. */
-  heliosApiUrl: PUBLIC_HELIOS_API_URL ?? 'https://localhost:8080',
+  heliosApiUrl: resolvedApiUrl,
   /** Base URL for WebSocket endpoints exposed by the Helios bridge. */
-  heliosWsUrl: PUBLIC_HELIOS_WS_URL ?? 'wss://localhost:8080',
+  heliosWsUrl: resolvedWsUrl,
   /**
    * Master switch for the live bridge. True when `PUBLIC_USE_LIVE_BRIDGE`
    * resolves to a truthy string (`true` / `1` / `yes` / `on` / `enabled`,
    * case-insensitive). Any other value (including unset) keeps the
    * dashboard on mock data.
    */
-  useLiveBridge: parseBool(PUBLIC_USE_LIVE_BRIDGE)
+  useLiveBridge: parseBool(PUBLIC_USE_LIVE_BRIDGE),
+  /**
+   * True when the operator actually set `PUBLIC_HELIOS_API_URL` and
+   * `PUBLIC_HELIOS_WS_URL` (i.e. did not rely on the loopback defaults).
+   * The header status badge uses this to distinguish a real misconfig
+   * from "I never enabled live mode" — the resolved URL always has a
+   * default value, so checking `heliosApiUrl` directly would never see
+   * the misconfig state.
+   */
+  hasExplicitUrls:
+    typeof PUBLIC_HELIOS_API_URL === 'string' &&
+    PUBLIC_HELIOS_API_URL.length > 0 &&
+    typeof PUBLIC_HELIOS_WS_URL === 'string' &&
+    PUBLIC_HELIOS_WS_URL.length > 0
 } as const;
 
 // Run validation once at module load. Failures to parse are surfaced by

@@ -252,10 +252,19 @@ describe('telemetry store', () => {
           expect(len).toBeLessThanOrEqual(60);
           if (i >= 59) expect(len).toBe(60);
           expect(neurobusHistory[key][len - 1]).toBe(neurobus[key]);
-          for (const val of neurobusHistory[key]) {
-            expect(val).toBeGreaterThanOrEqual(0);
-            expect(val).toBeLessThanOrEqual(1);
-          }
+        }
+      }
+
+      // Bounds check the full captured history once. The per-tick loop
+      // already proves the most recent sample is in range and the cap
+      // is enforced; this final sweep proves every recorded value is in
+      // [0, 1] without paying for ~72k `expect()` calls inside the hot
+      // 200-tick loop.
+      const { neurobusHistory } = get(telemetry);
+      for (const key of Object.keys(neurobusHistory) as (keyof Neurobus)[]) {
+        for (const val of neurobusHistory[key]) {
+          expect(val).toBeGreaterThanOrEqual(0);
+          expect(val).toBeLessThanOrEqual(1);
         }
       }
 

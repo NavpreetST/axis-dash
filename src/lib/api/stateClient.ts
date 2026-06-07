@@ -34,22 +34,26 @@ export function createStateClient() {
     ws.onopen = () => {
       reconnectAttempts = 0;
       telemetry.setConnected(true);
+      console.info('[helios] /state ws OPEN', { url });
     };
 
     ws.onmessage = (event) => {
+      console.info('[helios] /state ws MSG raw', event.data);
       try {
         const frame = JSON.parse(event.data) as Partial<TelemetryData>;
+        console.info('[helios] /state ws MSG parsed', frame);
         telemetry.applyLiveFrame(frame);
-      } catch {
-        // ignore malformed frame
+      } catch (err) {
+        console.warn('[helios] /state ws MSG parse failed', err);
       }
     };
 
-    ws.onerror = () => {
-      // onclose will fire next
+    ws.onerror = (event) => {
+      console.warn('[helios] /state ws ERROR', event);
     };
 
-    ws.onclose = () => {
+    ws.onclose = (event) => {
+      console.info('[helios] /state ws CLOSE', { code: event.code, reason: event.reason, wasClean: event.wasClean });
       telemetry.setConnected(false);
       scheduleReconnect();
     };

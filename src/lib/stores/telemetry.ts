@@ -219,7 +219,12 @@ const createTelemetryStore = () => {
       }
       return {
         ...state,
-        connected: frame.connected ?? state.connected,
+        // `connected` is owned by the WebSocket lifecycle (onopen/onclose)
+        // and is intentionally NOT overridden by frame data — the bridge
+        // sends `connected: false` to signal daemon health (e.g. its
+        // upstream data source is down), which is a different concept
+        // from the transport being open. Letting the frame flip the flag
+        // makes the UI flip to `--` even though frames are still flowing.
         uptime_seconds: frame.uptime_seconds ?? state.uptime_seconds,
         tick_rate: frame.tick_rate ?? state.tick_rate,
         pam: frame.pam !== undefined ? frame.pam : state.pam,
