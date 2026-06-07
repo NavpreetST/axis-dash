@@ -420,6 +420,7 @@ def _build_state() -> dict[str, Any]:
         "uptime_seconds": _daemon_uptime_seconds(),
         "tick_rate": TICK_RATE_HZ,
         "pam": PAM_UNRESOLVED,
+        "coherence": COHERENCE_UNRESOLVED,
     }
 
 
@@ -483,6 +484,7 @@ async def health(request: Request) -> dict[str, Any]:
         },
         "tick_rate": TICK_RATE_HZ,
         "pam": PAM_UNRESOLVED,
+        "coherence": COHERENCE_UNRESOLVED,
     }
 
 
