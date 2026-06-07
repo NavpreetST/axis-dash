@@ -614,7 +614,8 @@ async def _tail_eventlog():
             path = _today_eventlog_path()
             try:
                 EVENTS_DIR.mkdir(parents=True, exist_ok=True)
-                f = open(path, "r", encoding="utf-8", errors="replace")
+                # Run blocking file open in thread to avoid blocking the event loop
+                f = await asyncio.to_thread(open, path, "r", encoding="utf-8", errors="replace")
             except FileNotFoundError:
                 f = None
             except OSError as e:
@@ -623,7 +624,13 @@ async def _tail_eventlog():
         if f is None:
             await asyncio.sleep(0.5)
             continue
-        chunk = f.read()
+        # Run blocking read in thread to avoid blocking the event loop
+        try:
+            chunk = await asyncio.to_thread(f.read)
+        except OSError as e:
+            log.warning("logs: read %s failed: %s", path, e)
+            f = None
+            continue
         if not chunk:
             # heartbeat
             now = time.monotonic()
@@ -661,7 +668,19 @@ async def logs_sse(request: Request) -> StreamingResponse:
     if not _check_token(request):
         raise HTTPException(status_code=401, detail="auth_required")
 
+    origin = request.headers.get("origin")
+    cors_headers = {}
+    if origin and origin in ALLOWED_ORIGINS:
+        cors_headers = {
+            "Access-Control-Allow-Origin": origin,
+            "Access-Control-Allow-Credentials": "true",
+            "Vary": "Origin",
+        }
+
     async def event_stream():
+        # Yield an initial comment to flush headers immediately.
+        # EventSource / browser needs the response headers right away.
+        yield ": connected\n\n"
         async for evt in _tail_eventlog():
             if evt.get("_heartbeat"):
                 yield ": heartbeat\n\n"
@@ -673,6 +692,7 @@ async def logs_sse(request: Request) -> StreamingResponse:
         headers={
             "Cache-Control": "no-cache",
             "X-Accel-Buffering": "no",
+            **cors_headers,
         },
     )
 
