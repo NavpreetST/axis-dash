@@ -11,10 +11,12 @@ Mirrors the brainstem chemicals (Psyche §NeuroBus):
 from __future__ import annotations
 import asyncio
 import logging
+import os
 from dataclasses import dataclass, asdict
+from datetime import datetime, timezone
+from pathlib import Path
+
 from .bus import BUS
-from aegis.observability.paths import NEUROBUS_STATE_PATH, atomic_write_json
-from aegis.observability.paths import NEUROBUS_STATE_PATH, atomic_write_json
 from aegis.observability.paths import NEUROBUS_STATE_PATH, atomic_write_json
 
 log = logging.getLogger("nexus.neurobus")
@@ -53,6 +55,51 @@ DECAY = {
 }
 
 
+def _orb_state_dir() -> Path:
+    return Path(os.getenv("AEGIS_STATE_DIR", "/var/lib/aegis"))
+
+
+def _build_orb_snapshot() -> dict:
+    """Build the richer orb snapshot for the web server.
+
+    Best-effort: if optional imports fail, fall back to safe defaults.
+    Import errors are logged at debug; the tick loop must never be killed
+    by a missing optional module. Import guards are separated from the
+    function calls so a runtime ImportError inside the called function
+    is not misclassified as a missing module.
+    """
+    now = datetime.now(timezone.utc).isoformat()
+    snap: dict = {"updated_at": now, **asdict(STATE)}
+
+    # hidden_state_vec
+    try:
+        from aegis.brain.ncp import hidden_state_vec
+    except (ImportError, ModuleNotFoundError) as e:
+        log.debug("orb snapshot: hidden_state_vec import failed — %s", e)
+        hidden_state_vec = None
+    if hidden_state_vec is None:
+        snap["h"] = []
+    else:
+        snap["h"] = hidden_state_vec()
+
+    # _is_speaking (read current value from module on each call)
+    try:
+        from aegis.renderer import _is_speaking
+    except (ImportError, ModuleNotFoundError) as e:
+        log.debug("orb snapshot: _is_speaking import failed — %s", e)
+        _is_speaking = None
+    snap["is_speaking"] = bool(_is_speaking) if _is_speaking is not None else False
+
+    # pop_last_event
+    try:
+        from aegis.mnemosyne.write import pop_last_event
+    except (ImportError, ModuleNotFoundError) as e:
+        log.debug("orb snapshot: pop_last_event import failed — %s", e)
+        pop_last_event = None
+    snap["mnemosyne_event"] = pop_last_event() if pop_last_event is not None else None
+    return snap
+
+
 async def run() -> None:
     log.info("neurobus running")
     tick_q = BUS.subscribe("tick")
@@ -65,78 +112,21 @@ async def run() -> None:
                 setattr(STATE, f, getattr(STATE, f) * rate)
             STATE.clamp()
             await BUS.publish("neurobus.state", asdict(STATE))
+            # Write the lightweight neurobus state file.
             try:
-                _now = __import__("datetime").datetime.now(__import__("datetime").timezone.utc).isoformat()
-                atomic_write_json(NEUROBUS_STATE_PATH, {"updated_at": _now, **asdict(STATE)})
-                # Orb Phase 0: write a richer snapshot for the web server
-                _orb = {"updated_at": _now, **asdict(STATE)}
-                try:
-                    from aegis.brain.ncp import hidden_state_vec
-                    _orb["h"] = hidden_state_vec()
-                except Exception:
-                    _orb["h"] = []
-                try:
-                    from aegis.renderer import _is_speaking as _spk
-                    _orb["is_speaking"] = _spk
-                except Exception:
-                    _orb["is_speaking"] = False
-                try:
-                    from aegis.mnemosyne.write import pop_last_event
-                    _orb["mnemosyne_event"] = pop_last_event()
-                except Exception:
-                    _orb["mnemosyne_event"] = None
-                _orb_path = __import__("pathlib").Path(__import__("os").getenv("AEGIS_STATE_DIR", "/var/lib/aegis")) / "orb_state.json"
-                atomic_write_json(_orb_path, _orb)
-            except (OSError, ValueError) as e:
-                log.warning("neurobus: failed to write state snapshot — %s", e)
+                now = datetime.now(timezone.utc).isoformat()
+                atomic_write_json(
+                    NEUROBUS_STATE_PATH,
+                    {"updated_at": now, **asdict(STATE)},
+                )
+            except (OSError, ValueError, TypeError) as e:
+                log.warning("neurobus: failed to write neurobus_state — %s", e)
+            # Write the richer orb snapshot for the web server.
             try:
-                _now = __import__("datetime").datetime.now(__import__("datetime").timezone.utc).isoformat()
-                atomic_write_json(NEUROBUS_STATE_PATH, {"updated_at": _now, **asdict(STATE)})
-                # Orb Phase 0: write a richer snapshot for the web server
-                _orb = {"updated_at": _now, **asdict(STATE)}
-                try:
-                    from aegis.brain.ncp import hidden_state_vec
-                    _orb["h"] = hidden_state_vec()
-                except Exception:
-                    _orb["h"] = []
-                try:
-                    from aegis.renderer import _is_speaking as _spk
-                    _orb["is_speaking"] = _spk
-                except Exception:
-                    _orb["is_speaking"] = False
-                try:
-                    from aegis.mnemosyne.write import pop_last_event
-                    _orb["mnemosyne_event"] = pop_last_event()
-                except Exception:
-                    _orb["mnemosyne_event"] = None
-                _orb_path = __import__("pathlib").Path(__import__("os").getenv("AEGIS_STATE_DIR", "/var/lib/aegis")) / "orb_state.json"
-                atomic_write_json(_orb_path, _orb)
-            except (OSError, ValueError) as e:
-                log.warning("neurobus: failed to write state snapshot — %s", e)
-            try:
-                _now = __import__("datetime").datetime.now(__import__("datetime").timezone.utc).isoformat()
-                atomic_write_json(NEUROBUS_STATE_PATH, {"updated_at": _now, **asdict(STATE)})
-                # Orb Phase 0: write a richer snapshot for the web server
-                _orb = {"updated_at": _now, **asdict(STATE)}
-                try:
-                    from aegis.brain.ncp import hidden_state_vec
-                    _orb["h"] = hidden_state_vec()
-                except Exception:
-                    _orb["h"] = []
-                try:
-                    from aegis.renderer import _is_speaking as _spk
-                    _orb["is_speaking"] = _spk
-                except Exception:
-                    _orb["is_speaking"] = False
-                try:
-                    from aegis.mnemosyne.write import pop_last_event
-                    _orb["mnemosyne_event"] = pop_last_event()
-                except Exception:
-                    _orb["mnemosyne_event"] = None
-                _orb_path = __import__("pathlib").Path(__import__("os").getenv("AEGIS_STATE_DIR", "/var/lib/aegis")) / "orb_state.json"
-                atomic_write_json(_orb_path, _orb)
-            except (OSError, ValueError):
-                pass
+                orb_path = _orb_state_dir() / "orb_state.json"
+                atomic_write_json(orb_path, _build_orb_snapshot())
+            except (OSError, ValueError, TypeError) as e:
+                log.warning("neurobus: failed to write orb_state — %s", e)
 
     async def on_sense() -> None:
         while True:
