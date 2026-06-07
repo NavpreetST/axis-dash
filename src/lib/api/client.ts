@@ -6,12 +6,29 @@ import { config } from '$lib/config';
 const TOKEN_KEY = 'HELIOS_TOKEN';
 
 /**
- * Read the current bearer token from localStorage.
- * Returns null during SSR or when no token is stored.
+ * Read the build-time fallback token. Vite inlines `PUBLIC_*` env vars
+ * at build time, so this is available in the deployed bundle but only
+ * reflects whatever was set when the bundle was produced. A Vercel
+ * env-var change requires a redeploy for it to take effect.
+ */
+function readBuildToken(): string | null {
+  const v = import.meta.env.PUBLIC_HELIOS_TOKEN;
+  return typeof v === 'string' && v.length > 0 ? v : null;
+}
+
+/**
+ * Read the current bearer token. Resolution order:
+ * 1. `localStorage.HELIOS_TOKEN` (set by the login page)
+ * 2. Build-time `PUBLIC_HELIOS_TOKEN` env var (Vercel deployment setting)
+ *
+ * Returns null during SSR or when no token is available.
  */
 export function getToken(): string | null {
-  if (typeof localStorage === 'undefined') return null;
-  return localStorage.getItem(TOKEN_KEY);
+  if (typeof localStorage !== 'undefined') {
+    const stored = localStorage.getItem(TOKEN_KEY);
+    if (stored) return stored;
+  }
+  return readBuildToken();
 }
 
 /**

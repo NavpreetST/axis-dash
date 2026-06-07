@@ -5,6 +5,7 @@
   import { base } from '$app/paths';
   import { telemetry, chat } from '$lib';
   import { config } from '$lib/config';
+  import { getToken } from '$lib/api/client';
   import { startBridge, stopBridge, type BridgeClients } from '$lib/api/bridge';
   import './layout.css';
 
@@ -28,9 +29,40 @@
   let activeTab = $state('dashboard'); // 'dashboard' | 'chat' | 'orb'
   let chatInput = $state('');
 
+  // Bridge status for the header heartbeat dot.
+  // 'live-ok'   → green   : live mode on, /state socket is open
+  // 'live-down' → red     : live mode on, but disconnected (startup or error)
+  // 'misconfig' → red     : live mode on, but token or URLs are missing
+  // 'mock'      → green   : mock mode (default; intentional, not an error)
+  let hasToken = $state(false);
+  let hasUrls = $state(false);
+  let bridgeStatus = $derived.by(() => {
+    if (!config.useLiveBridge) return 'mock' as const;
+    if (!hasUrls || !hasToken) return 'misconfig' as const;
+    return $telemetry.connected ? ('live-ok' as const) : ('live-down' as const);
+  });
+  let bridgeStatusLabel = $derived.by(() => {
+    switch (bridgeStatus) {
+      case 'mock':
+        return 'Mock mode — PUBLIC_USE_LIVE_BRIDGE is not "true"';
+      case 'misconfig':
+        if (!hasUrls && !hasToken)
+          return 'Set PUBLIC_HELIOS_API_URL, PUBLIC_HELIOS_WS_URL, and PUBLIC_HELIOS_TOKEN (or log in)';
+        if (!hasToken) return 'No token — set PUBLIC_HELIOS_TOKEN or log in';
+        return 'PUBLIC_HELIOS_API_URL or PUBLIC_HELIOS_WS_URL is missing';
+      case 'live-ok':
+        return 'Connected to Helios bridge';
+      case 'live-down':
+        return 'Live mode on, but /state socket is not connected — check bridge URL, token, or redeploy';
+    }
+  });
+
   // Route guard auth check
   onMount(() => {
     let bridge: BridgeClients | null = null;
+
+    hasUrls = Boolean(config.heliosApiUrl) && Boolean(config.heliosWsUrl);
+    hasToken = Boolean(getToken());
 
     if (config.useLiveBridge) {
       bridge = startBridge();
@@ -169,13 +201,22 @@
         class="z-10 flex h-16 shrink-0 items-center justify-between border-b border-hairline bg-bg-panel/20 px-6 select-none"
       >
         <!-- Brand Title & Global Heartbeat -->
-        <div class="flex items-center gap-3">
+        <div class="group flex items-center gap-3">
           <div
-            class="h-2.5 w-2.5 animate-pulse rounded-full {$telemetry.connected
+            class="h-2.5 w-2.5 animate-pulse rounded-full {bridgeStatus === 'live-ok' ||
+            bridgeStatus === 'mock'
               ? 'bg-signal-green shadow-[0_0_8px_var(--color-signal-green)]'
-              : 'bg-signal-red'}"
+              : bridgeStatus === 'live-down'
+                ? 'bg-accent-amber shadow-[0_0_8px_var(--color-accent-amber)]'
+                : 'bg-signal-red shadow-[0_0_8px_var(--color-signal-red)]'}"
+            title={bridgeStatusLabel}
           ></div>
           <span class="text-sm font-bold tracking-widest text-text-primary uppercase">AXIS</span>
+          <span
+            class="invisible ml-1 max-w-[260px] rounded-md border border-hairline bg-bg-panel px-2 py-0.5 font-mono text-[9px] whitespace-nowrap text-text-muted opacity-0 shadow-sm transition-all duration-200 group-hover:visible group-hover:opacity-100"
+          >
+            {bridgeStatusLabel}
+          </span>
         </div>
 
         <!-- Tablet / Mobile Tab switch controls -->
