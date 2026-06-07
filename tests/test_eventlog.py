@@ -6,6 +6,8 @@ import tempfile
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
+
 from aegis.observability.eventlog import (
     REQUIRED_FIELDS,
     SCHEMA_VERSION,
@@ -39,40 +41,28 @@ def test_make_event_timestamp_is_iso():
 
 
 def test_make_event_validates_source():
-    try:
+    with pytest.raises(ValueError, match="invalid source"):
         make_event(source="invalid_source", event_type="chat_turn", payload={})
-        assert False, "should have raised ValueError"
-    except ValueError as e:
-        assert "invalid source" in str(e)
 
 
 def test_make_event_validates_event_type():
-    try:
+    with pytest.raises(ValueError, match="invalid event_type"):
         make_event(source="aegis", event_type="nonexistent_event", payload={})
-        assert False, "should have raised ValueError"
-    except ValueError as e:
-        assert "invalid event_type" in str(e)
 
 
 def test_make_event_validates_severity():
-    try:
+    with pytest.raises(ValueError, match="invalid severity"):
         make_event(source="aegis", event_type="chat_turn", payload={}, severity="invalid")
-        assert False, "should have raised ValueError"
-    except ValueError as e:
-        assert "invalid severity" in str(e)
 
 
 def test_make_event_validates_sensitivity():
-    try:
+    with pytest.raises(ValueError, match="invalid sensitivity"):
         make_event(
             source="aegis",
             event_type="chat_turn",
             payload={},
             sensitivity="invalid",
         )
-        assert False, "should have raised ValueError"
-    except ValueError as e:
-        assert "invalid sensitivity" in str(e)
 
 
 def test_make_event_default_severity_and_sensitivity():
@@ -84,11 +74,8 @@ def test_make_event_default_severity_and_sensitivity():
 
 def test_append_event_validates_schema():
     """Events with wrong fields must be rejected."""
-    try:
+    with pytest.raises(ValueError, match="schema violation"):
         append_event({"schema_version": 1, "extra_field": True})
-        assert False, "should have raised ValueError"
-    except ValueError as e:
-        assert "schema violation" in str(e)
 
 
 def test_append_event_writes_jsonl(tmp_path: Path):
@@ -129,3 +116,9 @@ def test_all_valid_severities():
     for sev in VALID_SEVERITIES:
         event = make_event(source="aegis", event_type="chat_turn", payload={}, severity=sev)
         assert event["severity"] == sev
+
+
+def test_all_valid_sensitivities():
+    for sens in VALID_SENSITIVITIES:
+        event = make_event(source="aegis", event_type="chat_turn", payload={}, sensitivity=sens)
+        assert event["sensitivity"] == sens

@@ -25,7 +25,17 @@ TABLE_NAME = "events"
 BATCH_SIZE = 20
 FLUSH_INTERVAL_SECONDS = 30.0
 
+_required_fields = frozenset({
+    "schema_version", "timestamp", "source", "event_type",
+    "payload", "severity", "provenance", "sensitivity",
+})
+
 _enabled = bool(SUPABASE_URL and SUPABASE_KEY)
+
+
+def _validate_event(event: dict) -> bool:
+    """Return True if event has the required 8-field schema."""
+    return set(event.keys()) == _required_fields and isinstance(event.get("payload"), dict)
 
 
 async def _upsert_batch(batch: list[dict]) -> None:
@@ -40,16 +50,19 @@ async def _upsert_batch(batch: list[dict]) -> None:
         "Prefer": "resolution=merge-duplicates",
     }
 
-    async with httpx.AsyncClient(timeout=15.0) as client:
-        resp = await client.post(url, json=batch, headers=headers)
-        if resp.status_code >= 400:
-            log.warning(
-                "supabase: upsert failed (%d): %s",
-                resp.status_code,
-                resp.text[:200],
-            )
-        else:
-            log.debug("supabase: upserted %d events", len(batch))
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.post(url, json=batch, headers=headers)
+            if resp.status_code >= 400:
+                log.warning(
+                    "supabase: upsert failed (%d): %s",
+                    resp.status_code,
+                    resp.text[:200],
+                )
+            else:
+                log.debug("supabase: upserted %d events", len(batch))
+    except Exception as e:
+        log.warning("supabase: upsert network error — %s", e)
 
 
 async def run() -> None:
@@ -57,18 +70,23 @@ async def run() -> None:
 
     This is a STUB that can be activated by setting SUPABASE_URL and
     SUPABASE_SERVICE_KEY in ~/.config/aegis/secrets.env.  When creds
-    are absent, the coroutine simply sleeps forever (no-op).
+    are absent, the coroutine waits indefinitely (no-op).
     """
     if not _enabled:
         log.info("supabase mirror: skipped (no SUPABASE_URL / SUPABASE_SERVICE_KEY)")
-        await asyncio.sleep(3600 * 24 * 365)  # sleep forever
+        await asyncio.Event().wait()  # sleep forever (truly)
         return
 
     log.info("supabase mirror running → %s", TABLE_NAME)
 
     from aegis.nexus.bus import BUS
 
-    q = BUS.subscribe("eventlog.write")
+    try:
+        q = BUS.subscribe("eventlog.write")
+    except Exception as e:
+        log.error("supabase mirror: failed to subscribe to eventlog.write — %s", e)
+        return
+
     buffer: list[dict] = []
     last_flush = asyncio.get_event_loop().time()
 
@@ -86,11 +104,16 @@ async def run() -> None:
         while True:
             try:
                 msg = await asyncio.wait_for(q.get(), timeout=FLUSH_INTERVAL_SECONDS)
-                payload = dict(msg.payload) if msg.payload else {}
-                buffer.append(payload)
-                if len(buffer) >= BATCH_SIZE:
-                    await _flush()
+                if msg.payload and _validate_event(dict(msg.payload)):
+                    payload = dict(msg.payload) if msg.payload else {}
+                    buffer.append(payload)
+                    if len(buffer) >= BATCH_SIZE:
+                        await _flush()
+                else:
+                    log.debug("supabase: dropped event with invalid schema")
             except asyncio.TimeoutError:
                 await _flush()
+            except Exception as e:
+                log.warning("supabase mirror: listen error — %s", e)
 
     await _listen()

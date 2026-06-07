@@ -54,6 +54,17 @@ EVENTS_DIR = STATE_DIR / "events"
 MAX_FILE_BYTES = 50 * 1024 * 1024
 
 
+def _sanitize_for_json(obj):
+    """Recursively sanitize object to ensure JSON serializability."""
+    if isinstance(obj, (str, int, float, bool, type(None))):
+        return obj
+    if isinstance(obj, dict):
+        return {k: _sanitize_for_json(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [_sanitize_for_json(item) for item in obj]
+    return str(obj)
+
+
 def make_event(
     *,
     source: str,
@@ -150,18 +161,21 @@ async def run() -> None:
         "intent.packet": "chat_turn",
     }
 
-    queues = {}
-    for topic, _ in subs.items():
-        queues[topic] = BUS.subscribe(topic)
+    try:
+        queues = {}
+        for topic in subs:
+            queues[topic] = BUS.subscribe(topic)
+    except Exception as e:
+        log.error("eventlog: failed to subscribe to BUS — %s", e)
+        return
 
     async def _listen(topic: str, event_type: str) -> None:
         q = queues[topic]
         while True:
-            msg = await q.get()
-            payload = dict(msg.payload) if msg.payload else {}
-            # Strip any non-serializable keys
-            payload = {k: v for k, v in payload.items() if isinstance(v, (str, int, float, bool, list, dict, type(None)))}
             try:
+                msg = await q.get()
+                raw_payload = dict(msg.payload) if msg.payload else {}
+                payload = _sanitize_for_json(raw_payload)
                 event = make_event(
                     source="aegis",
                     event_type=event_type,
@@ -174,4 +188,4 @@ async def run() -> None:
                 log.warning("eventlog: failed for topic %s — %s", topic, e)
 
     tasks = [asyncio.create_task(_listen(t, et)) for t, et in subs.items()]
-    await asyncio.gather(*tasks)
+    await asyncio.gather(*tasks, return_exceptions=True)

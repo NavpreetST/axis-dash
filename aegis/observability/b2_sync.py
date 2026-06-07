@@ -3,7 +3,7 @@
 Reads creds from ~/.config/aegis/secrets.env (NEVER from repo .env).
 Gracefully skips if B2_APPLICATION_KEY_ID or B2_APPLICATION_KEY are not set.
 
-Uses httpx (already a helios dependency) for the B2 S3-compatible API.
+Uses httpx (already a helios dependency) for the B2 native API.
 Object Lock is OFF — files are uploaded as-is, no retention policy.
 
 Upload strategy:
@@ -18,8 +18,6 @@ import hashlib
 import json
 import logging
 import os
-import time
-from datetime import datetime, timezone
 from pathlib import Path
 
 log = logging.getLogger(__name__)
@@ -64,6 +62,14 @@ def _sha256(path: Path) -> str:
     return h.hexdigest()
 
 
+def _sha1(path: Path) -> str:
+    h = hashlib.sha1()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(8192), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
 async def _get_b2_auth() -> dict:
     """Authorize with B2 and return auth data (token + api URL)."""
     import httpx
@@ -77,36 +83,48 @@ async def _get_b2_auth() -> dict:
         return resp.json()
 
 
-async def _upload_file(auth: dict, bucket_id: str, file_path: Path, file_name: str) -> bool:
-    """Upload a file to B2 using the S3-compatible API."""
+async def _get_upload_url(auth: dict, bucket_id: str) -> dict:
+    """Get a dedicated upload URL from B2 (step 1 of two-step upload)."""
     import httpx
 
-    api_url = auth["apiUrl"]
-    token = auth["authorizationToken"]
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        resp = await client.post(
+            f"{auth['apiUrl']}/b2api/v2/b2_get_upload_url",
+            headers={"Authorization": auth["authorizationToken"]},
+            json={"bucketId": bucket_id},
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+
+async def _upload_file(
+    upload_url: str,
+    upload_token: str,
+    file_path: Path,
+    file_name: str,
+) -> bool:
+    """Upload a file to B2 using the native API (step 2 of two-step upload)."""
+    import httpx
+
+    file_content = file_path.read_bytes()
+    content_sha1 = hashlib.sha1(file_content).hexdigest()
 
     headers = {
-        "Authorization": token,
+        "Authorization": upload_token,
         "X-Bz-File-Name": file_name,
         "Content-Type": "application/octet-stream",
-        "X-Bz-Content-Sha1": "do_not_verify",
+        "Content-Length": str(len(file_content)),
+        "X-Bz-Content-Sha1": content_sha1,
     }
 
-    file_size = file_path.stat().st_size
     try:
         async with httpx.AsyncClient(timeout=60.0) as client:
-            with open(file_path, "rb") as f:
-                resp = await client.post(
-                    f"{api_url}/b2api/v2/b2_upload_file",
-                    headers=headers,
-                    content=f,
-                    params={"bucketId": bucket_id},
-                )
+            resp = await client.post(upload_url, headers=headers, content=file_content)
             if resp.status_code == 200:
-                log.info("b2: uploaded %s (%d bytes)", file_name, file_size)
+                log.info("b2: uploaded %s (%d bytes)", file_name, len(file_content))
                 return True
-            else:
-                log.warning("b2: upload failed (%d): %s", resp.status_code, resp.text[:200])
-                return False
+            log.warning("b2: upload failed (%d): %s", resp.status_code, resp.text[:200])
+            return False
     except Exception as e:
         log.warning("b2: upload error for %s — %s", file_name, e)
         return False
@@ -117,11 +135,11 @@ async def run() -> None:
 
     This is a STUB that can be activated by setting B2_APPLICATION_KEY_ID
     and B2_APPLICATION_KEY in ~/.config/aegis/secrets.env.  When creds
-    are absent, the coroutine simply sleeps forever (no-op).
+    are absent, the coroutine waits indefinitely (no-op).
     """
     if not _enabled:
         log.info("b2 backup: skipped (no B2_APPLICATION_KEY_ID / B2_APPLICATION_KEY)")
-        await asyncio.sleep(3600 * 24 * 365)  # sleep forever
+        await asyncio.Event().wait()  # sleep forever (truly)
         return
 
     log.info("b2 backup running → bucket=%s prefix=%s", B2_BUCKET, B2_PREFIX)
@@ -152,6 +170,11 @@ async def run() -> None:
                 resp.raise_for_status()
                 bucket_id = resp.json()["bucketId"]
 
+            # Get a fresh upload URL for this cycle
+            upload_data = await _get_upload_url(auth, bucket_id)
+            upload_url = upload_data["uploadUrl"]
+            upload_token = upload_data["authorizationToken"]
+
             for fpath in jsonl_files:
                 fname = fpath.name
                 current_hash = _sha256(fpath)
@@ -161,7 +184,7 @@ async def run() -> None:
                     continue
 
                 remote_name = f"{B2_PREFIX}{fname}"
-                success = await _upload_file(auth, bucket_id, fpath, remote_name)
+                success = await _upload_file(upload_url, upload_token, fpath, remote_name)
                 if success:
                     manifest[fname] = current_hash
                     _save_manifest(manifest)
