@@ -29,6 +29,7 @@ from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconn
 from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.requests import HTTPConnection
 from starlette.types import ASGIApp
 
 log = logging.getLogger("web.server")
@@ -97,15 +98,28 @@ def _token_matches(provided: str | None) -> bool:
     return hmac.compare_digest(provided, HELIOS_TOKEN)
 
 
-def _check_token(request: Request) -> bool:
+def _check_token(request: HTTPConnection) -> bool:
     """Check token from Authorization: Bearer header OR ?token= query param.
 
+    Accepts any HTTPConnection (Request or WebSocket) since both expose
+    .headers and .query_params.
     Returns True if the token matches HELIOS_TOKEN. False if missing or wrong.
     Does not raise; callers decide how to respond.
     """
     bearer = _extract_bearer(request.headers.get("authorization"))
     query_token = request.query_params.get("token")
     return _token_matches(bearer) or _token_matches(query_token)
+
+
+def _first_str(*candidates: Any, default: str = "") -> str:
+    """Return the first candidate that is a non-None string, else default.
+
+    Avoids the `or` chain pitfall where falsy strings ("") or 0 are dropped.
+    """
+    for c in candidates:
+        if c is not None:
+            return str(c)
+    return default
 
 
 # ---- CORS middleware (explicit allowlist) ---------------------------------
@@ -349,14 +363,18 @@ def _read_proc_starttime(pid: int) -> int | None:
 
 
 def _daemon_uptime_seconds() -> int | None:
-    """Compute daemon uptime in whole seconds.
+    """Compute daemon uptime. Convenience wrapper: finds the PID first."""
+    return _daemon_uptime_seconds_for_pid(_find_daemon_pid())
+
+
+def _daemon_uptime_seconds_for_pid(pid: int | None) -> int | None:
+    """Compute daemon uptime in whole seconds for a known PID.
 
     Source: /proc/<pid>/stat field 22 (starttime, in clock ticks since boot)
     and /proc/uptime (seconds since boot). No runtime changes required.
 
-    Returns None if the daemon PID can't be found or /proc is unreadable.
+    Returns None if pid is None, or /proc is unreadable.
     """
-    pid = _find_daemon_pid()
     if pid is None:
         return None
     start_ticks = _read_proc_starttime(pid)
@@ -374,8 +392,11 @@ def _daemon_uptime_seconds() -> int | None:
     if not clk_tck or clk_tck <= 0:
         clk_tck = 100
     start_since_boot = start_ticks / clk_tck
-    wall_start = time.time() - (boot_seconds - start_since_boot)
-    elapsed = time.time() - wall_start
+    # Capture time.time() once so wall_start and elapsed are consistent
+    # (avoids microsecond drift between the two reads).
+    now = time.time()
+    wall_start = now - (boot_seconds - start_since_boot)
+    elapsed = now - wall_start
     if elapsed < 0:
         return None
     return int(elapsed)
@@ -406,10 +427,8 @@ def _build_state() -> dict[str, Any]:
         "neurobus": neurobus,
         "h": h,
         "is_speaking": bool(orb.get("is_speaking", False)),
-        "last_action_type": str(
-            orb.get("last_action_type")
-            or orb.get("action_type")
-            or "idle"
+        "last_action_type": _first_str(
+            orb.get("last_action_type"), orb.get("action_type"), default="idle"
         ),
         "tick_id": int(_float(orb.get("tick_id"), 0)),
         "mnemosyne_event": orb.get("mnemosyne_event"),
@@ -437,6 +456,12 @@ async def state_ws(ws: WebSocket) -> None:
         await ws.close(code=WS_CLOSE_APP_AUTH_FAILED, reason="auth_failed")
         return
     await ws.accept()
+    # Check WS origin against allowlist (BaseHTTPMiddleware doesn't run on WS upgrades)
+    origin = ws.headers.get("origin")
+    if origin and origin not in ALLOWED_ORIGINS:
+        log.warning("state ws origin rejected: %s", origin)
+        await ws.close(code=WS_CLOSE_APP_AUTH_FAILED, reason="origin_not_allowed")
+        return
     log.info("orb /state connected")
     try:
         while True:
@@ -465,10 +490,14 @@ async def health(request: Request) -> dict[str, Any]:
         raise HTTPException(status_code=401, detail="auth_required")
     orb_meta = _load_state_meta("orb_state.json")
     rend_meta = _load_state_meta("renderer_state.json")
+    # Compute daemon pid once and thread through to uptime so the two
+    # fields in the response are always consistent (avoids TOCTOU between
+    # the two /proc scans).
+    daemon_pid = _find_daemon_pid()
     return {
         "ok": True,
-        "daemon_pid": _find_daemon_pid(),
-        "uptime_seconds": _daemon_uptime_seconds(),
+        "daemon_pid": daemon_pid,
+        "uptime_seconds": _daemon_uptime_seconds_for_pid(daemon_pid),
         "connected": _connected(orb_meta, rend_meta),
         "state_files": {
             "orb_state.json": {
@@ -515,21 +544,22 @@ async def chat_ws(ws: WebSocket) -> None:
         return
 
     await ws.accept()
-    if not SOCK_PATH.exists():
-        await ws.send_text(json.dumps({
-            "error": "socket_unavailable",
-            "sock": str(SOCK_PATH),
-            "detail": "aegis unix socket not found; is the daemon running?",
-        }))
-        await ws.close()
+
+    # Check WS origin against allowlist (BaseHTTPMiddleware doesn't run on WS upgrades)
+    origin = ws.headers.get("origin")
+    if origin and origin not in ALLOWED_ORIGINS:
+        log.warning("chat ws origin rejected: %s", origin)
+        await ws.close(code=WS_CLOSE_APP_AUTH_FAILED, reason="origin_not_allowed")
         return
 
+    # No pre-check on SOCK_PATH.exists() — rely on the try/except below
+    # to handle TOCTOU races (daemon restart between check and connect).
     try:
         reader, writer = await asyncio.open_unix_connection(str(SOCK_PATH))
     except (FileNotFoundError, ConnectionRefusedError, PermissionError, OSError) as e:
         log.warning("chat socket open failed: %s", e)
         await ws.send_text(json.dumps({
-            "error": "socket_open_failed",
+            "error": "socket_unavailable",
             "sock": str(SOCK_PATH),
             "detail": str(e),
         }))
@@ -613,9 +643,11 @@ async def _tail_eventlog():
                     pass
             path = _today_eventlog_path()
             try:
-                EVENTS_DIR.mkdir(parents=True, exist_ok=True)
-                # Run blocking file open in thread to avoid blocking the event loop
-                f = await asyncio.to_thread(open, path, "r", encoding="utf-8", errors="replace")
+                # Run blocking mkdir + open in thread to avoid blocking the event loop
+                def _open_log() -> object | None:
+                    EVENTS_DIR.mkdir(parents=True, exist_ok=True)
+                    return open(path, "r", encoding="utf-8", errors="replace")
+                f = await asyncio.to_thread(_open_log)
             except FileNotFoundError:
                 f = None
             except OSError as e:
@@ -673,6 +705,10 @@ async def logs_sse(request: Request) -> StreamingResponse:
         # EventSource / browser needs the response headers right away.
         yield ": connected\n\n"
         async for evt in _tail_eventlog():
+            # Check for client disconnect so we don't leak the generator
+            # when the browser closes the EventSource without a new event.
+            if await request.is_disconnected():
+                return
             if evt.get("_heartbeat"):
                 yield ": heartbeat\n\n"
                 continue
@@ -697,6 +733,11 @@ def run(host: str = "0.0.0.0", port: int = 8080) -> None:
     import uvicorn
 
     logging.basicConfig(level=logging.INFO)
+    if not HELIOS_TOKEN:
+        log.warning(
+            "HELIOS_TOKEN is not set — all authenticated endpoints will reject "
+            "every request. Set HELIOS_TOKEN in the environment before starting."
+        )
     log.info("orb web server starting on %s:%d", host, port)
     uvicorn.run(app, host=host, port=port, log_level="info")
 

@@ -64,28 +64,39 @@ def _build_orb_snapshot() -> dict:
 
     Best-effort: if optional imports fail, fall back to safe defaults.
     Import errors are logged at debug; the tick loop must never be killed
-    by a missing optional module.
+    by a missing optional module. Import guards are separated from the
+    function calls so a runtime ImportError inside the called function
+    is not misclassified as a missing module.
     """
     now = datetime.now(timezone.utc).isoformat()
     snap: dict = {"updated_at": now, **asdict(STATE)}
+
+    # hidden_state_vec
     try:
         from aegis.brain.ncp import hidden_state_vec
-        snap["h"] = hidden_state_vec()
     except (ImportError, ModuleNotFoundError) as e:
-        log.debug("orb snapshot: hidden_state_vec unavailable — %s", e)
+        log.debug("orb snapshot: hidden_state_vec import failed — %s", e)
+        hidden_state_vec = None
+    if hidden_state_vec is None:
         snap["h"] = []
+    else:
+        snap["h"] = hidden_state_vec()
+
+    # _is_speaking (read current value from module on each call)
     try:
-        from aegis.renderer import _is_speaking as _spk
-        snap["is_speaking"] = _spk
+        from aegis.renderer import _is_speaking
     except (ImportError, ModuleNotFoundError) as e:
-        log.debug("orb snapshot: _is_speaking unavailable — %s", e)
-        snap["is_speaking"] = False
+        log.debug("orb snapshot: _is_speaking import failed — %s", e)
+        _is_speaking = None
+    snap["is_speaking"] = bool(_is_speaking) if _is_speaking is not None else False
+
+    # pop_last_event
     try:
         from aegis.mnemosyne.write import pop_last_event
-        snap["mnemosyne_event"] = pop_last_event()
     except (ImportError, ModuleNotFoundError) as e:
-        log.debug("orb snapshot: pop_last_event unavailable — %s", e)
-        snap["mnemosyne_event"] = None
+        log.debug("orb snapshot: pop_last_event import failed — %s", e)
+        pop_last_event = None
+    snap["mnemosyne_event"] = pop_last_event() if pop_last_event is not None else None
     return snap
 
 
