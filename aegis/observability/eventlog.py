@@ -184,6 +184,10 @@ async def run() -> None:
                 )
                 append_event(event)
                 _warn_if_large()
+                try:
+                    await BUS.publish("eventlog.write", event)
+                except Exception as e:
+                    log.debug("eventlog: failed to publish to eventlog.write — %s", e)
             except Exception as e:
                 log.warning("eventlog: failed for topic %s — %s", topic, e)
 
