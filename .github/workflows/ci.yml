@@ -19,6 +19,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
@@ -29,7 +32,7 @@ jobs:
           FILES=$(git diff --name-only --diff-filter=ACM origin/main...HEAD -- '*.ts' '*.svelte' '*.js' | tr '\n' ' ')
           if [ -n "$FILES" ]; then
             echo "Linting: $FILES"
-            npx eslint $FILES
+            npx eslint "$FILES"
           else
             echo "No changed TS/Svelte/JS files — skipping ESLint."
           fi
@@ -38,7 +41,7 @@ jobs:
           FILES=$(git diff --name-only --diff-filter=ACM origin/main...HEAD -- '*.ts' '*.svelte' '*.js' '*.css' '*.json' '*.mjs' '*.yml' | tr '\n' ' ')
           if [ -n "$FILES" ]; then
             echo "Formatting: $FILES"
-            npx prettier --check $FILES
+            npx prettier --check "$FILES"
           else
             echo "No changed formattable files — skipping Prettier."
           fi
@@ -47,8 +50,12 @@ jobs:
   tests:
     name: 'Gate 2 · Tests'
     runs-on: ubuntu-latest
+    needs: [lint]
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
@@ -81,6 +88,9 @@ jobs:
     needs: [lint, tests]
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
