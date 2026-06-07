@@ -168,6 +168,49 @@ export function applyAuthToUrl(url: string): string {
 }
 
 /**
+ * Query parameter names that carry authentication material. Any
+ * parameter whose name appears in this set is replaced with `***` in
+ * {@link redactAuthFromUrl} before the URL is written to logs or
+ * telemetry. The set is intentionally allowlist-based: a future auth
+ * transport that uses a non-standard key (e.g. `?api_key=...`) must
+ * add the name here so its value never reaches the console.
+ */
+const AUTH_QUERY_PARAMS = new Set([
+  'token',
+  'access_token',
+  'api_key',
+  'apikey',
+  'key',
+  'auth',
+  'secret',
+  'password',
+  'bearer'
+]);
+
+/**
+ * Return a copy of `url` with any authentication query parameter
+ * values replaced by `***`. The path, host, scheme, and non-sensitive
+ * query parameters are preserved so the URL is still useful for
+ * debugging ("are we hitting the right host/path?") without leaking
+ * the bearer token. Invalid input is returned unchanged.
+ */
+export function redactAuthFromUrl(url: string): string {
+  try {
+    const u = new URL(url);
+    let touched = false;
+    for (const name of Array.from(u.searchParams.keys())) {
+      if (AUTH_QUERY_PARAMS.has(name.toLowerCase())) {
+        u.searchParams.set(name, '***');
+        touched = true;
+      }
+    }
+    return touched ? u.toString() : url;
+  } catch {
+    return url;
+  }
+}
+
+/**
  * One-shot `GET /health` probe. Returns `true` on any 2xx response,
  * `false` on network failure or non-2xx. Safe to call repeatedly.
  */

@@ -1,5 +1,5 @@
 import { telemetry, type TelemetryData } from '$lib/stores/telemetry';
-import { applyAuthToUrl, buildWsUrl } from '$lib/api/client';
+import { applyAuthToUrl, buildWsUrl, redactAuthFromUrl } from '$lib/api/client';
 
 /** Upper bound (ms) for the exponential reconnect backoff. */
 const MAX_RECONNECT_DELAY = 30000;
@@ -34,22 +34,33 @@ export function createStateClient() {
     ws.onopen = () => {
       reconnectAttempts = 0;
       telemetry.setConnected(true);
+      // The query auth transport embeds the bearer token in the URL,
+      // so log the redacted form (host + path preserved, token → `***`)
+      // to avoid leaking credentials to DevTools / log aggregators.
+      console.info('[helios] /state ws OPEN', { url: redactAuthFromUrl(url) });
     };
 
     ws.onmessage = (event) => {
+      console.info('[helios] /state ws MSG raw', event.data);
       try {
         const frame = JSON.parse(event.data) as Partial<TelemetryData>;
+        console.info('[helios] /state ws MSG parsed', frame);
         telemetry.applyLiveFrame(frame);
-      } catch {
-        // ignore malformed frame
+      } catch (err) {
+        console.warn('[helios] /state ws MSG parse failed', err);
       }
     };
 
-    ws.onerror = () => {
-      // onclose will fire next
+    ws.onerror = (event) => {
+      console.warn('[helios] /state ws ERROR', event);
     };
 
-    ws.onclose = () => {
+    ws.onclose = (event) => {
+      console.info('[helios] /state ws CLOSE', {
+        code: event.code,
+        reason: event.reason,
+        wasClean: event.wasClean
+      });
       telemetry.setConnected(false);
       scheduleReconnect();
     };

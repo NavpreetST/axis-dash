@@ -44,7 +44,7 @@
   let bridgeStatusLabel = $derived.by(() => {
     switch (bridgeStatus) {
       case 'mock':
-        return 'Mock mode — PUBLIC_USE_LIVE_BRIDGE is not "true"';
+        return 'Mock mode — PUBLIC_USE_LIVE_BRIDGE is not set to a truthy value (true/1/yes/on/enabled)';
       case 'misconfig':
         if (!hasUrls && !hasToken)
           return 'Set PUBLIC_HELIOS_API_URL, PUBLIC_HELIOS_WS_URL, and PUBLIC_HELIOS_TOKEN (or log in)';
@@ -61,7 +61,12 @@
   onMount(() => {
     let bridge: BridgeClients | null = null;
 
-    hasUrls = Boolean(config.heliosApiUrl) && Boolean(config.heliosWsUrl);
+    // `hasUrls` must reflect whether the operator actually set the URL
+    // env vars — `config.heliosApiUrl` always has a loopback default, so
+    // a truthiness check on the resolved values would never see the
+    // misconfig state. `config.hasExplicitUrls` is true only when both
+    // PUBLIC_HELIOS_API_URL and PUBLIC_HELIOS_WS_URL are non-empty.
+    hasUrls = config.hasExplicitUrls;
     hasToken = Boolean(getToken());
 
     if (config.useLiveBridge) {
@@ -72,7 +77,11 @@
     }
 
     const checkAuth = () => {
-      const token = localStorage.getItem('HELIOS_TOKEN');
+      // `getToken()` falls back to the build-time `PUBLIC_HELIOS_TOKEN`
+      // env var when localStorage is empty. Reading localStorage
+      // directly would force-redirect any deployment that relies on the
+      // env-var token to `/login`, where the user has nothing to type.
+      const token = getToken();
       if (!token && $page.url.pathname !== base + '/login') {
         goto(base + '/login');
       }
