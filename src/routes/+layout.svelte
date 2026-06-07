@@ -7,6 +7,7 @@
   import { config } from '$lib/config';
   import { getToken } from '$lib/api/client';
   import { startBridge, stopBridge, type BridgeClients } from '$lib/api/bridge';
+  import { coalesceConsecutive, isPinnedToBottom } from '$lib/utils/chatView';
   import './layout.css';
 
   // Import Lucide Icons
@@ -28,6 +29,58 @@
   // Responsive state for tablet tabs
   let activeTab = $state('dashboard'); // 'dashboard' | 'chat' | 'orb'
   let chatInput = $state('');
+
+  // --- Chat viewport: auto-scroll + jump-to-latest ---
+  let chatScrollEl: HTMLDivElement | undefined = $state();
+  // True when the user is at (or within ~40px of) the bottom of the
+  // chat viewport. Initialised to `true` so a fresh mount scrolls to
+  // the latest seed message instead of leaving the user stranded at
+  // the top of an overflowed panel.
+  let isPinned = $state(true);
+  let showJumpButton = $state(false);
+
+  // Display-only coalesced view of the chat log. The underlying store
+  // still records every event — coalesce is a UI affordance so a
+  // daemon error flood (e.g. the bridge repeating
+  // {"error":"socket_unavailable",...} while the daemon is down) does
+  // not bury the user under hundreds of identical rows.
+  const displayMessages = $derived(coalesceConsecutive($chat));
+
+  // Auto-scroll to the bottom when a new message arrives, but only
+  // if the user is currently pinned. `requestAnimationFrame` defers
+  // the scroll to after Svelte's DOM patch so the layout is final
+  // when `scrollHeight` is read.
+  $effect(() => {
+    // Touch the underlying store length so this effect re-runs on
+    // every new message. (`displayMessages.length` would skip the
+    // re-run when a coalesced "same text, increment count" event
+    // arrives, which is the exact case we need to keep pinned.)
+    // eslint-disable-next-line @typescript-eslint/no-unused-expressions
+    $chat.length;
+    if (!isPinned) return;
+    requestAnimationFrame(() => {
+      if (chatScrollEl) {
+        chatScrollEl.scrollTop = chatScrollEl.scrollHeight;
+      }
+    });
+  });
+
+  function onChatScroll() {
+    if (!chatScrollEl) return;
+    isPinned = isPinnedToBottom(
+      chatScrollEl.scrollTop,
+      chatScrollEl.clientHeight,
+      chatScrollEl.scrollHeight
+    );
+    showJumpButton = !isPinned;
+  }
+
+  function jumpToLatest() {
+    if (!chatScrollEl) return;
+    chatScrollEl.scrollTop = chatScrollEl.scrollHeight;
+    isPinned = true;
+    showJumpButton = false;
+  }
 
   // Bridge status for the header heartbeat dot.
   // 'live-ok'   → green   : live mode on, /state socket is open
@@ -334,12 +387,24 @@
           </div>
 
           <!-- Chat messages viewport -->
-          <div class="flex flex-1 scrollbar-thin flex-col gap-3 overflow-y-auto p-4">
-            {#each $chat as msg (msg.id)}
+          <div
+            bind:this={chatScrollEl}
+            onscroll={onChatScroll}
+            class="relative flex flex-1 scrollbar-thin flex-col gap-3 overflow-y-auto p-4"
+          >
+            {#each displayMessages as msg (msg.key)}
               <div class="flex flex-col gap-1 {msg.sender === 'you' ? 'items-end' : 'items-start'}">
-                <span class="font-mono text-[8px] text-text-muted"
-                  >{msg.sender === 'you' ? 'YOU' : 'AEGIS'} • {msg.timestamp}</span
-                >
+                <span class="font-mono text-[8px] text-text-muted">
+                  {msg.sender === 'you' ? 'YOU' : 'AEGIS'} • {msg.timestamp}
+                  {#if msg.count > 1}
+                    <span
+                      class="ml-1 rounded bg-bg-void/60 px-1 py-px text-accent-violet"
+                      title="{msg.count} identical consecutive messages"
+                      aria-label="{msg.count} identical consecutive messages"
+                      data-testid="coalesce-counter">×{msg.count}</span
+                    >
+                  {/if}
+                </span>
                 <div
                   class="max-w-[85%] rounded-2xl border px-3.5 py-2 text-xs leading-relaxed
                   {msg.sender === 'you'
@@ -350,6 +415,22 @@
                 </div>
               </div>
             {/each}
+
+            <!-- Jump to latest: only visible when the user has
+                 scrolled up. Sticky-positioned to float above the
+                 messages without taking layout space, and hidden once
+                 the user clicks it (or scrolls back to the bottom). -->
+            {#if showJumpButton}
+              <button
+                type="button"
+                onclick={jumpToLatest}
+                data-testid="jump-to-latest"
+                aria-label="Jump to latest message"
+                class="sticky bottom-2 z-20 mx-auto cursor-pointer rounded-full border border-accent-cyan/30 bg-bg-panel/95 px-3 py-1 font-mono text-[10px] font-semibold text-accent-cyan shadow-md shadow-accent-cyan/10 backdrop-blur transition-all hover:bg-accent-cyan/15"
+              >
+                Jump to latest ↓
+              </button>
+            {/if}
           </div>
 
           <!-- Message Input area -->
