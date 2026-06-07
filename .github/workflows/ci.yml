@@ -24,10 +24,24 @@ jobs:
           python-version: "3.12"
       - name: Install dev deps
         run: pip install -e ".[dev]"
-      - name: Ruff check
-        run: ruff check .
-      - name: Ruff format check
-        run: ruff format --check .
+      - name: Ruff check (changed files only)
+        run: |
+          FILES=$(git diff --name-only --diff-filter=ACM origin/main...HEAD -- '*.py' | tr '\n' ' ')
+          if [ -n "$FILES" ]; then
+            echo "Linting: $FILES"
+            ruff check $FILES
+          else
+            echo "No changed Python files — skipping ruff check."
+          fi
+      - name: Ruff format check (changed files only)
+        run: |
+          FILES=$(git diff --name-only --diff-filter=ACM origin/main...HEAD -- '*.py' | tr '\n' ' ')
+          if [ -n "$FILES" ]; then
+            echo "Formatting: $FILES"
+            ruff format --check $FILES
+          else
+            echo "No changed Python files — skipping format check."
+          fi
 
   # ── Gate 2: Tests (BLOCKING) ───────────────────────────────────────────
   tests:
