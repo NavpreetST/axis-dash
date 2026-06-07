@@ -90,24 +90,26 @@ def test_6_health_bearer_token():
 
 def test_7_ws_state_bad_token():
     client = TestClient(app)
-    try:
+    with pytest.raises(WebSocketDisconnect) as e:
         with client.websocket_connect("/state?token=bad-token") as websocket:
             websocket.receive_json()
-            assert False, "Should have disconnected"
-    except WebSocketDisconnect as e:
-        assert e.code == 4401
+    assert e.value.code == 4401
 
 def test_8_ws_chat_bad_token():
     client = TestClient(app)
-    try:
+    with pytest.raises(WebSocketDisconnect) as e:
         with client.websocket_connect("/chat?token=bad-token") as websocket:
             websocket.receive_text()
-            assert False, "Should have disconnected"
-    except WebSocketDisconnect as e:
-        assert e.code == 4401
+    assert e.value.code == 4401
 
 def test_9_sse_logs_bad_token():
     client = TestClient(app)
     resp = client.get("/logs?token=bad-token")
+    assert resp.status_code == 401
+    assert resp.json() == {"detail": "auth_required"}
+
+def test_10_health_query_token_rejected():
+    client = TestClient(app)
+    resp = client.get("/health?token=test-token-12345")
     assert resp.status_code == 401
     assert resp.json() == {"detail": "auth_required"}
