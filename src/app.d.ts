@@ -21,6 +21,13 @@ interface ImportMetaEnv {
    * - `"none"`: no auth transport (local dev only)
    */
   readonly PUBLIC_HELIOS_AUTH_TRANSPORT?: 'query' | 'protocol' | 'cookie' | 'none' | string;
+  /**
+   * Build-time bearer token fallback. When set, used by the API client
+   * if no token is present in localStorage. Useful for non-interactive
+   * deployments (e.g. demos / smoke tests). Inlined into the bundle
+   * at build time — do not put a high-value token here in production.
+   */
+  readonly PUBLIC_HELIOS_TOKEN?: string;
 }
 
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
