@@ -292,3 +292,24 @@ def test_append_event_redacts_secret_in_error_log(caplog):
                 if "append failed" in record.message:
                     assert "hunter2" not in record.message
                     assert "<REDACTED>" in record.message
+
+
+def test_secret_payload_redacted_in_jsonl(tmp_path: Path):
+    """sensitivity=secret payloads must be redacted in JSONL — never persisted in plaintext."""
+    events_dir = tmp_path / "events"
+    event = make_event(
+        source="aegis",
+        event_type="error",
+        payload={"api_key": "sk-live-supersecret"},
+        sensitivity="secret",
+    )
+
+    with patch("aegis.observability.eventlog.EVENTS_DIR", events_dir):
+        append_event(event)
+
+    jsonl_file = list(events_dir.glob("*.jsonl"))[0]
+    parsed = json.loads(jsonl_file.read_text().strip())
+    # The payload in JSONL must NOT contain the secret
+    assert "sk-live-supersecret" not in json.dumps(parsed)
+    assert parsed["payload"]["redacted"] is True
+    assert parsed["sensitivity"] == "secret"

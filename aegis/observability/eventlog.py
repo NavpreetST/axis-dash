@@ -157,6 +157,9 @@ def append_event(event: dict) -> None:
 
     This is the SOLE code path that writes to JSONL files.
     Called only from run() via asyncio.to_thread — never from the event loop.
+
+    If sensitivity == "secret", the payload is replaced with "<REDACTED>"
+    before writing — secret payloads are never persisted to disk in plaintext.
     """
     actual_keys = set(event.keys())
     if actual_keys != REQUIRED_FIELDS:
@@ -172,11 +175,17 @@ def append_event(event: dict) -> None:
     if event["schema_version"] != SCHEMA_VERSION:
         raise ValueError(f"schema_version must be {SCHEMA_VERSION}, got {event['schema_version']}")
 
+    # Redact secret payloads before persisting to disk
+    write_event = event
+    if event.get("sensitivity") == "secret":
+        write_event = dict(event)
+        write_event["payload"] = {"redacted": True, "reason": "sensitivity=secret"}
+
     path = _today_path()
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         with open(path, "a", encoding="utf-8") as f:
-            f.write(json.dumps(event, ensure_ascii=False, default=str) + "\n")
+            f.write(json.dumps(write_event, ensure_ascii=False, default=str) + "\n")
             f.flush()
             os.fsync(f.fileno())
     except (OSError, ValueError) as e:
