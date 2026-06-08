@@ -1,6 +1,7 @@
 <script lang="ts">
   import { telemetry } from '$lib/stores/telemetry';
   import { ChevronDown } from '@lucide/svelte';
+  import { formatRuntimeValue } from '$lib/utils/formatters';
 
   let expanded = $state(false);
 
@@ -64,7 +65,7 @@
                 </span>
               {:else}
                 <span class="font-mono text-[11px] text-text-primary">
-                  {rt[field.key] != null && rt[field.key] !== '' ? String(rt[field.key]) : '--'}
+                  {formatRuntimeValue(rt[field.key])}
                 </span>
               {/if}
             </div>

@@ -37,6 +37,7 @@ export function createLogsClient() {
 
     es.onopen = () => {
       reconnectAttempts = 0;
+      logs.setConnected(true);
     };
 
     es.onmessage = (event) => {
@@ -54,6 +55,7 @@ export function createLogsClient() {
     };
 
     es.onerror = () => {
+      logs.setConnected(false);
       if (es) {
         es.close();
         es = null;
@@ -64,6 +66,7 @@ export function createLogsClient() {
 
   const scheduleReconnect = () => {
     if (stopped) return;
+    logs.setConnected(false);
     const delay = Math.min(
       MAX_RECONNECT_DELAY,
       INITIAL_RECONNECT_DELAY * Math.pow(2, reconnectAttempts)
@@ -74,6 +77,7 @@ export function createLogsClient() {
 
   const disconnect = () => {
     stopped = true;
+    logs.setConnected(false);
     if (reconnectTimer) {
       clearTimeout(reconnectTimer);
       reconnectTimer = null;
