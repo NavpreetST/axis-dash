@@ -16,6 +16,9 @@ import threading
 import time
 from pathlib import Path
 
+# Fallback socket paths (checked in order: AEGIS_SOCK env -> DEFAULTS).
+# The daemon on this box runs via nohup (not systemd) and uses /tmp/aegis.sock.
+# /run/aegis/aegis.sock is strictly checked last as a fallback (the directory does not exist on this machine).
 DEFAULTS = ["/tmp/aegis.sock", "/run/aegis/aegis.sock"]
 
 
