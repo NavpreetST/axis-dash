@@ -11,8 +11,10 @@ Tests the 6 forge proxy routes in aegis/web/server.py:
 Mock the socket layer to verify correct FORGE command mapping and response parsing.
 """
 
+import json
+
 import pytest
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 from fastapi.testclient import TestClient
 from aegis.web.server import app
 
@@ -397,6 +399,100 @@ class TestErrorHandling:
             )
             assert resp.status_code == 502
             assert "SOME:UNEXPECTED:RESPONSE" in resp.json()["detail"]
+
+
+# ---- Large response buffer limit tests ----
+
+
+class TestLargeResponse:
+    """Verify _forge_socket_cmd handles responses >64KB (default StreamReader limit)."""
+
+    @pytest.mark.asyncio
+    async def test_large_forge_list_response_reads_full(self):
+        """FORGE:LIST response >64KB must be readable without ValueError after limit increase."""
+        import asyncio
+        from unittest.mock import AsyncMock
+        from aegis.web.server import _forge_socket_cmd
+
+        # Build a ~70KB task list payload
+        tasks = [
+            {"id": f"task{i:04d}", "status": "completed", "spec": "x" * 500}
+            for i in range(120)
+        ]
+        payload = json.dumps(tasks)
+        assert len(payload) > 65536, f"payload {len(payload)} bytes < 64KB for realistic test"
+
+        response = f"FORGE:LIST:{payload}\n"
+        response_bytes = response.encode()
+
+        # Mock open_unix_connection to return a reader pre-loaded with the large response
+        async def mock_open(path, **kwargs):
+            reader = asyncio.StreamReader(limit=262144)
+            reader.feed_data(response_bytes)
+            reader.feed_eof()
+            writer = MagicMock()
+            writer.drain = AsyncMock()
+            writer.wait_closed = AsyncMock()
+            return reader, writer
+
+        with patch("aegis.web.server.asyncio.open_unix_connection", mock_open):
+            result = await _forge_socket_cmd("FORGE:LIST")
+
+        assert result.startswith("FORGE:LIST:")
+        parsed = json.loads(result[len("FORGE:LIST:"):])
+        assert len(parsed) == 120
+
+    @pytest.mark.asyncio
+    async def test_large_response_passes_task_json(self):
+        """Parsing large forge list returns valid task data."""
+        import asyncio
+        from unittest.mock import AsyncMock
+        from aegis.web.server import _forge_socket_cmd
+
+        # 2 tasks with verbose diff data -> large but plausible
+        tasks = [
+            {
+                "id": "abc123",
+                "status": "completed",
+                "spec": "implement login endpoint",
+                "diffs": [{"path": f"src/file{i}.py", "content": "x" * 5000} for i in range(30)],
+                "files_created": [f"src/new{i}.py" for i in range(10)],
+                "files_modified": [f"src/mod{i}.py" for i in range(5)],
+            },
+            {
+                "id": "def456",
+                "status": "completed",
+                "spec": "add error handling",
+                "diffs": [{"path": f"src/err{i}.py", "content": "y" * 3000} for i in range(15)],
+                "files_created": [],
+                "files_modified": [f"src/handler{i}.py" for i in range(8)],
+            },
+        ]
+        payload = json.dumps(tasks)
+        assert len(payload) > 65536, f"payload {len(payload)} bytes < 64KB"
+
+        response = f"FORGE:LIST:{payload}\n"
+        response_bytes = response.encode()
+
+        async def mock_open(path, **kwargs):
+            reader = asyncio.StreamReader(limit=262144)
+            reader.feed_data(response_bytes)
+            reader.feed_eof()
+            writer = MagicMock()
+            writer.drain = AsyncMock()
+            writer.wait_closed = AsyncMock()
+            return reader, writer
+
+        with patch("aegis.web.server.asyncio.open_unix_connection", mock_open):
+            result = await _forge_socket_cmd("FORGE:LIST")
+
+        assert result.startswith("FORGE:LIST:")
+        parsed = json.loads(result[len("FORGE:LIST:"):])
+        assert len(parsed) == 2
+        assert parsed[0]["id"] == "abc123"
+        assert len(parsed[0]["diffs"]) == 30
+        assert parsed[1]["id"] == "def456"
+        assert len(parsed[1]["diffs"]) == 15
 
 
 # ---- FORGE command mapping tests ----

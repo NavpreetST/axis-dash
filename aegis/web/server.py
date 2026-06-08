@@ -36,7 +36,7 @@ log = logging.getLogger("web.server")
 
 # Ensure asyncio.open_unix_connection exists for testing (Windows lacks it)
 if not hasattr(asyncio, "open_unix_connection"):
-    async def _dummy_open_unix_connection(path: str) -> None:
+    async def _dummy_open_unix_connection(path: str, **kwargs) -> None:
         raise NotImplementedError("Unix sockets not supported on this platform")
     asyncio.open_unix_connection = _dummy_open_unix_connection
 
@@ -751,7 +751,7 @@ async def _forge_socket_cmd(command: str) -> str:
     if open_conn is None:
         raise HTTPException(status_code=501, detail="unix_socket_not_supported")
     try:
-        reader, writer = await open_conn(str(SOCK_PATH))
+        reader, writer = await open_conn(str(SOCK_PATH), limit=262144)
     except (FileNotFoundError, ConnectionRefusedError, PermissionError, OSError) as e:
         log.warning("forge proxy socket open failed: %s", e)
         raise HTTPException(status_code=503, detail="forge_socket_unavailable")
