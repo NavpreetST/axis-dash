@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from unittest.mock import AsyncMock, patch, MagicMock
 
 import pytest
@@ -256,3 +257,137 @@ def test_validate_event_rejects_non_mapping():
     assert supabase_sync._validate_event(42) is False
     assert supabase_sync._validate_event(None) is False
     assert supabase_sync._validate_event([1, 2, 3]) is False
+
+
+# ---------------------------------------------------------------------------
+# Startup reconciliation — backfill JSONL → Supabase
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_reconcile_jsonl_backfills_events(tmp_path: Path):
+    """_reconcile_jsonl must read JSONL files and upsert to Supabase."""
+    from aegis.observability import supabase_sync
+
+    events_dir = tmp_path / "events"
+    events_dir.mkdir()
+
+    # Write 3 events to a JSONL file
+    events = [
+        make_event(source="aegis", event_type="chat_turn", payload={"i": i})
+        for i in range(3)
+    ]
+    jsonl_file = events_dir / "2025-01-15.jsonl"
+    jsonl_file.write_text(
+        "\n".join(json.dumps(e) for e in events) + "\n",
+        encoding="utf-8",
+    )
+
+    mock_upsert = AsyncMock()
+
+    with patch.object(supabase_sync, "EVENTS_DIR", events_dir), \
+         patch.object(supabase_sync, "RECONCILE_STATE_PATH", events_dir / ".reconcile.json"), \
+         patch.object(supabase_sync, "_upsert_batch", mock_upsert):
+        await supabase_sync._reconcile_jsonl()
+
+    assert mock_upsert.call_count == 1
+    batch = mock_upsert.call_args_list[0][0][0]
+    assert len(batch) == 3
+    assert batch[0]["event_type"] == "chat_turn"
+
+
+@pytest.mark.asyncio
+async def test_reconcile_skips_already_synced_lines(tmp_path: Path):
+    """Lines already synced (tracked in state file) must be skipped."""
+    from aegis.observability import supabase_sync
+
+    events_dir = tmp_path / "events"
+    events_dir.mkdir()
+
+    events = [
+        make_event(source="aegis", event_type="chat_turn", payload={"i": i})
+        for i in range(5)
+    ]
+    jsonl_file = events_dir / "2025-01-15.jsonl"
+    jsonl_file.write_text(
+        "\n".join(json.dumps(e) for e in events) + "\n",
+        encoding="utf-8",
+    )
+
+    # State says first 3 lines already synced
+    state_path = events_dir / ".reconcile.json"
+    state_path.write_text(json.dumps({"2025-01-15.jsonl": 3}), encoding="utf-8")
+
+    mock_upsert = AsyncMock()
+
+    with patch.object(supabase_sync, "EVENTS_DIR", events_dir), \
+         patch.object(supabase_sync, "RECONCILE_STATE_PATH", state_path), \
+         patch.object(supabase_sync, "_upsert_batch", mock_upsert):
+        await supabase_sync._reconcile_jsonl()
+
+    # Only 2 new lines should be upserted
+    assert mock_upsert.call_count == 1
+    batch = mock_upsert.call_args_list[0][0][0]
+    assert len(batch) == 2
+    assert batch[0]["payload"]["i"] == 3
+    assert batch[1]["payload"]["i"] == 4
+
+
+@pytest.mark.asyncio
+async def test_reconcile_saves_state_after_sync(tmp_path: Path):
+    """State file must be updated after successful sync."""
+    from aegis.observability import supabase_sync
+
+    events_dir = tmp_path / "events"
+    events_dir.mkdir()
+
+    events = [
+        make_event(source="aegis", event_type="chat_turn", payload={"i": i})
+        for i in range(3)
+    ]
+    jsonl_file = events_dir / "2025-01-15.jsonl"
+    jsonl_file.write_text(
+        "\n".join(json.dumps(e) for e in events) + "\n",
+        encoding="utf-8",
+    )
+
+    state_path = events_dir / ".reconcile.json"
+
+    with patch.object(supabase_sync, "EVENTS_DIR", events_dir), \
+         patch.object(supabase_sync, "RECONCILE_STATE_PATH", state_path), \
+         patch.object(supabase_sync, "_upsert_batch", new_callable=AsyncMock):
+        await supabase_sync._reconcile_jsonl()
+
+    assert state_path.exists()
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    assert state["2025-01-15.jsonl"] == 3
+
+
+@pytest.mark.asyncio
+async def test_run_calls_reconcile_on_startup(tmp_path: Path):
+    """run() must call _reconcile_jsonl() before subscribing to BUS."""
+    from aegis.observability import supabase_sync
+
+    reconcile_called = False
+    original_reconcile = supabase_sync._reconcile_jsonl
+
+    async def _mock_reconcile():
+        nonlocal reconcile_called
+        reconcile_called = True
+
+    q: asyncio.Queue = asyncio.Queue()
+
+    with patch.object(supabase_sync, "_enabled", True), \
+         patch.object(supabase_sync, "_reconcile_jsonl", side_effect=_mock_reconcile), \
+         patch("aegis.observability.supabase_sync.BUS") as mock_bus:
+        mock_bus.subscribe.return_value = q
+
+        task = asyncio.create_task(supabase_sync.run())
+        await asyncio.sleep(0.05)
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
+    assert reconcile_called
