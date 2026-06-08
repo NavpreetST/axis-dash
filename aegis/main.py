@@ -62,19 +62,17 @@ async def serve_unix_socket() -> None:
                     writer.write((reply_text + "\n").encode())
                     await writer.drain()
 
-                    # Produce chat_turn event → BUS topic for supabase/b2
-                    await BUS.publish("eventlog.write", {
-                        "schema_version": 1,
-                        "source": "aegis",
-                        "event_type": "chat_turn",
-                        "payload": {
+                    # Log chat_turn → eventlog.append → sole writer → JSONL + cloud
+                    await eventlog.log_event(
+                        source="aegis",
+                        event_type="chat_turn",
+                        payload={
                             "prompt": prompt_text.strip(),
                             "reply": reply_text,
                         },
-                        "severity": "info",
-                        "provenance": {},
-                        "sensitivity": "internal",
-                    })
+                        severity="info",
+                        sensitivity="internal",
+                    )
                 except asyncio.TimeoutError:
                     writer.write(b"(no reply within timeout)\n")
                     await writer.drain()
@@ -118,7 +116,7 @@ async def main() -> None:
         for t in tasks:
             t.cancel()
     except Exception as e:
-        # Produce error event → BUS topic for supabase/b2
+        # Log error → eventlog.append → sole writer → JSONL + cloud
         await eventlog.log_event(
             source="aegis",
             event_type="error",

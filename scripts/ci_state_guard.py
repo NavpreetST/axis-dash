@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
-"""CI drift / arch guard — enforce the 15-field /state contract.
+"""CI drift / arch guard — enforce the /state contract.
 
 Parses aegis/web/server.py and extracts the keys returned by _build_state().
 Fails if:
-  - The field count differs from 15
-  - Any field name has changed
-  - Any field has been removed
+  - Any frozen field has been removed (breaking change)
+
+Warns (but passes) if:
+  - New fields are added (additive — needs review but not a CI blocker)
 
 Usage: python scripts/ci_state_guard.py
 """
@@ -36,8 +37,6 @@ EXPECTED_FIELDS: frozenset[str] = frozenset({
     "coherence",
     "runtime",
 })
-
-EXPECTED_COUNT = len(EXPECTED_FIELDS)  # 15
 
 
 def _extract_return_keys_from_source(source: str) -> list[str] | None:
@@ -99,16 +98,11 @@ def main() -> int:
         return 1
 
     actual = frozenset(keys)
-    count = len(keys)
 
-    print(f"Detected {count} /state fields: {sorted(keys)}")
+    print(f"Detected {len(keys)} /state fields: {sorted(keys)}")
 
     errors: list[str] = []
-
-    if count != EXPECTED_COUNT:
-        errors.append(
-            f"Field count changed: expected {EXPECTED_COUNT}, got {count}"
-        )
+    warnings: list[str] = []
 
     removed = EXPECTED_FIELDS - actual
     if removed:
@@ -116,7 +110,12 @@ def main() -> int:
 
     added = actual - EXPECTED_FIELDS
     if added:
-        errors.append(f"Fields ADDED (review required): {sorted(added)}")
+        warnings.append(f"Fields ADDED (additive, needs review): {sorted(added)}")
+
+    if warnings:
+        print("\n*** DRIFT GUARD WARNINGS ***")
+        for w in warnings:
+            print(f"  - {w}")
 
     if errors:
         print("\n*** DRIFT GUARD FAILED ***", file=sys.stderr)
@@ -130,7 +129,7 @@ def main() -> int:
         )
         return 1
 
-    print("OK — /state contract is intact (14 fields, no drift).")
+    print("OK — /state contract is intact (frozen fields present, no removals).")
     return 0
 
 

@@ -3,14 +3,28 @@
 Schema is FROZEN at schema_version 1.  DO NOT add fields.
 Source of truth: contracts/event.schema.json
 
-Architecture:
-  1. JSONL append (always) — writes to STATE_DIR/events/YYYY-MM-DD.jsonl
-  2. Supabase mirror (optional) — batched upserts when SUPABASE_URL + key set
-  3. B2 cold backup (optional) — periodic upload when B2 credentials set
+Architecture (single-writer, single-path):
 
-Single-writer guarantee: only this module writes to the JSONL files.
-No threading.Lock() needed — all writes go through append_event() which
-is called from the async run() task or via the log_event() helper.
+  main.py (chat_turn / error) ──► log_event()
+                                       │
+                                       ▼
+                                 BUS "eventlog.append"
+                                       │
+                                       ▼
+                                  run() ──► append_event() ──► JSONL (fsync)
+                                       │
+                                       ▼
+                                 BUS "eventlog.write"
+                                  ╱            ╲
+                          supabase_sync     b2_sync (reads JSONL files)
+
+Every event enters via log_event(), hits local JSONL exactly once
+(via the sole append_event() caller in run()), and is mirrored to
+Supabase via the eventlog.write BUS topic.  B2 reads JSONL files
+directly on a timer.
+
+Single-writer guarantee: only append_event() in run() touches JSONL.
+No threading.Lock() needed.
 """
 from __future__ import annotations
 
@@ -18,6 +32,7 @@ import asyncio
 import json
 import logging
 import os
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -138,8 +153,11 @@ def _today_path() -> Path:
 
 
 def append_event(event: dict) -> None:
-    """Append a single event to today's JSONL file with fsync (crash-safe)."""
-    # Validate the event has exactly the 8 frozen fields
+    """Append a single event to today's JSONL file with fsync (crash-safe).
+
+    This is the SOLE code path that writes to JSONL files.
+    Called only from run() via asyncio.to_thread — never from the event loop.
+    """
     actual_keys = set(event.keys())
     if actual_keys != REQUIRED_FIELDS:
         missing = REQUIRED_FIELDS - actual_keys
@@ -162,7 +180,26 @@ def append_event(event: dict) -> None:
             f.flush()
             os.fsync(f.fileno())
     except (OSError, ValueError) as e:
-        log.warning("eventlog: failed to append %s — %s", path, e)
+        _log_append_error(event, e)
+
+
+def _log_append_error(event: dict, error: Exception) -> None:
+    """Log append failures to stderr with sensitivity-aware redaction."""
+    sensitivity = event.get("sensitivity", "internal")
+    try:
+        if sensitivity == "secret":
+            redacted = dict(event)
+            redacted["payload"] = "<REDACTED>"
+            detail = json.dumps(redacted, ensure_ascii=False)
+        else:
+            detail = json.dumps({
+                "timestamp": event.get("timestamp"),
+                "source": event.get("source"),
+                "event_type": event.get("event_type"),
+            }, ensure_ascii=False)
+        log.warning("eventlog: append failed — %s: %s", error, detail)
+    except Exception:
+        log.warning("eventlog: append failed — %s (redaction error)", error)
 
 
 def _warn_if_large() -> None:
@@ -192,11 +229,11 @@ async def log_event(
     provenance: dict | None = None,
     sensitivity: str = "internal",
 ) -> None:
-    """Async wrapper: build event, append to JSONL, publish to BUS.
+    """Publish an event to the internal BUS for sole-writer append.
 
-    Called from main.py's handle() and error handler.  The blocking
-    fsync runs in a thread via asyncio.to_thread so the event loop
-    is never stalled.
+    This does NOT call append_event() directly (no thread-pool race).
+    It publishes to 'eventlog.append'; run() picks it up and is the
+    sole caller of append_event().
     """
     event = make_event(
         source=source,
@@ -206,62 +243,44 @@ async def log_event(
         provenance=provenance,
         sensitivity=sensitivity,
     )
-    await asyncio.to_thread(append_event, event)
-    _warn_if_large()
     try:
-        await BUS.publish("eventlog.write", event)
+        await BUS.publish("eventlog.append", event)
     except Exception as e:
-        log.debug("eventlog: failed to publish to eventlog.write — %s", e)
+        log.debug("eventlog: failed to publish to eventlog.append — %s", e)
 
 
 # ---------------------------------------------------------------------------
-# Async run entry point — subscribes to BUS events and writes them
+# Async run entry point — sole writer, single path
 # ---------------------------------------------------------------------------
 
 async def run() -> None:
-    """Listen to the BUS and append matching events to JSONL.
+    """Sole JSONL writer — subscribes to eventlog.append, writes, mirrors.
 
-    This is the single writer task.  It subscribes to action.speak and
-    intent.packet, writes JSONL, and publishes to eventlog.write for
-    supabase_sync and b2_sync to consume.
+    This is the ONLY task that calls append_event().  All events
+    (chat_turn, error, task_created, etc.) enter via log_event() which
+    publishes to the 'eventlog.append' BUS topic.  After writing to
+    JSONL, this task publishes to 'eventlog.write' for supabase_sync
+    and b2_sync to consume.
     """
     log.info("eventlog writer running")
 
-    # Subscribe to all bus topics we care about
-    subs = {
-        "action.speak": "chat_turn",
-        "intent.packet": "chat_turn",
-    }
-
     try:
-        queues = {}
-        for topic in subs:
-            queues[topic] = BUS.subscribe(topic)
+        q = BUS.subscribe("eventlog.append")
     except Exception as e:
-        log.error("eventlog: failed to subscribe to BUS — %s", e)
+        log.error("eventlog: failed to subscribe to eventlog.append — %s", e)
         return
 
-    async def _listen(topic: str, event_type: str) -> None:
-        q = queues[topic]
-        while True:
+    while True:
+        try:
+            msg = await q.get()
+            event = dict(msg.payload) if msg.payload else {}
+            if not event:
+                continue
+            await asyncio.to_thread(append_event, event)
+            _warn_if_large()
             try:
-                msg = await q.get()
-                raw_payload = dict(msg.payload) if msg.payload else {}
-                payload = _sanitize_for_json(raw_payload)
-                event = make_event(
-                    source="aegis",
-                    event_type=event_type,
-                    payload=payload,
-                    severity="info",
-                )
-                await asyncio.to_thread(append_event, event)
-                _warn_if_large()
-                try:
-                    await BUS.publish("eventlog.write", event)
-                except Exception as e:
-                    log.debug("eventlog: failed to publish to eventlog.write — %s", e)
+                await BUS.publish("eventlog.write", event)
             except Exception as e:
-                log.warning("eventlog: failed for topic %s — %s", topic, e)
-
-    tasks = [asyncio.create_task(_listen(t, et)) for t, et in subs.items()]
-    await asyncio.gather(*tasks, return_exceptions=True)
+                log.debug("eventlog: failed to publish to eventlog.write — %s", e)
+        except Exception as e:
+            log.warning("eventlog: writer error — %s", e)
