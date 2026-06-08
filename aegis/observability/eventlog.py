@@ -160,6 +160,8 @@ def append_event(event: dict) -> None:
 
     If sensitivity == "secret", the payload is replaced with "<REDACTED>"
     before writing — secret payloads are never persisted to disk in plaintext.
+
+    Raises on write/fsync failure so run() can skip the cloud mirror.
     """
     actual_keys = set(event.keys())
     if actual_keys != REQUIRED_FIELDS:
@@ -182,14 +184,11 @@ def append_event(event: dict) -> None:
         write_event["payload"] = {"redacted": True, "reason": "sensitivity=secret"}
 
     path = _today_path()
-    try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        with open(path, "a", encoding="utf-8") as f:
-            f.write(json.dumps(write_event, ensure_ascii=False, default=str) + "\n")
-            f.flush()
-            os.fsync(f.fileno())
-    except (OSError, ValueError) as e:
-        _log_append_error(event, e)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "a", encoding="utf-8") as f:
+        f.write(json.dumps(write_event, ensure_ascii=False, default=str) + "\n")
+        f.flush()
+        os.fsync(f.fileno())
 
 
 def _log_append_error(event: dict, error: Exception) -> None:
@@ -285,7 +284,11 @@ async def run() -> None:
             event = dict(msg.payload) if msg.payload else {}
             if not event:
                 continue
-            await asyncio.to_thread(append_event, event)
+            try:
+                await asyncio.to_thread(append_event, event)
+            except (OSError, ValueError) as e:
+                _log_append_error(event, e)
+                continue  # skip cloud mirror — local append failed
             _warn_if_large()
             try:
                 await BUS.publish("eventlog.write", event)

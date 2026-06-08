@@ -274,6 +274,7 @@ async def test_run_publishes_to_eventlog_write(tmp_path: Path):
 
 def test_append_event_redacts_secret_in_error_log(caplog):
     """When sensitivity=secret and append fails, payload must be redacted in logs."""
+    from aegis.observability.eventlog import _log_append_error
     import logging
 
     event = make_event(
@@ -283,15 +284,12 @@ def test_append_event_redacts_secret_in_error_log(caplog):
         sensitivity="secret",
     )
 
-    # Force a write failure by patching EVENTS_DIR to a read-only path
-    with patch("aegis.observability.eventlog.EVENTS_DIR", Path("/nonexistent")):
-        with caplog.at_level(logging.WARNING):
-            append_event(event)
-            # The log message should NOT contain the secret payload
-            for record in caplog.records:
-                if "append failed" in record.message:
-                    assert "hunter2" not in record.message
-                    assert "<REDACTED>" in record.message
+    with caplog.at_level(logging.WARNING):
+        _log_append_error(event, OSError("test failure"))
+        for record in caplog.records:
+            if "append failed" in record.message:
+                assert "hunter2" not in record.message
+                assert "<REDACTED>" in record.message
 
 
 def test_secret_payload_redacted_in_jsonl(tmp_path: Path):
@@ -313,3 +311,45 @@ def test_secret_payload_redacted_in_jsonl(tmp_path: Path):
     assert "sk-live-supersecret" not in json.dumps(parsed)
     assert parsed["payload"]["redacted"] is True
     assert parsed["sensitivity"] == "secret"
+
+
+# ---------------------------------------------------------------------------
+# Durability guarantee — append failure skips cloud mirror
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_run_skips_cloud_mirror_on_append_failure(tmp_path: Path):
+    """When append_event() raises, run() must NOT publish to eventlog.write."""
+    from aegis.observability.eventlog import run
+
+    events_dir = tmp_path / "events"
+    event = make_event(source="aegis", event_type="error", payload={"err": "test"})
+
+    with patch("aegis.observability.eventlog.EVENTS_DIR", events_dir):
+        with patch("aegis.observability.eventlog.BUS") as mock_bus:
+            import asyncio
+            q: asyncio.Queue = asyncio.Queue()
+            q.put_nowait(type("Msg", (), {"payload": event})())
+            mock_bus.subscribe.return_value = q
+            mock_bus.publish = AsyncMock()
+
+            # Patch append_event to raise
+            with patch("aegis.observability.eventlog.append_event", side_effect=OSError("disk full")):
+                task = asyncio.create_task(run())
+                await asyncio.sleep(0.05)
+                task.cancel()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
+
+            # Verify eventlog.write was NOT published to
+            write_calls = [
+                c for c in mock_bus.publish.call_args_list
+                if c[0][0] == "eventlog.write"
+            ]
+            assert len(write_calls) == 0, (
+                f"eventlog.write should NOT be published when append fails, "
+                f"but got {len(write_calls)} calls"
+            )
