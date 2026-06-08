@@ -127,7 +127,7 @@ Semaphore. The host has 16 GB RAM, no GPU; each opencode worker consumes
 
 **Gate stage**: After a forge task completes, `GateStage.run_all()` runs
 lint → test → build → cr review → owner sequentially with short-circuit on
-lint/test/build failure. The CodeRabbit CLI (`cr` v0.5.4) reviews diffs via
+lint/test/build failure. The CodeRabbit CLI (`cr`, tested with v0.5.4) reviews diffs via
 `cr review --plain --type uncommitted --dir <workdir> --api-key <token>`.
 cr is advisory by default (findings surface at the owner gate, no hard block).
 If cr finds issues, a fix-pass loop-back feeds `cr --prompt-only` output to the
