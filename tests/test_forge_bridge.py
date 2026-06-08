@@ -45,13 +45,9 @@ class MockForgeSocket:
             "FORGE:FETCH:abc123": (
                 'FORGE:RESULT:{"id": "abc123", "status": "completed", "diffs": [], "logs": "[]"}'
             ),
-            "FORGE:GATE:abc123:true": (
+            "FORGE:GATE:abc123": (
                 'FORGE:GATE:{"lint_passed": true, "test_passed": true, "build_passed": true, '
                 '"owner_approved": true, "overall_passed": true}'
-            ),
-            "FORGE:GATE:abc123:false": (
-                'FORGE:GATE:{"lint_passed": true, "test_passed": true, "build_passed": true, '
-                '"owner_approved": false, "overall_passed": true}'
             ),
             "FORGE:CLEANUP:abc123": "FORGE:OK:abc123 cleaned",
         }
@@ -69,7 +65,7 @@ class MockForgeSocket:
 @pytest.fixture
 def mock_forge_socket():
     mock = MockForgeSocket()
-    with patch("aegis.web.server._forge_socket_command", side_effect=mock.mock_command):
+    with patch("aegis.web.server._forge_socket_cmd", side_effect=mock.mock_command):
         yield mock
 
 
@@ -86,7 +82,7 @@ class TestAuth:
             ("/forge/list", "GET", None),
             ("/forge/abc123/status", "GET", None),
             ("/forge/abc123/diff", "GET", None),
-            ("/forge/abc123/gate", "POST", {"approved": True}),
+            ("/forge/abc123/gate", "POST", {"approve": True}),
             ("/forge/abc123/cleanup", "POST", None),
         ]
 
@@ -115,7 +111,7 @@ class TestAuth:
         resp = client.get("/forge/abc123/diff", params=bad)
         assert resp.status_code == 401
 
-        resp = client.post("/forge/abc123/gate", json={"approved": True}, params=bad)
+        resp = client.post("/forge/abc123/gate", json={"approve": True}, params=bad)
         assert resp.status_code == 401
 
         resp = client.post("/forge/abc123/cleanup", params=bad)
@@ -142,21 +138,22 @@ class TestSubmit:
             "/forge/submit", json={"spec": "hi"}, params=AUTH_PARAMS
         )
         assert resp.status_code == 400
-        assert "spec must be >= 10 chars" in resp.json()["detail"]
+        assert resp.json()["detail"] == "invalid_spec"
 
     def test_submit_no_spec(self):
         client = TestClient(app)
         resp = client.post("/forge/submit", json={}, params=AUTH_PARAMS)
         assert resp.status_code == 400
-        assert "spec must be >= 10 chars" in resp.json()["detail"]
+        assert resp.json()["detail"] == "invalid_spec"
 
-    def test_submit_invalid_json(self):
+    def test_submit_non_dict_body(self):
+        """Array body is valid JSON but not a dict → handled gracefully."""
         client = TestClient(app)
         resp = client.post(
-            "/forge/submit", content="not json", params=AUTH_PARAMS
+            "/forge/submit", json=["spec"], params=AUTH_PARAMS
         )
         assert resp.status_code == 400
-        assert "invalid JSON body" in resp.json()["detail"]
+        assert resp.json()["detail"] == "invalid_spec"
 
     def test_submit_forge_error(self):
         client = TestClient(app)
@@ -164,13 +161,13 @@ class TestSubmit:
         async def err_cmd(cmd):
             return "FORGE:ERR:forge not initialized"
 
-        with patch("aegis.web.server._forge_socket_command", side_effect=err_cmd):
+        with patch("aegis.web.server._forge_socket_cmd", side_effect=err_cmd):
             resp = client.post(
                 "/forge/submit",
                 json={"spec": "create a hello world function"},
                 params=AUTH_PARAMS,
             )
-            assert resp.status_code == 400
+            assert resp.status_code == 502
             assert "forge not initialized" in resp.json()["detail"]
 
 
@@ -182,7 +179,9 @@ class TestList:
         client = TestClient(app)
         resp = client.get("/forge/list", params=AUTH_PARAMS)
         assert resp.status_code == 200
-        tasks = resp.json()
+        body = resp.json()
+        assert "tasks" in body
+        tasks = body["tasks"]
         assert len(tasks) == 2
         assert tasks[0]["id"] == "abc123"
         assert tasks[0]["status"] == "completed"
@@ -195,9 +194,9 @@ class TestList:
         async def err_cmd(cmd):
             return "FORGE:ERR:forge not initialized"
 
-        with patch("aegis.web.server._forge_socket_command", side_effect=err_cmd):
+        with patch("aegis.web.server._forge_socket_cmd", side_effect=err_cmd):
             resp = client.get("/forge/list", params=AUTH_PARAMS)
-            assert resp.status_code == 400
+            assert resp.status_code == 502
             assert "forge not initialized" in resp.json()["detail"]
 
     def test_list_invalid_json(self):
@@ -206,10 +205,10 @@ class TestList:
         async def bad_json(cmd):
             return "FORGE:LIST:not json"
 
-        with patch("aegis.web.server._forge_socket_command", side_effect=bad_json):
+        with patch("aegis.web.server._forge_socket_cmd", side_effect=bad_json):
             resp = client.get("/forge/list", params=AUTH_PARAMS)
             assert resp.status_code == 502
-            assert "invalid task list JSON" in resp.json()["detail"]
+            assert "malformed_response" in resp.json()["detail"]
 
 
 # ---- Status tests ----
@@ -231,9 +230,9 @@ class TestStatus:
         async def err_cmd(cmd):
             return "FORGE:ERR:unknown task xyz999"
 
-        with patch("aegis.web.server._forge_socket_command", side_effect=err_cmd):
+        with patch("aegis.web.server._forge_socket_cmd", side_effect=err_cmd):
             resp = client.get("/forge/xyz999/status", params=AUTH_PARAMS)
-            assert resp.status_code == 404
+            assert resp.status_code == 502
             assert "unknown task" in resp.json()["detail"]
 
     def test_get_status_invalid_json(self):
@@ -242,10 +241,10 @@ class TestStatus:
         async def bad_json(cmd):
             return "FORGE:STATUS:not json"
 
-        with patch("aegis.web.server._forge_socket_command", side_effect=bad_json):
+        with patch("aegis.web.server._forge_socket_cmd", side_effect=bad_json):
             resp = client.get("/forge/abc123/status", params=AUTH_PARAMS)
             assert resp.status_code == 502
-            assert "invalid task JSON" in resp.json()["detail"]
+            assert "malformed_response" in resp.json()["detail"]
 
 
 # ---- Diff tests ----
@@ -268,9 +267,9 @@ class TestDiff:
         async def err_cmd(cmd):
             return "FORGE:ERR:unknown task xyz999"
 
-        with patch("aegis.web.server._forge_socket_command", side_effect=err_cmd):
+        with patch("aegis.web.server._forge_socket_cmd", side_effect=err_cmd):
             resp = client.get("/forge/xyz999/diff", params=AUTH_PARAMS)
-            assert resp.status_code == 404
+            assert resp.status_code == 502
             assert "unknown task" in resp.json()["detail"]
 
     def test_get_diff_invalid_json(self):
@@ -279,10 +278,10 @@ class TestDiff:
         async def bad_json(cmd):
             return "FORGE:RESULT:not json"
 
-        with patch("aegis.web.server._forge_socket_command", side_effect=bad_json):
+        with patch("aegis.web.server._forge_socket_cmd", side_effect=bad_json):
             resp = client.get("/forge/abc123/diff", params=AUTH_PARAMS)
             assert resp.status_code == 502
-            assert "invalid result JSON" in resp.json()["detail"]
+            assert "malformed_response" in resp.json()["detail"]
 
 
 # ---- Gate tests ----
@@ -293,7 +292,7 @@ class TestGate:
         client = TestClient(app)
         resp = client.post(
             "/forge/abc123/gate",
-            json={"approved": True},
+            json={"approve": True},
             params=AUTH_PARAMS,
         )
         assert resp.status_code == 200
@@ -304,37 +303,15 @@ class TestGate:
         assert result["owner_approved"] is True
         assert result["overall_passed"] is True
 
-    def test_gate_reject_success(self, mock_forge_socket):
+    def test_gate_reject_not_true(self):
+        """Active gate requires approve=True; anything else is 400."""
         client = TestClient(app)
-        resp = client.post(
-            "/forge/abc123/gate",
-            json={"approved": False},
-            params=AUTH_PARAMS,
-        )
-        assert resp.status_code == 200
-        result = resp.json()
-        assert result["owner_approved"] is False
-        assert result["overall_passed"] is True
-
-    def test_gate_missing_approved_defaults_false(self, mock_forge_socket):
-        """When approved field is missing, defaults to False (reject)."""
-        client = TestClient(app)
-        resp = client.post(
-            "/forge/abc123/gate", json={}, params=AUTH_PARAMS
-        )
-        assert resp.status_code == 200
-        result = resp.json()
-        assert result["owner_approved"] is False
-
-    def test_gate_invalid_approved_type(self):
-        client = TestClient(app)
-        resp = client.post(
-            "/forge/abc123/gate",
-            json={"approved": "yes"},
-            params=AUTH_PARAMS,
-        )
-        assert resp.status_code == 400
-        assert "approved must be boolean" in resp.json()["detail"]
+        for body in [{"approve": False}, {}, {"approve": "yes"}, {"approve": 1}]:
+            resp = client.post(
+                "/forge/abc123/gate", json=body, params=AUTH_PARAMS
+            )
+            assert resp.status_code == 400
+            assert resp.json()["detail"] == "approval_required"
 
     def test_gate_forge_error(self):
         client = TestClient(app)
@@ -342,31 +319,24 @@ class TestGate:
         async def err_cmd(cmd):
             return "FORGE:ERR:task not completed (status=pending)"
 
-        with patch("aegis.web.server._forge_socket_command", side_effect=err_cmd):
+        with patch("aegis.web.server._forge_socket_cmd", side_effect=err_cmd):
             resp = client.post(
                 "/forge/abc123/gate",
-                json={"approved": True},
+                json={"approve": True},
                 params=AUTH_PARAMS,
             )
-            assert resp.status_code == 400
+            assert resp.status_code == 502
             assert "task not completed" in resp.json()["detail"]
 
     def test_gate_sends_correct_command(self, mock_forge_socket):
-        """Verify gate sends FORGE:GATE:<id>:<true|false>."""
+        """Active gate sends FORGE:GATE:<id> (no approval flag)."""
         client = TestClient(app)
         client.post(
             "/forge/abc123/gate",
-            json={"approved": True},
+            json={"approve": True},
             params=AUTH_PARAMS,
         )
-        assert "FORGE:GATE:abc123:true" in mock_forge_socket.commands_received
-
-        client.post(
-            "/forge/abc123/gate",
-            json={"approved": False},
-            params=AUTH_PARAMS,
-        )
-        assert "FORGE:GATE:abc123:false" in mock_forge_socket.commands_received
+        assert "FORGE:GATE:abc123" in mock_forge_socket.commands_received
 
 
 # ---- Cleanup tests ----
@@ -377,7 +347,7 @@ class TestCleanup:
         client = TestClient(app)
         resp = client.post("/forge/abc123/cleanup", params=AUTH_PARAMS)
         assert resp.status_code == 200
-        assert resp.json() == {"message": "abc123 cleaned"}
+        assert resp.json() == {"result": "FORGE:OK:abc123 cleaned"}
 
     def test_cleanup_unknown_task(self):
         client = TestClient(app)
@@ -385,9 +355,9 @@ class TestCleanup:
         async def err_cmd(cmd):
             return "FORGE:ERR:unknown task xyz999"
 
-        with patch("aegis.web.server._forge_socket_command", side_effect=err_cmd):
+        with patch("aegis.web.server._forge_socket_cmd", side_effect=err_cmd):
             resp = client.post("/forge/xyz999/cleanup", params=AUTH_PARAMS)
-            assert resp.status_code == 400
+            assert resp.status_code == 502
             assert "unknown task" in resp.json()["detail"]
 
 
@@ -396,14 +366,14 @@ class TestCleanup:
 
 class TestErrorHandling:
     def test_socket_connection_error(self):
-        """Simulates the HTTPException that _forge_socket_command raises on OSError."""
+        """Simulates the HTTPException that _forge_socket_cmd raises on OSError."""
         from fastapi import HTTPException
 
         async def conn_err(cmd):
             raise HTTPException(status_code=503, detail="socket_unavailable: Connection refused")
 
         client = TestClient(app)
-        with patch("aegis.web.server._forge_socket_command", side_effect=conn_err):
+        with patch("aegis.web.server._forge_socket_cmd", side_effect=conn_err):
             resp = client.post(
                 "/forge/submit",
                 json={"spec": "create a hello world function"},
@@ -413,19 +383,20 @@ class TestErrorHandling:
             assert "socket_unavailable" in resp.json()["detail"]
 
     def test_unexpected_response(self):
+        """Active routes echo the raw response as the 502 detail."""
         client = TestClient(app)
 
         async def bad_resp(cmd):
             return "SOME:UNEXPECTED:RESPONSE"
 
-        with patch("aegis.web.server._forge_socket_command", side_effect=bad_resp):
+        with patch("aegis.web.server._forge_socket_cmd", side_effect=bad_resp):
             resp = client.post(
                 "/forge/submit",
                 json={"spec": "create a hello world function"},
                 params=AUTH_PARAMS,
             )
             assert resp.status_code == 502
-            assert "unexpected response" in resp.json()["detail"]
+            assert "SOME:UNEXPECTED:RESPONSE" in resp.json()["detail"]
 
 
 # ---- FORGE command mapping tests ----
@@ -460,10 +431,10 @@ class TestCommandMapping:
         client = TestClient(app)
         client.post(
             "/forge/abc123/gate",
-            json={"approved": True},
+            json={"approve": True},
             params=AUTH_PARAMS,
         )
-        assert "FORGE:GATE:abc123:true" in mock_forge_socket.commands_received
+        assert "FORGE:GATE:abc123" in mock_forge_socket.commands_received
 
     def test_cleanup_maps_to_forge_cleanup(self, mock_forge_socket):
         client = TestClient(app)
