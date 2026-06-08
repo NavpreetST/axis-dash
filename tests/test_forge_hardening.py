@@ -240,6 +240,39 @@ class TestGateProof:
             assert result.overall_passed is False
 
     @pytest.mark.asyncio
+    async def test_gate_blocks_on_build_failure(self):
+        """Gate must block when lint+tests pass but build fails."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            workdir = Path(tmpdir)
+            # Create a clean Python file with a matching test
+            clean_file = workdir / "ok.py"
+            clean_file.write_text("def foo():\n    return 42\n")
+            tests_dir = workdir / "tests"
+            tests_dir.mkdir()
+            passing_test = tests_dir / "test_ok.py"
+            passing_test.write_text(
+                "def test_foo():\n    from ok import foo\n    assert foo() == 42\n"
+            )
+            # Add pyproject.toml that will fail build (no build-system table)
+            (workdir / "pyproject.toml").write_text(
+                "[project]\nname = \"bad-build\"\nversion = \"0.1.0\"\n"
+            )
+
+            proc = await asyncio.create_subprocess_exec(
+                "ruff", "format", str(workdir),
+                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+            )
+            await proc.communicate()
+
+            gate = GateStage(workdir)
+            result = await gate.run_all()
+
+            assert result.lint_passed is True, "Lint should pass on clean code"
+            assert result.test_passed is True, "Tests should pass"
+            assert result.build_passed is False, "Build should fail (no build-system)"
+            assert result.overall_passed is False, "Overall must be False when build fails"
+
+    @pytest.mark.asyncio
     async def test_gate_all_passes(self):
         """Gate must return overall_passed=True when all checks pass."""
         with tempfile.TemporaryDirectory() as tmpdir:

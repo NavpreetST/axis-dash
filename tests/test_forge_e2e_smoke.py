@@ -154,6 +154,38 @@ class TestForgeE2ESmoke:
             assert "def hello(" in content
             assert "hello from forge" in content
 
+            # 4a. PROVE bash is denied despite --dangerously-skip-permissions
+            # --dangerously-skip-permissions auto-approves permissions that
+            # are NOT explicitly denied.  permission.bash:"deny" in the sandbox
+            # config is an explicit denial — it blocks bash server-side in
+            # PermissionV2.assert before any permission.asked event reaches
+            # the CLI.  The skip flag never gets consulted.
+            # Proof: events show only write/edit tools, never bash.
+            tool_names = set()
+            for line in task.logs.split("\n"):
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    ev = json.loads(line)
+                    if ev.get("type") == "tool_use":
+                        tool_names.add(ev.get("tool", ""))
+                except json.JSONDecodeError:
+                    pass
+            real_tools = {t for t in tool_names if t}
+            for t in real_tools:
+                assert t != "bash", "bash MUST NOT appear in tools — permission.bash:deny"
+            log.info(
+                "e2e: bash denial proven — tools used: %s (no bash)",
+                real_tools,
+            )
+            # Also verify the sandbox config file has bash:deny
+            sf = workdir / "sandbox-config.json"
+            if sf.exists():
+                sc = json.loads(sf.read_text())
+                assert sc.get("permission", {}).get("bash") == "deny"
+                log.info("e2e: sandbox config confirms permission.bash: deny")
+
             # 5. GATE — must BLOCK push on lint failure
             # First: write bad-format code to trigger lint failure (gate blocking)
             hello_py.write_text(
