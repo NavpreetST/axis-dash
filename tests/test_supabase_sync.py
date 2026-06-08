@@ -147,7 +147,7 @@ async def test_upsert_does_not_retry_on_4xx_non_retryable():
 
 @pytest.mark.asyncio
 async def test_failed_batch_goes_to_offline_queue():
-    """When upsert fails, the batch must be queued for later retry."""
+    """When upsert fails, the batch must be queued for later retry by reconcile."""
     from aegis.observability import supabase_sync
 
     event = make_event(source="aegis", event_type="chat_turn", payload={"q": True})
@@ -164,21 +164,21 @@ async def test_failed_batch_goes_to_offline_queue():
 
     with patch.object(supabase_sync, "_enabled", True), \
          patch.object(supabase_sync, "_upsert_batch", side_effect=_fake_upsert), \
+         patch.object(supabase_sync, "FLUSH_INTERVAL_SECONDS", 0.01), \
          patch("aegis.observability.supabase_sync.BUS") as mock_bus:
         mock_bus.subscribe.return_value = q
 
         task = asyncio.create_task(supabase_sync.run())
-        await asyncio.sleep(0.05)
+        await asyncio.sleep(0.1)
         task.cancel()
         try:
             await task
         except asyncio.CancelledError:
             pass
 
-    # First call failed, so batch should be in offline_q
-    # Since run() was cancelled, the batch is drained in the finally block
-    # We just verify upsert was attempted
-    assert call_count >= 1
+    assert call_count >= 2, (
+        f"Expected initial failure + reconcile retry (>= 2 calls), got {call_count}"
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -247,3 +247,12 @@ def test_validate_event_rejects_non_dict_payload():
     event = make_event(source="aegis", event_type="chat_turn", payload={})
     event["payload"] = "not a dict"
     assert supabase_sync._validate_event(event) is False
+
+
+def test_validate_event_rejects_non_mapping():
+    from aegis.observability import supabase_sync
+
+    assert supabase_sync._validate_event("not a dict") is False
+    assert supabase_sync._validate_event(42) is False
+    assert supabase_sync._validate_event(None) is False
+    assert supabase_sync._validate_event([1, 2, 3]) is False

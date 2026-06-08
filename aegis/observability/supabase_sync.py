@@ -61,6 +61,8 @@ _REQUIRED_FIELDS: frozenset[str] = frozenset({
 
 def _validate_event(event: dict) -> bool:
     """Return *True* if *event* conforms to the frozen 8-field schema."""
+    if not isinstance(event, dict):
+        return False
     return (
         set(event.keys()) == _REQUIRED_FIELDS
         and isinstance(event.get("payload"), dict)
@@ -159,7 +161,7 @@ async def run() -> None:
         except Exception:
             try:
                 offline_q.put_nowait(current)
-            except asyncio.FullQueue:
+            except asyncio.QueueFull:
                 log.warning(
                     "supabase: offline queue full — dropping %d events", len(current)
                 )
@@ -182,7 +184,7 @@ async def run() -> None:
                     # Put back at front is impossible with Queue; re-enqueue
                     try:
                         offline_q.put_nowait(queued)
-                    except asyncio.FullQueue:
+                    except asyncio.QueueFull:
                         log.warning("supabase: offline queue full during reconcile — drop")
                     break  # back-off: stop draining this cycle
 
