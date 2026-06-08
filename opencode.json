@@ -4,6 +4,6 @@
   "permission": {
     "edit": "allow",
     "write": "allow",
-    "bash": "deny"
+    "bash": "allow"
   }
 }
