@@ -6,7 +6,7 @@ import json
 import logging
 import time
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from aegis.nexus.bus import BUS
 from aegis.observability.paths import TURNS_PATH
@@ -54,7 +54,7 @@ async def run() -> None:
             msg = await text_q.get()
             _turn_start = time.perf_counter()
             _current_turn = {
-                "ts": datetime.now(timezone.utc).isoformat(),
+                "ts": datetime.now(UTC).isoformat(),
                 "turn_id": uuid.uuid4().hex[:12],
                 "input_len": len(msg.payload.get("text", "")),
                 "encode_ms": None,
@@ -90,7 +90,7 @@ async def run() -> None:
             row["error_class"] = payload.get("error_class")
             row["render_ms"] = payload.get("render_ms")
             row["total_ms"] = int((time.perf_counter() - _turn_start) * 1000) if _turn_start else None
-            row["ts"] = datetime.now(timezone.utc).isoformat()
+            row["ts"] = datetime.now(UTC).isoformat()
             _append_row(row)
             _warn_if_large()
             _current_turn = {}

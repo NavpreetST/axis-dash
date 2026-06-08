@@ -107,7 +107,7 @@ async def _handle_forge_command(line: str) -> str:
             return f"FORGE:ERR:unknown task {task_id}"
         if task.status != TaskStatus.COMPLETED:
             return f"FORGE:ERR:task not completed (status={task.status.value})"
-        gate = GateStage(task.workdir, manager=_forge_dispatcher._manager)
+        gate = GateStage(task.workdir, manager=_forge_manager)
         result = await gate.run_all()
         approved = await gate.request_owner_approval(task_id, result) if result.overall_passed else False
         task = await _forge_dispatcher.complete_gate(task_id, result, approved)

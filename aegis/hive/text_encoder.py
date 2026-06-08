@@ -5,8 +5,10 @@ Encodes incoming text to 384-dim L2-normalised vectors. Publishes to
 model instance is reused by Mnemosyne (Step 5) for memory retrieval.
 """
 from __future__ import annotations
+
 import asyncio
 import logging
+
 from sentence_transformers import SentenceTransformer
 
 from aegis.nexus.bus import BUS

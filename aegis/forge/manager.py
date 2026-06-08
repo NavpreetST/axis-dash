@@ -38,10 +38,12 @@ _SANDBOX_DIR = FORGE_BASE / ".sandbox"
 _SANDBOX_CWD = _SANDBOX_DIR / "cwd"
 _SANDBOX_HOME = _SANDBOX_DIR / "home"
 
+# CR token identifier — NOT in _SANDBOX_ALLOWLIST. The token is never
+# injected via env var; it is passed as a CLI flag (--api-key) in the
+# gate's cr review step, which runs OUTSIDE the sandbox.
+_CR_TOKEN_VAR = "CODERABBIT_API_KEY"
+
 # Strict allowlist: ONLY these env vars reach the forge worker.
-# CODERABBIT_API_KEY is declared here for auditability but is NEVER injected
-# via env — it is passed as a CLI flag (--api-key) in the gate's cr review
-# step, which runs OUTSIDE the sandbox (after opencode finishes).
 _SANDBOX_ALLOWLIST: frozenset[str] = frozenset(
     {
         "PATH",
@@ -58,7 +60,6 @@ _SANDBOX_ALLOWLIST: frozenset[str] = frozenset(
         "OPENCODE_CONFIG_CONTENT",
         "OPENCODE_PERMISSION",
         "AEGIS_FORGE_DIR",
-        "CODERABBIT_API_KEY",
     }
 )
 
@@ -113,7 +114,7 @@ class ForgeManager:
         # Explicitly strip cr token — it is NEVER injected via env.
         # The gate's cr review step passes it via --api-key CLI flag only,
         # keeping it absent during opencode model generation.
-        env.pop("CODERABBIT_API_KEY", None)
+        env.pop(_CR_TOKEN_VAR, None)  # defensive; should not be present
         env["HOME"] = str(_SANDBOX_HOME)
         env["OPENCODE_CONFIG"] = str(config_path)
         env["OPENCODE_LOG_LEVEL"] = "WARN"

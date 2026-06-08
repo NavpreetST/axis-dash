@@ -8,19 +8,17 @@ Every producer must:
 from __future__ import annotations
 
 import asyncio
-import time
-from unittest.mock import patch, AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from aegis.observability.eventlog import (
-    make_event,
-    VALID_SOURCES,
     VALID_EVENT_TYPES,
-    VALID_SEVERITIES,
     VALID_SENSITIVITIES,
+    VALID_SEVERITIES,
+    VALID_SOURCES,
+    make_event,
 )
-
 
 # ---------------------------------------------------------------------------
 # Schema guard — every producer's event must pass _validate_event()
@@ -61,6 +59,7 @@ def _assert_valid_event(event: dict) -> None:
 def test_startup_event_code_exists():
     """Verify main.py contains the startup event emission code."""
     import inspect
+
     from aegis import main
     source = inspect.getsource(main.main)
     assert 'event_type="task_done"' in source
@@ -90,6 +89,7 @@ def test_startup_event_valid_shape():
 def test_shutdown_event_code_exists():
     """Verify main.py contains the shutdown event emission code."""
     import inspect
+
     from aegis import main
     source = inspect.getsource(main.main)
     assert 'event_type="error"' in source
@@ -211,8 +211,8 @@ async def test_all_exhausted_emits_critical():
 @pytest.mark.asyncio
 async def test_quota_exhausted_emits_event():
     """QuotaExhausted raises and emits error / warn with count/budget."""
-    from aegis.renderer.gemini import render
     from aegis.renderer import QuotaExhausted
+    from aegis.renderer.gemini import render
 
     events: list[dict] = []
 
@@ -249,9 +249,10 @@ async def test_quota_exhausted_emits_event():
 
 def test_day_rollover_pending():
     """Day rollover pushes to _DAY_ROLLOVER_PENDING."""
-    from aegis.renderer import _quota
     import json
     from unittest.mock import patch
+
+    from aegis.renderer import _quota
 
     # Clear pending
     _quota._DAY_ROLLOVER_PENDING.clear()
@@ -283,8 +284,8 @@ def test_pop_day_rollover_drains():
 @pytest.mark.asyncio
 async def test_day_rollover_emits_event_in_dispatcher():
     """Dispatcher tick loop drains day-rollover and emits task_created / info."""
-    from aegis.renderer.dispatcher import run
     from aegis.renderer import _quota
+    from aegis.renderer.dispatcher import run
 
     _quota._DAY_ROLLOVER_PENDING.clear()
     _quota._DAY_ROLLOVER_PENDING.append("2026-06-08")

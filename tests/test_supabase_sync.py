@@ -5,11 +5,11 @@ from __future__ import annotations
 import asyncio
 import json
 from pathlib import Path
-from unittest.mock import AsyncMock, patch, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from aegis.observability.eventlog import make_event, REQUIRED_FIELDS
+from aegis.observability.eventlog import make_event
 
 
 def _make_msg(event: dict):

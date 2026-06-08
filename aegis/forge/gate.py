@@ -5,8 +5,8 @@ clearing all gates. Git credentials stay OUT of opencode's reach.
 
 cr stage is advisory by default: findings surface at the owner gate but
 do NOT set overall_passed=False. To make cr a hard block, set the env
-var AEGIS_FORCE_CR_HARD_BLOCK=true (not recommended without rate-limit
-headroom; cr free tier is 3 reviews/hour).
+var ``AEGIS_FORCE_CR_HARD_BLOCK=true`` (evaluated at runtime; not
+recommended without rate-limit headroom; cr free tier is 3 reviews/hour).
 """
 
 from __future__ import annotations
@@ -78,7 +78,9 @@ def _cr_token() -> str | None:
     return None
 
 
-_CR_HARD_BLOCK: bool = os.environ.get("AEGIS_FORCE_CR_HARD_BLOCK", "").lower() in ("1", "true")
+def _cr_hard_block() -> bool:
+    """Check at runtime whether cr failures should hard-block the gate."""
+    return os.environ.get("AEGIS_FORCE_CR_HARD_BLOCK", "").lower() in ("1", "true")
 
 
 @dataclass
@@ -157,7 +159,11 @@ class GateStage:
             log.info("gate: cr skipped (%s)", result.cr_output)
 
         # overall_passed reflects lint+test+build only (cr is advisory by default)
+        # If _cr_hard_block() returns True, a failing cr also flips overall_passed.
         result.overall_passed = True
+        if _cr_hard_block() and not result.cr_passed:
+            result.overall_passed = False
+            log.warning("gate: cr HARD-BLOCKED for %s", self.workdir)
         result.gate_ms = int((time.perf_counter() - t0) * 1000)
         log.info("gate: ALL PASSED for %s (%dms)", self.workdir, result.gate_ms)
         return result

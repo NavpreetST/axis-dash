@@ -523,19 +523,23 @@ class TestGateCrStage:
     # Token isolation
     # ------------------------------------------------------------------
 
-    def test_cr_token_in_allowlist_but_stripped_by_run_task(self):
-        """CODERABBIT_API_KEY is allowlisted (documentary) but run_task() pops it."""
-        from aegis.forge.manager import _SANDBOX_ALLOWLIST, ForgeManager
+    def test_cr_token_not_in_allowlist_and_stripped_by_run_task(self):
+        """CODERABBIT_API_KEY is NOT in the allowlist; token is CLI-flag only."""
+        from aegis.forge.manager import (
+            _CR_TOKEN_VAR,
+            _SANDBOX_ALLOWLIST,
+            ForgeManager,
+        )
 
-        # Confirms it IS in the allowlist (documentary requirement)
-        assert "CODERABBIT_API_KEY" in _SANDBOX_ALLOWLIST
+        # The token var is declared separately — NOT in the functional allowlist
+        assert "CODERABBIT_API_KEY" not in _SANDBOX_ALLOWLIST
 
-        # Confirms _sanitize_env passes it through (it's in allowlist)
+        # _sanitize_env strips it (not in allowlist)
         with pytest.MonkeyPatch.context() as mp:
-            mp.setenv("CODERABBIT_API_KEY", "should_not_leak")
+            mp.setenv(_CR_TOKEN_VAR, "should_not_leak")
             sandbox = ForgeManager._sanitize_env()
-            assert "CODERABBIT_API_KEY" in sandbox, (
-                "Token is in allowlist so _sanitize_env keeps it"
+            assert _CR_TOKEN_VAR not in sandbox, (
+                f"{_CR_TOKEN_VAR} is not in allowlist — must be stripped"
             )
 
     @pytest.mark.asyncio
@@ -624,19 +628,56 @@ class TestGateCrStage:
                         [{"severity": "error", "text": "test finding"}],
                     ),
                 ),
-                patch.object(gate, "_get_cr_fix_prompt", return_value=None),
+                patch.object(gate, "_get_cr_fix_prompt", return_value="fix prompt"),
             ):
                 result = await gate.run_all()
 
             assert result.lint_passed is True
             assert result.cr_passed is False
-            # findings accumulate across all MAX_CR_LOOP+1 iterations
             from aegis.forge.gate import MAX_CR_LOOP
 
             assert len(result.cr_findings) == MAX_CR_LOOP + 1
             assert result.cr_loop_iterations == MAX_CR_LOOP
             # overall_passed is lint+test+build only — cr is advisory
             assert result.overall_passed is True, "cr is advisory — must not flip overall_passed"
+
+    @pytest.mark.asyncio
+    async def test_gate_cr_hard_block_flips_overall_passed(self):
+        """When AEGIS_FORCE_CR_HARD_BLOCK is set, cr failure must block overall."""
+        from unittest.mock import AsyncMock, patch
+
+        with (
+            tempfile.TemporaryDirectory() as tmpdir,
+            pytest.MonkeyPatch.context() as mp,
+        ):
+            workdir = Path(tmpdir)
+            (workdir / "ok.py").write_text("x = 1\n")
+
+            mp.setenv("AEGIS_FORCE_CR_HARD_BLOCK", "true")
+
+            gate = GateStage(workdir)
+
+            with (
+                patch("aegis.forge.gate._cr_binary", return_value="/usr/bin/cr"),
+                patch("aegis.forge.gate._cr_token", return_value="test_token"),
+                patch.object(gate, "_ensure_git_repo", AsyncMock()),
+                patch.object(
+                    gate,
+                    "_run_single_cr_review",
+                    return_value=(
+                        False,
+                        "Issues found",
+                        [{"severity": "error", "text": "blocking finding"}],
+                    ),
+                ),
+                patch.object(gate, "_get_cr_fix_prompt", return_value="fix prompt"),
+            ):
+                result = await gate.run_all()
+
+            assert result.cr_passed is False
+            assert result.overall_passed is False, (
+                "overall_passed must be False when AEGIS_FORCE_CR_HARD_BLOCK is set and cr fails"
+            )
 
     @pytest.mark.asyncio
     async def test_gate_cr_loop_fires_on_findings(self):

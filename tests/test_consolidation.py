@@ -6,14 +6,12 @@ NVIDIA_API_KEY in secrets.env.
 from __future__ import annotations
 
 import asyncio
-import json
 import sqlite3
 import time
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -145,8 +143,9 @@ class TestGetUnconsolidated:
         assert all(ep["id"] != sample_episodes[0]["id"] for ep in result)
 
     def test_excludes_seed_rows(self, tmp_db, sample_episodes):
-        from aegis.consolidation import _get_unconsolidated
         import array
+
+        from aegis.consolidation import _get_unconsolidated
         tmp_db.execute(
             "INSERT INTO episodes (ts, text, embedding, neurobus, action, consolidated) "
             "VALUES (?, ?, ?, ?, ?, ?)",
@@ -235,6 +234,7 @@ class TestCallNim:
     @pytest.mark.asyncio
     async def test_returns_none_on_network_error(self):
         import httpx
+
         from aegis.consolidation import _call_nim
 
         with patch("aegis.consolidation.httpx.AsyncClient") as mock_client:
@@ -326,7 +326,7 @@ class TestStatePersistence:
             assert state == {}
 
     def test_save_and_load_state(self, tmp_path):
-        from aegis.consolidation import _save_state, _load_state
+        from aegis.consolidation import _load_state, _save_state
         state_path = tmp_path / "state.json"
         with patch("aegis.consolidation._STATE_PATH", state_path):
             _save_state({"last_run": 12345.0, "last_rollover": "2026-01-01"})

@@ -4,7 +4,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import os
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from aegis.observability.paths import RENDERER_STATE_PATH, atomic_write_json
 from aegis.renderer import _quota
@@ -38,7 +38,7 @@ def record_provider_attempt(
     gemini_budget: int | None = None,
 ) -> None:
     try:
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(UTC).isoformat()
         budget = gemini_budget if gemini_budget is not None else _quota.DAILY_BUDGET
         used = _gemini_used()
         state = {

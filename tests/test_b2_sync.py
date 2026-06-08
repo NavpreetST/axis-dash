@@ -6,12 +6,11 @@ import asyncio
 import gzip
 import json
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
 from aegis.observability.eventlog import make_event
-
 
 # ---------------------------------------------------------------------------
 # Feature-flag OFF → no-op

@@ -23,10 +23,9 @@ import logging
 import time
 
 from aegis.nexus.bus import BUS
-from aegis.renderer import QuotaExhausted, TransientError, RendererError, _is_speaking as _set_speaking_flag
-from aegis.renderer import gemini, fallback, groq
-from aegis.renderer._quota import pop_day_rollover
 from aegis.observability import eventlog
+from aegis.renderer import QuotaExhausted, RendererError, fallback, gemini, groq
+from aegis.renderer._quota import pop_day_rollover
 
 log = logging.getLogger(__name__)
 

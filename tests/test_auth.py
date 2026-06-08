@@ -1,9 +1,11 @@
-import os
-import pytest
 from unittest.mock import patch
+
+import pytest
 from fastapi.testclient import TestClient
 from fastapi.websockets import WebSocketDisconnect
+
 from aegis.web.server import app
+
 
 @pytest.fixture(autouse=True)
 def mock_token():
@@ -39,7 +41,6 @@ def test_2_ws_state_bearer_token():
 
 def test_3_ws_chat_query_token():
     client = TestClient(app)
-    import asyncio
     class MockStream:
         def write(self, data): pass
         async def drain(self): pass

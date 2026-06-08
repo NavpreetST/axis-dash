@@ -321,7 +321,7 @@ async def run() -> None:
                         last_flush = time.monotonic()
                 else:
                     log.debug("supabase: dropped event with invalid schema")
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 await _flush(batch)
                 batch = []
                 last_flush = time.monotonic()

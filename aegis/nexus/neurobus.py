@@ -9,15 +9,17 @@ Mirrors the brainstem chemicals (Psyche §NeuroBus):
   trust     (OT)    bias toward in-group / familiar context
 """
 from __future__ import annotations
+
 import asyncio
 import logging
 import os
-from dataclasses import dataclass, asdict
-from datetime import datetime, timezone
+from dataclasses import asdict, dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 
-from .bus import BUS
 from aegis.observability.paths import NEUROBUS_STATE_PATH, atomic_write_json
+
+from .bus import BUS
 
 log = logging.getLogger("nexus.neurobus")
 
@@ -68,7 +70,7 @@ def _build_orb_snapshot() -> dict:
     function calls so a runtime ImportError inside the called function
     is not misclassified as a missing module.
     """
-    now = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(UTC).isoformat()
     snap: dict = {"updated_at": now, **asdict(STATE)}
 
     # hidden_state_vec
@@ -114,7 +116,7 @@ async def run() -> None:
             await BUS.publish("neurobus.state", asdict(STATE))
             # Write the lightweight neurobus state file.
             try:
-                now = datetime.now(timezone.utc).isoformat()
+                now = datetime.now(UTC).isoformat()
                 atomic_write_json(
                     NEUROBUS_STATE_PATH,
                     {"updated_at": now, **asdict(STATE)},

@@ -21,11 +21,11 @@ import logging
 import os
 import re
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect, status
+from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -472,7 +472,7 @@ def _detect_launch_method(pid: int | None) -> str:
         return "nohup"
     # Check parent PID — if it's 1 (init/systemd), likely launched by systemd
     try:
-        with open(f"/proc/{pid}/stat", "r") as f:
+        with open(f"/proc/{pid}/stat") as f:
             stat = f.read()
         rpar = stat.rfind(")")
         if rpar >= 0:
@@ -785,7 +785,7 @@ async def chat_ws(ws: WebSocket) -> None:
                 line = await asyncio.wait_for(
                     reader.readline(), timeout=CHAT_REPLY_TIMEOUT_SECONDS
                 )
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 await ws.send_text(json.dumps({
                     "error": "reply_timeout",
                     "timeout_seconds": CHAT_REPLY_TIMEOUT_SECONDS,
@@ -816,7 +816,7 @@ async def chat_ws(ws: WebSocket) -> None:
 
 
 def _today_eventlog_path() -> Path:
-    day = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    day = datetime.now(UTC).strftime("%Y-%m-%d")
     return EVENTS_DIR / f"{day}.jsonl"
 
 
@@ -843,7 +843,7 @@ async def _tail_eventlog():
                 # Run blocking mkdir + open in thread to avoid blocking the event loop
                 def _open_log() -> object | None:
                     EVENTS_DIR.mkdir(parents=True, exist_ok=True)
-                    return open(path, "r", encoding="utf-8", errors="replace")
+                    return open(path, encoding="utf-8", errors="replace")
                 f = await asyncio.to_thread(_open_log)
             except FileNotFoundError:
                 f = None
