@@ -1,6 +1,7 @@
 """Aegis Nexus — 1 Hz tick driver."""
 import asyncio
 import logging
+
 from .bus import BUS
 
 log = logging.getLogger("nexus.clock")

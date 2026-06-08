@@ -31,8 +31,8 @@ import httpx
 from aegis.nexus.bus import BUS
 from aegis.nim_budget import (
     NIM_BATCH_SIZE,
-    NIM_MODEL,
     NIM_BUDGET,
+    NIM_MODEL,
 )
 from aegis.observability import eventlog
 
@@ -235,8 +235,8 @@ async def run() -> None:
         await asyncio.Event().wait()
         return
 
-    from aegis.renderer._quota import pop_day_rollover
     from aegis.mnemosyne.db import CONN
+    from aegis.renderer._quota import pop_day_rollover
 
     log.info("consolidation: enabled (NIM model=%s, RPM cap=%d)", NIM_MODEL, NIM_BUDGET.rpm_cap)
 

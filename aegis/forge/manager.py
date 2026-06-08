@@ -38,6 +38,11 @@ _SANDBOX_DIR = FORGE_BASE / ".sandbox"
 _SANDBOX_CWD = _SANDBOX_DIR / "cwd"
 _SANDBOX_HOME = _SANDBOX_DIR / "home"
 
+# CR token identifier — NOT in _SANDBOX_ALLOWLIST. The token is never
+# injected via env var; it is passed as a CLI flag (--api-key) in the
+# gate's cr review step, which runs OUTSIDE the sandbox.
+_CR_TOKEN_VAR = "CODERABBIT_API_KEY"
+
 # Strict allowlist: ONLY these env vars reach the forge worker.
 _SANDBOX_ALLOWLIST: frozenset[str] = frozenset(
     {
@@ -106,6 +111,10 @@ class ForgeManager:
         config_path.write_text(json.dumps(cfg, indent=2))
 
         env = self._sanitize_env()
+        # Explicitly strip cr token — it is NEVER injected via env.
+        # The gate's cr review step passes it via --api-key CLI flag only,
+        # keeping it absent during opencode model generation.
+        env.pop(_CR_TOKEN_VAR, None)  # defensive; should not be present
         env["HOME"] = str(_SANDBOX_HOME)
         env["OPENCODE_CONFIG"] = str(config_path)
         env["OPENCODE_LOG_LEVEL"] = "WARN"
@@ -113,10 +122,13 @@ class ForgeManager:
         args = [
             OPENCODE_BIN,
             "run",
-            "--format", "json",
-            "--model", "opencode/big-pickle",
+            "--format",
+            "json",
+            "--model",
+            "opencode/big-pickle",
             "--pure",
-            "--dir", str(workdir),
+            "--dir",
+            str(workdir),
             "--dangerously-skip-permissions",
             spec,
         ]
@@ -222,9 +234,7 @@ class ForgeManager:
         if has_git:
             diffs = []
 
-            rc, out = await _run_simple(
-                ["git", "diff", "--staged", "--name-status"], cwd=workdir
-            )
+            rc, out = await _run_simple(["git", "diff", "--staged", "--name-status"], cwd=workdir)
             if rc == 0 and out.strip():
                 for line in out.strip().split("\n"):
                     parts = line.strip().split("\t")

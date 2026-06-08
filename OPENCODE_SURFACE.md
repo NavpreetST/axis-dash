@@ -116,8 +116,9 @@ ONLY keys in `_SANDBOX_ALLOWLIST` (PATH, HOME, USER, LANG, LC_ALL, SHELL,
 TERM, TMPDIR, OPENCODE_BIN, OPENCODE_LOG_LEVEL, OPENCODE_CONFIG,
 OPENCODE_CONFIG_CONTENT, OPENCODE_PERMISSION, AEGIS_FORGE_DIR) reach the
 worker. Everything else (API keys, tokens, SSH agent, git credentials) is
-STRIPPED. Git/push auth is injected ONLY at the GateStage — never into
-the opencode worker.
+STRIPPED. `CODERABBIT_API_KEY` is explicitly NOT in the allowlist — it is
+declared as `_CR_TOKEN_VAR` in manager.py for reference but is passed to
+the cr CLI via `--api-key` flag in the gate step, never via environment.
 
 **Concurrency cap**: `MAX_CONCURRENT_FORGE_TASKS` (default 2, env override
 `AEGIS_FORGE_MAX_CONCURRENT`) limits parallel opencode runs via an asyncio
@@ -125,9 +126,14 @@ Semaphore. The host has 16 GB RAM, no GPU; each opencode worker consumes
 ~2-4 GB. This prevents OOM.
 
 **Gate stage**: After a forge task completes, `GateStage.run_all()` runs
-lint → test → build sequentially with short-circuit on first failure. Only
-after all three pass AND the owner explicitly approves (`request_owner_approval`)
-is a push permitted. The smoke path produces a GATED result, never an auto-push.
+lint → test → build → cr review → owner sequentially with short-circuit on
+lint/test/build failure. The CodeRabbit CLI (`cr`, tested with v0.5.4) reviews diffs via
+`cr review --plain --type uncommitted --dir <workdir> --api-key <token>`.
+cr is advisory by default (findings surface at the owner gate, no hard block).
+If cr finds issues, a fix-pass loop-back feeds `cr --prompt-only` output to the
+opencode agent (max 2 iterations). Only after all pass AND the owner explicitly
+approves (`request_owner_approval`) is a push permitted. The smoke path produces
+a GATED result, never an auto-push.
 
 ## Budgeter Seam
 

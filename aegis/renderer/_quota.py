@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import json
 import os
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -38,9 +38,9 @@ def _today_pacific(now: datetime | None = None) -> str:
     - DST-back day: 2026-11-01 stays 2026-11-01 across the repeated hour.
     """
     if now is None:
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
     elif now.tzinfo is None:
-        now = now.replace(tzinfo=timezone.utc)
+        now = now.replace(tzinfo=UTC)
     return now.astimezone(_PROVIDER_TZ).strftime("%Y-%m-%d")
 
 

@@ -16,6 +16,7 @@ Output head (40 dims):
   [39]    urgency
 """
 from __future__ import annotations
+
 import asyncio
 import logging
 import math

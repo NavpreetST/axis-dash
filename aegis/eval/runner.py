@@ -15,7 +15,7 @@ import json
 import subprocess
 import sys
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 FACTS = [
@@ -113,7 +113,7 @@ def _final_score(reply: str, item: dict) -> str:
 
 
 def main() -> int:
-    started = datetime.now(timezone.utc).isoformat()
+    started = datetime.now(UTC).isoformat()
     results = []
     for item in FACTS:
         t0 = time.monotonic()
@@ -144,7 +144,7 @@ def main() -> int:
             "error": error,
         })
 
-    finished = datetime.now(timezone.utc).isoformat()
+    finished = datetime.now(UTC).isoformat()
     hits = sum(1 for r in results if r["score"] == "hit")
     fuzzy = sum(1 for r in results if r["score"] == "fuzzy")
     misses = sum(1 for r in results if r["score"] == "miss")
@@ -160,7 +160,7 @@ def main() -> int:
     }
 
     REPORT_DIR.mkdir(parents=True, exist_ok=True)
-    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    today = datetime.now(UTC).strftime("%Y-%m-%d")
     report_path = REPORT_DIR / f"{today}.json"
     report_path.write_text(json.dumps(summary, indent=2))
 

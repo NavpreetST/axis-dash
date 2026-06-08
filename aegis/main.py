@@ -26,6 +26,7 @@ if _env.exists():
             k, v = line.split("=", 1)
             os.environ.setdefault(k.strip(), v.strip())
 
+from aegis import consolidation
 from aegis.brain import ncp
 from aegis.forge.dispatcher import ForgeDispatcher
 from aegis.forge.gate import GateStage
@@ -37,7 +38,6 @@ from aegis.mnemosyne.db import seed_if_empty as _seed_if_empty
 from aegis.nexus import clock, neurobus
 from aegis.nexus.bus import BUS
 from aegis.observability import b2_sync, eventlog, supabase_sync, turns
-from aegis import consolidation
 from aegis.renderer import dispatcher
 from aegis.renderer.gemini import validate_sku as _validate_sku
 
@@ -107,7 +107,7 @@ async def _handle_forge_command(line: str) -> str:
             return f"FORGE:ERR:unknown task {task_id}"
         if task.status != TaskStatus.COMPLETED:
             return f"FORGE:ERR:task not completed (status={task.status.value})"
-        gate = GateStage(task.workdir)
+        gate = GateStage(task.workdir, manager=_forge_manager)
         result = await gate.run_all()
         approved = await gate.request_owner_approval(task_id, result) if result.overall_passed else False
         task = await _forge_dispatcher.complete_gate(task_id, result, approved)

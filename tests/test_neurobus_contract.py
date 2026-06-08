@@ -1,5 +1,6 @@
 from aegis.nexus.neurobus import NeuroState
 
+
 def test_neurostate_vec_length():
     assert len(NeuroState().vec()) == 6
 
