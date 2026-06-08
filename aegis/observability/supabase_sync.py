@@ -1,47 +1,80 @@
-"""Supabase mirror — batched upserts of events from the JSONL log.
+"""Supabase mirror sink — BUS subscriber for ``eventlog.write``.
 
-Reads creds from ~/.config/aegis/secrets.env (NEVER from repo .env).
-Gracefully skips if SUPABASE_URL or SUPABASE_SERVICE_KEY are not set.
+Subscribes to the ``eventlog.write`` BUS topic, batches events, and upserts
+them into Supabase via the REST API with idempotent merge-duplicates.
 
-Uses httpx (already a helios dependency) to hit the Supabase REST API.
-No additional pip dependencies required.
+Feature-flagged OFF by default: requires both ``SUPABASE_URL`` and
+``SUPABASE_SERVICE_KEY`` environment variables (sourced from
+``~/.config/aegis/secrets.env``).  When absent the ``run()`` coroutine
+returns immediately — zero overhead, zero network calls.
+
+Resilience
+----------
+* Local ``asyncio.Queue`` decouples the BUS from the HTTP sink; local writes
+  are never blocked.
+* Failed batches are placed on an offline queue and retried with exponential
+  back-off (1 s → 2 s → 4 s → … capped at 30 s).
+* A periodic timer flushes the batch even when the batch size is not reached.
 """
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import os
-from pathlib import Path
+import time
+
+import httpx
+
+from aegis.nexus.bus import BUS
 
 log = logging.getLogger(__name__)
 
-# Supabase REST API config — read from secrets.env via aegis.main bootstrap
-SUPABASE_URL = os.getenv("SUPABASE_URL", "")
-SUPABASE_SERVICE_KEY = os.getenv("SUPABASE_SERVICE_KEY", "")
-TABLE_NAME = "events"
+# ---------------------------------------------------------------------------
+# Configuration (from env / secrets.env)
+# ---------------------------------------------------------------------------
+SUPABASE_URL: str = os.getenv("SUPABASE_URL", "")
+SUPABASE_SERVICE_KEY: str = os.getenv("SUPABASE_SERVICE_KEY", "")
+TABLE_NAME: str = "events"
 
-# Batch settings — upsert N events at a time, flush every M seconds
-BATCH_SIZE = 20
-FLUSH_INTERVAL_SECONDS = 30.0
+BATCH_SIZE: int = 20
+FLUSH_INTERVAL_SECONDS: float = 30.0
 
-_required_fields = frozenset({
+# Retry / back-off
+MAX_RETRIES: int = 5
+INITIAL_BACKOFF: float = 1.0
+BACKOFF_CAP: float = 30.0
+
+# Offline queue cap (prevents unbounded memory growth when Supabase is down)
+OFFLINE_QUEUE_MAX: int = 500
+
+_enabled: bool = bool(SUPABASE_URL and SUPABASE_SERVICE_KEY)
+
+_REQUIRED_FIELDS: frozenset[str] = frozenset({
     "schema_version", "timestamp", "source", "event_type",
     "payload", "severity", "provenance", "sensitivity",
 })
 
-_enabled = bool(SUPABASE_URL and SUPABASE_SERVICE_KEY)
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
 
 
 def _validate_event(event: dict) -> bool:
-    """Return True if event has the required 8-field schema."""
-    return set(event.keys()) == _required_fields and isinstance(event.get("payload"), dict)
+    """Return *True* if *event* conforms to the frozen 8-field schema."""
+    if not isinstance(event, dict):
+        return False
+    return (
+        set(event.keys()) == _REQUIRED_FIELDS
+        and isinstance(event.get("payload"), dict)
+    )
 
 
 async def _upsert_batch(batch: list[dict]) -> None:
-    """POST a batch of events to Supabase REST API (upsert)."""
-    import httpx
+    """POST *batch* to Supabase REST API with idempotent upsert.
 
+    Retries up to ``MAX_RETRIES`` times with exponential back-off.
+    Raises on final failure so callers can re-queue.
+    """
     url = f"{SUPABASE_URL}/rest/v1/{TABLE_NAME}"
     headers = {
         "apikey": SUPABASE_SERVICE_KEY,
@@ -50,68 +83,149 @@ async def _upsert_batch(batch: list[dict]) -> None:
         "Prefer": "resolution=merge-duplicates",
     }
 
-    try:
-        async with httpx.AsyncClient(timeout=15.0) as client:
-            resp = await client.post(url, json=batch, headers=headers)
-            if resp.status_code >= 400:
+    backoff = INITIAL_BACKOFF
+    last_exc: Exception | None = None
+
+    for attempt in range(1, MAX_RETRIES + 1):
+        try:
+            async with httpx.AsyncClient(timeout=15.0) as client:
+                resp = await client.post(url, json=batch, headers=headers)
+            if resp.status_code < 400:
+                log.debug("supabase: upserted %d events (attempt %d)", len(batch), attempt)
+                return
+            # 4xx other than 409/429 are non-retryable
+            if 400 <= resp.status_code < 500 and resp.status_code not in (409, 429):
                 log.warning(
-                    "supabase: upsert failed (%d): %s",
+                    "supabase: non-retryable upsert %d: %s",
                     resp.status_code,
                     resp.text[:200],
                 )
-            else:
-                log.debug("supabase: upserted %d events", len(batch))
-    except Exception as e:
-        log.warning("supabase: upsert network error — %s", e)
+                return  # drop — poison event
+            log.warning(
+                "supabase: upsert %d (attempt %d/%d), retrying in %.1fs",
+                resp.status_code, attempt, MAX_RETRIES, backoff,
+            )
+        except Exception as exc:
+            last_exc = exc
+            log.warning(
+                "supabase: network error (attempt %d/%d) — %s, retrying in %.1fs",
+                attempt, MAX_RETRIES, exc, backoff,
+            )
+
+        if attempt < MAX_RETRIES:
+            await asyncio.sleep(backoff)
+            backoff = min(backoff * 2, BACKOFF_CAP)
+
+    # All retries exhausted
+    msg = f"supabase: upsert failed after {MAX_RETRIES} attempts"
+    if last_exc:
+        raise last_exc from None
+    raise RuntimeError(msg)
+
+
+# ---------------------------------------------------------------------------
+# Core coroutine
+# ---------------------------------------------------------------------------
 
 
 async def run() -> None:
-    """Periodically flush buffered events to Supabase.
+    """Subscribe to ``eventlog.write``, batch events, upsert to Supabase.
 
-    This is a STUB that can be activated by setting SUPABASE_URL and
-    SUPABASE_SERVICE_KEY in ~/.config/aegis/secrets.env.  When creds
-    are absent, the coroutine waits indefinitely (no-op).
+    When ``SUPABASE_URL`` / ``SUPABASE_SERVICE_KEY`` are unset the
+    coroutine returns immediately (feature-flag OFF).
     """
     if not _enabled:
         log.info("supabase mirror: skipped (no SUPABASE_URL / SUPABASE_SERVICE_KEY)")
-        await asyncio.Event().wait()  # sleep forever (truly)
         return
 
-    log.info("supabase mirror running → %s", TABLE_NAME)
-
-    from aegis.nexus.bus import BUS
+    log.info("supabase mirror sink → %s", TABLE_NAME)
 
     try:
-        q = BUS.subscribe("eventlog.write")
-    except Exception as e:
-        log.error("supabase mirror: failed to subscribe to eventlog.write — %s", e)
+        q: asyncio.Queue = BUS.subscribe("eventlog.write")
+    except Exception as exc:
+        log.error("supabase mirror: subscribe failed — %s", exc)
         return
 
-    buffer: list[dict] = []
+    batch: list[dict] = []
+    offline_q: asyncio.Queue[list[dict]] = asyncio.Queue(maxsize=OFFLINE_QUEUE_MAX)
+    last_flush = time.monotonic()
 
-    async def _flush() -> None:
-        nonlocal buffer
-        if not buffer:
+    # -- internal helpers ---------------------------------------------------
+
+    async def _flush(current: list[dict]) -> None:
+        """Attempt to upsert *current*; on failure stash in offline queue."""
+        if not current:
             return
-        batch = list(buffer)
-        buffer = []
-        await _upsert_batch(batch)
+        try:
+            await _upsert_batch(current)
+        except Exception:
+            try:
+                offline_q.put_nowait(current)
+            except asyncio.QueueFull:
+                log.warning(
+                    "supabase: offline queue full — dropping %d events", len(current)
+                )
+
+    async def _reconcile() -> None:
+        """Periodically retry offline-queued batches."""
+        while True:
+            await asyncio.sleep(FLUSH_INTERVAL_SECONDS)
+            if offline_q.empty():
+                continue
+            # Drain up to 5 queued batches per cycle
+            for _ in range(min(5, offline_q.qsize())):
+                try:
+                    queued = offline_q.get_nowait()
+                except asyncio.QueueEmpty:
+                    break
+                try:
+                    await _upsert_batch(queued)
+                except Exception:
+                    # Put back at front is impossible with Queue; re-enqueue
+                    try:
+                        offline_q.put_nowait(queued)
+                    except asyncio.QueueFull:
+                        log.warning("supabase: offline queue full during reconcile — drop")
+                    break  # back-off: stop draining this cycle
 
     async def _listen() -> None:
-        nonlocal buffer
+        nonlocal batch, last_flush
         while True:
             try:
-                msg = await asyncio.wait_for(q.get(), timeout=FLUSH_INTERVAL_SECONDS)
+                elapsed = time.monotonic() - last_flush
+                timeout = max(0.01, FLUSH_INTERVAL_SECONDS - elapsed)
+                msg = await asyncio.wait_for(q.get(), timeout=timeout)
                 if msg.payload and _validate_event(dict(msg.payload)):
-                    payload = dict(msg.payload) if msg.payload else {}
-                    buffer.append(payload)
-                    if len(buffer) >= BATCH_SIZE:
-                        await _flush()
+                    batch.append(dict(msg.payload))
+                    if len(batch) >= BATCH_SIZE:
+                        await _flush(batch)
+                        batch = []
+                        last_flush = time.monotonic()
                 else:
                     log.debug("supabase: dropped event with invalid schema")
             except asyncio.TimeoutError:
-                await _flush()
-            except Exception as e:
-                log.warning("supabase mirror: listen error — %s", e)
+                await _flush(batch)
+                batch = []
+                last_flush = time.monotonic()
+            except asyncio.CancelledError:
+                # Drain remaining batch on shutdown
+                await _flush(batch)
+                batch = []
+                raise
+            except Exception as exc:
+                log.warning("supabase mirror: listen error — %s", exc)
 
-    await _listen()
+    # -- run both loops concurrently ----------------------------------------
+    reconcile_task = asyncio.create_task(_reconcile())
+    listen_task = asyncio.create_task(_listen())
+    try:
+        await asyncio.gather(listen_task, reconcile_task)
+    finally:
+        reconcile_task.cancel()
+        listen_task.cancel()
+        # Suppress CancelledError from tasks
+        for t in (listen_task, reconcile_task):
+            try:
+                await t
+            except (asyncio.CancelledError, Exception):
+                pass
