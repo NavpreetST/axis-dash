@@ -132,4 +132,104 @@ describe('createLogsClient', () => {
     expect(MockEventSource.instances.length).toBe(instancesBeforeDisconnect);
     expect(get(logsConnected)).toBe(false);
   });
+
+  // --- Live → LogLine mapping ---
+  describe('live → LogLine mapping', () => {
+    it('preserves all four valid type values', () => {
+      const client = createLogsClient();
+      client.connect();
+
+      for (const type of ['info', 'success', 'warning', 'error'] as const) {
+        const before = get(logs).length;
+        lastEs().onmessage!({
+          data: JSON.stringify({ source: 'sys', type, message: `type-${type}` })
+        });
+        const state = get(logs);
+        expect(state[0].type).toBe(type);
+        expect(state.length).toBeGreaterThan(before);
+      }
+
+      client.disconnect();
+    });
+
+    it('defaults unknown type to info', () => {
+      const client = createLogsClient();
+      client.connect();
+
+      lastEs().onmessage!({ data: '{"source":"sys","type":"debug","message":"x"}' });
+      expect(get(logs)[0].type).toBe('info');
+      client.disconnect();
+    });
+
+    it('defaults missing type to info', () => {
+      const client = createLogsClient();
+      client.connect();
+
+      lastEs().onmessage!({ data: '{"source":"sys","message":"x"}' });
+      expect(get(logs)[0].type).toBe('info');
+      client.disconnect();
+    });
+
+    it('defaults missing source to sys', () => {
+      const client = createLogsClient();
+      client.connect();
+
+      lastEs().onmessage!({ data: '{"type":"info","message":"x"}' });
+      expect(get(logs)[0].source).toBe('sys');
+      client.disconnect();
+    });
+
+    it('defaults null source to sys', () => {
+      const client = createLogsClient();
+      client.connect();
+
+      lastEs().onmessage!({ data: '{"source":null,"type":"info","message":"x"}' });
+      expect(get(logs)[0].source).toBe('sys');
+      client.disconnect();
+    });
+
+    it('defaults missing message to the raw event data', () => {
+      const client = createLogsClient();
+      client.connect();
+
+      const rawData = '{"source":"sys","type":"info"}';
+      lastEs().onmessage!({ data: rawData });
+      expect(get(logs)[0].message).toBe(rawData);
+      client.disconnect();
+    });
+
+    it('defaults null message to the raw event data', () => {
+      const client = createLogsClient();
+      client.connect();
+
+      const rawData = '{"source":"sys","type":"info","message":null}';
+      lastEs().onmessage!({ data: rawData });
+      expect(get(logs)[0].message).toBe(rawData);
+      client.disconnect();
+    });
+
+    it('handles an empty object with all defaults', () => {
+      const client = createLogsClient();
+      client.connect();
+
+      lastEs().onmessage!({ data: '{}' });
+      const entry = get(logs)[0];
+      expect(entry.source).toBe('sys');
+      expect(entry.type).toBe('info');
+      expect(entry.message).toBe('{}');
+      client.disconnect();
+    });
+
+    it('entirely non-JSON payload falls back to info entry', () => {
+      const client = createLogsClient();
+      client.connect();
+
+      lastEs().onmessage!({ data: '[1, 2, 3' });
+      const entry = get(logs)[0];
+      expect(entry.source).toBe('sys');
+      expect(entry.type).toBe('info');
+      expect(entry.message).toBe('[1, 2, 3');
+      client.disconnect();
+    });
+  });
 });
