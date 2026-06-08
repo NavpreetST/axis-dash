@@ -286,10 +286,11 @@ def test_append_event_redacts_secret_in_error_log(caplog):
 
     with caplog.at_level(logging.WARNING):
         _log_append_error(event, OSError("test failure"))
-        for record in caplog.records:
-            if "append failed" in record.message:
-                assert "hunter2" not in record.message
-                assert "<REDACTED>" in record.message
+        matching = [r.message for r in caplog.records if "append failed" in r.message]
+        assert matching, "Expected an append-failure warning log"
+        for message in matching:
+            assert "hunter2" not in message
+            assert "<REDACTED>" in message
 
 
 def test_secret_payload_redacted_in_jsonl(tmp_path: Path):
