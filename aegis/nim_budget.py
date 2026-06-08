@@ -19,7 +19,7 @@ NIM_RPM_CAP = int(os.getenv("AEGIS_NIM_RPM_CAP", "40"))
 NIM_TARGET_RPM = int(os.getenv("AEGIS_NIM_TARGET_RPM", "15"))
 NIM_INTERVAL_S = int(os.getenv("AEGIS_NIM_INTERVAL_S", "86400"))
 NIM_BATCH_SIZE = int(os.getenv("AEGIS_NIM_BATCH_SIZE", "20"))
-NIM_MODEL = os.getenv("AEGIS_NIM_MODEL", "meta/llama-3.1-8b-instruct")
+NIM_MODEL = os.getenv("AEGIS_NIM_MODEL", "meta/llama-3.3-70b-instruct")
 
 
 class NimBudget:
