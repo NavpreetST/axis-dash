@@ -78,6 +78,21 @@ ALLOWED_ORIGINS: set[str] = {
     if o.strip()
 }
 
+_PREVIEW_ORIGIN_PAT = re.compile(
+    r"^https://axis-dash-[a-z0-9-]+-navpreets-projects\.vercel\.app$"
+)
+
+
+def _is_allowed_origin(origin: str | None) -> bool:
+    if not origin:
+        return False
+    if origin in ALLOWED_ORIGINS:
+        return True
+    if _PREVIEW_ORIGIN_PAT.match(origin):
+        return True
+    return False
+
+
 # WebSocket close codes (RFC 6455). 4401 = application-defined auth failure.
 WS_CLOSE_APP_AUTH_FAILED = 4401
 
@@ -135,8 +150,8 @@ class CORSMiddleware(BaseHTTPMiddleware):
 
     async def dispatch(self, request, call_next):
         origin = request.headers.get("origin")
-        # Reflect origin only if it's in the allowlist; else omit the header.
-        allow_origin = origin if origin in self.allowed_origins else None
+        # Reflect origin only if it's in the allowlist or matches preview pattern; else omit the header.
+        allow_origin = origin if _is_allowed_origin(origin) else None
 
         if request.method == "OPTIONS":
             # Preflight: respond with CORS headers and 204.
@@ -638,7 +653,7 @@ async def state_ws(ws: WebSocket) -> None:
     await ws.accept()
     # Check WS origin against allowlist (BaseHTTPMiddleware doesn't run on WS upgrades)
     origin = ws.headers.get("origin")
-    if origin and origin not in ALLOWED_ORIGINS:
+    if origin and not _is_allowed_origin(origin):
         log.warning("state ws origin rejected: %s", origin)
         await ws.close(code=WS_CLOSE_APP_AUTH_FAILED, reason="origin_not_allowed")
         return
@@ -730,7 +745,7 @@ async def chat_ws(ws: WebSocket) -> None:
 
     # Check WS origin against allowlist (BaseHTTPMiddleware doesn't run on WS upgrades)
     origin = ws.headers.get("origin")
-    if origin and origin not in ALLOWED_ORIGINS:
+    if origin and not _is_allowed_origin(origin):
         log.warning("chat ws origin rejected: %s", origin)
         await ws.close(code=WS_CLOSE_APP_AUTH_FAILED, reason="origin_not_allowed")
         return
