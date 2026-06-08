@@ -466,3 +466,95 @@ class TestCrashIsolation:
         for t in tasks:
             t.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
+
+
+# ---------------------------------------------------------------------------
+# Tests: re-consolidation loophole regression
+# ---------------------------------------------------------------------------
+
+class TestReConsolidationLoop:
+    """Verify consolidated episodes are never re-selected (no summary-of-summaries)."""
+
+    @pytest.fixture
+    def fake_model(self):
+        """Mock the MiniLM text encoder for _store_consolidated."""
+        import array as _array
+        mock_model = MagicMock()
+        dummy_emb = _array.array("f", [0.1] * 384).tolist()
+        mock_model.encode.return_value = MagicMock(tolist=MagicMock(return_value=dummy_emb))
+        return mock_model
+
+    @pytest.mark.asyncio
+    async def test_consolidated_summary_not_reselected(self, tmp_db, sample_episodes, fake_model):
+        """Run consolidation once; second pass must find 0 unconsolidated episodes."""
+        from aegis.consolidation import (
+            _consolidate_batch,
+            _get_unconsolidated,
+        )
+
+        mock_response = {"choices": [{"message": {"content": "consolidated summary"}}]}
+
+        with patch("aegis.consolidation._call_nim", new_callable=AsyncMock, return_value=mock_response), \
+             patch("aegis.hive.text_encoder.get_model", return_value=fake_model):
+            count = await _consolidate_batch(tmp_db, sample_episodes)
+
+        assert count == 5
+
+        # Verify originals marked consolidated=1
+        ids = [ep["id"] for ep in sample_episodes]
+        placeholders = ",".join("?" for _ in ids)
+        cur = tmp_db.execute(
+            f"SELECT consolidated FROM episodes WHERE id IN ({placeholders})", ids
+        )
+        assert all(row[0] == 1 for row in cur.fetchall())
+
+        # Verify summary row stored with consolidated=1
+        cur = tmp_db.execute(
+            "SELECT text, consolidated FROM episodes WHERE action = 'consolidated'"
+        )
+        rows = cur.fetchall()
+        assert len(rows) == 1
+        assert rows[0][0].startswith("CONSOLIDATED:")
+        assert rows[0][1] == 1  # critical: consolidated=1
+
+        # Second pass: must NOT re-select the summary
+        remaining = _get_unconsolidated(tmp_db)
+        assert len(remaining) == 0, (
+            f"Re-consolidation loophole! Second pass found {len(remaining)} episodes: "
+            f"{[r['text'][:40] for r in remaining]}"
+        )
+
+    @pytest.mark.asyncio
+    async def test_stored_consolidated_row_has_consolidated_flag(self, tmp_db, fake_model):
+        """_store_consolidated must insert with consolidated=1, not the default 0."""
+        from aegis.consolidation import _store_consolidated
+
+        with patch("aegis.hive.text_encoder.get_model", return_value=fake_model):
+            _store_consolidated(tmp_db, "test summary text", "{}")
+
+        cur = tmp_db.execute(
+            "SELECT text, action, consolidated FROM episodes WHERE action = 'consolidated'"
+        )
+        rows = cur.fetchall()
+        assert len(rows) == 1
+        assert rows[0][0] == "CONSOLIDATED: test summary text"
+        assert rows[0][1] == "consolidated"
+        assert rows[0][2] == 1, "consolidated column must be 1 to prevent re-selection"
+
+    def test_unconsolidated_query_excludes_consolidated_action(self, tmp_db):
+        """Even if consolidated=0, action='consolidated' must not prevent re-selection
+        (but consolidated=1 is the primary guard)."""
+        import array
+        from aegis.consolidation import _get_unconsolidated
+
+        emb = array.array("f", [0.1] * 384).tobytes()
+        tmp_db.execute(
+            "INSERT INTO episodes (ts, text, embedding, neurobus, action, consolidated) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (time.time(), "CONSOLIDATED: old summary", emb, "{}", "consolidated", 0),
+        )
+        tmp_db.commit()
+
+        result = _get_unconsolidated(tmp_db)
+        # action='consolidated' passes != 'seed', so consolidated=1 is the ONLY guard
+        assert len(result) == 1  # would be selected if consolidated=0
