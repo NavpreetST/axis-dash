@@ -339,8 +339,11 @@ async def test_run_skips_cloud_mirror_on_append_failure(tmp_path: Path):
             mock_bus.subscribe.return_value = q
             mock_bus.publish = AsyncMock()
 
-            # Use an Event to synchronize: _append_event_sync is called → set event
-            append_called = asyncio.Event()
+            # Use a threading.Event to synchronize: _append_event_sync is called
+            # from a worker thread (via to_thread), so asyncio.Event is unsafe.
+            import threading
+
+            append_called = threading.Event()
 
             def _fail_append(evt):
                 append_called.set()
@@ -348,7 +351,8 @@ async def test_run_skips_cloud_mirror_on_append_failure(tmp_path: Path):
 
             with patch("aegis.observability.eventlog._append_event_sync", side_effect=_fail_append):
                 task = asyncio.create_task(run())
-                await append_called.wait()  # wait until _append_event_sync was called
+                # Wait for the worker thread to signal (threading.Event is thread-safe)
+                await asyncio.get_running_loop().run_in_executor(None, append_called.wait)
                 await asyncio.sleep(0)  # let run() hit the return
                 task.cancel()
                 try:

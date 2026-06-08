@@ -213,6 +213,15 @@ def _append_event_sync(event: dict) -> None:
     if event["schema_version"] != SCHEMA_VERSION:
         raise ValueError(f"schema_version must be {SCHEMA_VERSION}, got {event['schema_version']}")
 
+    if event["source"] not in VALID_SOURCES:
+        raise ValueError(f"invalid source: {event['source']!r}")
+    if event["event_type"] not in VALID_EVENT_TYPES:
+        raise ValueError(f"invalid event_type: {event['event_type']!r}")
+    if event["severity"] not in VALID_SEVERITIES:
+        raise ValueError(f"invalid severity: {event['severity']!r}")
+    if event["sensitivity"] not in VALID_SENSITIVITIES:
+        raise ValueError(f"invalid sensitivity: {event['sensitivity']!r}")
+
     # Redact secret payloads before persisting to disk
     write_event = event
     if event.get("sensitivity") == "secret":
@@ -311,6 +320,9 @@ async def write_and_mirror(event: dict) -> None:
       1. No interleaving (asyncio.Lock serializes appends).
       2. Exactly-once local write (only _append_event_sync touches JSONL).
       3. Consistent mirror (eventlog.write published only on success).
+
+    The mirror publish is inside the lock so coroutine cancellation can
+    never skip it after a successful disk write.
     """
     lock = _get_append_lock()
     async with lock:
@@ -319,11 +331,11 @@ async def write_and_mirror(event: dict) -> None:
         except (OSError, ValueError) as e:
             _log_append_error(event, e)
             return  # skip cloud mirror — local append failed
-    _warn_if_large()
-    try:
-        await BUS.publish("eventlog.write", event)
-    except Exception as e:
-        log.debug("eventlog: failed to publish to eventlog.write — %s", e)
+        _warn_if_large()
+        try:
+            await BUS.publish("eventlog.write", event)
+        except Exception as e:
+            log.debug("eventlog: failed to publish to eventlog.write — %s", e)
 
 
 # ---------------------------------------------------------------------------
