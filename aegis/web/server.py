@@ -968,6 +968,9 @@ async def forge_submit(request: Request) -> dict[str, Any]:
     if not spec or len(spec) < 10:
         raise HTTPException(status_code=400, detail="spec must be >= 10 chars")
     
+    # Sanitize: line-delimited socket would truncate multiline specs.
+    spec = " ".join(spec.splitlines())
+    
     cmd = f"FORGE:SUBMIT:{spec}"
     response = await _forge_socket_command(cmd)
     
@@ -996,7 +999,6 @@ async def forge_list(request: Request) -> list[dict]:
     
     if response.startswith("FORGE:LIST:"):
         try:
-            import json
             tasks_json = response[11:]
             return json.loads(tasks_json)
         except json.JSONDecodeError:
@@ -1023,7 +1025,6 @@ async def forge_status(request: Request, task_id: str) -> dict[str, Any]:
     
     if response.startswith("FORGE:STATUS:"):
         try:
-            import json
             task_json = response[13:]
             return json.loads(task_json)
         except json.JSONDecodeError:
@@ -1050,7 +1051,6 @@ async def forge_diff(request: Request, task_id: str) -> dict[str, Any]:
     
     if response.startswith("FORGE:RESULT:"):
         try:
-            import json
             result_json = response[13:]
             return json.loads(result_json)
         except json.JSONDecodeError:
@@ -1089,7 +1089,6 @@ async def forge_gate(request: Request, task_id: str) -> dict[str, Any]:
     
     if response.startswith("FORGE:GATE:"):
         try:
-            import json
             gate_json = response[11:]
             return json.loads(gate_json)
         except json.JSONDecodeError:

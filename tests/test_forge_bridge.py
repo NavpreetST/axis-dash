@@ -62,8 +62,6 @@ class MockForgeSocket:
         self.commands_received.append(cmd)
         if cmd in self.responses:
             return self.responses[cmd]
-        elif cmd.startswith("FORGE:ERR:"):
-            return cmd
         else:
             return f"FORGE:ERR:unknown command {cmd}"
 

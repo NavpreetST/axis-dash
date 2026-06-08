@@ -110,27 +110,13 @@ async def _handle_forge_command(line: str) -> str:
         gate = GateStage(task.workdir)
         result = await gate.run_all()
         
-        # Parse approval flag from command
-        approved = False  # Default: reject (explicit approval required)
+        # Parse approval flag from command (default: reject)
+        approved = False
         if len(parts) > 3:
-            try:
-                approval_str = parts[3].strip().lower()
-                approved = approval_str == "true"
-            except Exception:
-                pass
+            approved = parts[3].strip().lower() == "true"
         
-        # Only approve if automated checks pass and explicit approval given
-        if result.overall_passed and approved:
-            task = await _forge_dispatcher.complete_gate(task_id, result, True)
-        elif result.overall_passed and not approved:
-            # Automated checks passed but no explicit approval — mark as GATED but not approved
-            task.gate_result = result.to_dict()
-            task.status = TaskStatus.GATED  # Ready for review, but not approved
-            _forge_dispatcher._save_tasks()
-        else:
-            # Automated checks failed — reject
-            task = await _forge_dispatcher.complete_gate(task_id, result, False)
-        
+        # Only approve if automated checks pass AND explicit approval given
+        task = await _forge_dispatcher.complete_gate(task_id, result, approved and result.overall_passed)
         return f"FORGE:GATE:{json.dumps(result.to_dict())}"
 
     elif cmd == "CLEANUP":
