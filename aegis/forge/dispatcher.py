@@ -1,16 +1,23 @@
 """Forge Dispatcher — submits coding tasks to opencode and captures results.
-
+ 
 Each task runs in an isolated sandbox workdir under /opt/aegis/forge/<task-id>/.
 The dispatcher creates the session, sends the prompt, captures diffs/files/logs,
 and stores results for the gate stage.
-
+ 
 CONCURRENCY: A semaphore caps parallel task execution at
 MAX_CONCURRENT_FORGE_TASKS (default 2, tunable via env var) to avoid
 OOM on the 16 GB host. Additional submissions are queued automatically.
+ 
+BACKEND: ``opencode run --format json`` (not serve).  The serve API doesn't
+surface tool/function-calling for no-login free models; ``opencode run``
+drives opencode's own agent loop and produces real tool calls + diffs.
+ 
+LOOP GUARD: big-pickle (opencode #26220) can loop after tool calls finish.
+The manager enforces a hard per-task timeout (120s) on the subprocess.
 """
-
+ 
 from __future__ import annotations
-
+ 
 import asyncio
 import json
 import logging
@@ -21,12 +28,12 @@ import uuid
 from dataclasses import asdict, dataclass, field
 from enum import StrEnum
 from pathlib import Path
-
+ 
 from aegis.forge.gate import GateResult
 from aegis.forge.manager import FORGE_BASE, ForgeManager
-
+ 
 log = logging.getLogger(__name__)
-
+ 
 # Max parallel forge tasks. This host has 16 GB RAM, no GPU — each
 # opencode worker consumes ~2-4 GB. Cap at 2 by default to prevent OOM.
 _MAX_CONCURRENT_RAW = os.getenv("AEGIS_FORGE_MAX_CONCURRENT", "2")
@@ -35,6 +42,9 @@ try:
 except (ValueError, TypeError):
     log.warning("forge: invalid AEGIS_FORGE_MAX_CONCURRENT=%r, using 2", _MAX_CONCURRENT_RAW)
     MAX_CONCURRENT_FORGE_TASKS = 2
+ 
+# Hard limit: loop guard enforced by manager subprocess timeout (120s).
+_MAX_EXECUTE_SECONDS: float = 120.0
 
 
 class TaskStatus(StrEnum):
@@ -139,7 +149,11 @@ class ForgeDispatcher:
         return task
 
     async def execute(self, task_id: str) -> ForgeTask:
-        """Execute a task: create session, send prompt, capture results."""
+        """Execute a task via ``opencode run --format json``.
+
+        Enforces ``_MAX_EXECUTE_SECONDS`` timeout via the manager's
+        subprocess timeout (loop guard for opencode #26220).
+        """
         task = _tasks.get(task_id)
         if task is None:
             raise KeyError(f"unknown task: {task_id}")
@@ -155,45 +169,9 @@ class ForgeDispatcher:
             _save_tasks()
 
             try:
-                # Create opencode session
-                session_id = await self._manager.create_session(workdir)
-                task.session_id = session_id
-
-                # Build the prompt with workdir context
-                prompt = (
-                    f"Work in directory: {workdir}\n\n"
-                    f"Task: {task.spec}\n\n"
-                    "Make the necessary changes. Show me the diff when done."
-                )
-
-                # Send prompt and wait for response
-                await self._manager.send_prompt(session_id, prompt)
-
-                # Capture diffs
-                diffs = await self._manager.get_diffs(session_id)
-                task.diffs = diffs
-
-                # Parse files from diffs
-                for diff in diffs:
-                    path = diff.get("path", diff.get("filePath", ""))
-                    if diff.get("status") == "added":
-                        task.files_created.append(path)
-                    elif diff.get("status") == "modified":
-                        task.files_modified.append(path)
-
-                # Capture messages for logs
-                messages = await self._manager.get_messages(session_id)
-                task.logs = json.dumps(messages, indent=2, default=str)
-
-                task.status = TaskStatus.COMPLETED
-                task.completed_at = time.time()
-                log.info(
-                    "forge task completed: %s — %d diffs, +%d ~%d files",
-                    task_id,
-                    len(diffs),
-                    len(task.files_created),
-                    len(task.files_modified),
-                )
+                # Run opencode as subprocess in the sandbox workdir
+                result = await self._run_with_timeout(task, workdir)
+                return result
 
             except Exception as e:
                 task.status = TaskStatus.FAILED
@@ -203,20 +181,54 @@ class ForgeDispatcher:
                 raise
 
             finally:
-                # Cleanup: delete session but keep workdir for gate stage
-                if task.session_id:
-                    try:
-                        await self._manager.delete_session(task.session_id)
-                    except Exception as e:
-                        log.warning(
-                            "forge: failed to delete session %s for task %s: %s",
-                            task.session_id,
-                            task_id,
-                            e,
-                        )
-                    else:
-                        task.session_id = None
                 _save_tasks()
+
+    async def _run_with_timeout(self, task: ForgeTask, workdir: Path) -> ForgeTask:
+        """Run opencode with hard timeout on the subprocess."""
+        task_id = task.id
+
+        # Run opencode as subprocess
+        result = await self._manager.run_task(workdir, task.spec)
+
+        if result.get("error"):
+            raise RuntimeError(result["error"])
+
+        tool_call_count = result.get("tool_calls", 0)
+        events = result.get("events", [])
+
+        log.info(
+            "forge: opencode run for %s returned %d events, %d tool calls, rc=%d",
+            task_id,
+            len(events),
+            tool_call_count,
+            result.get("return_code", 0),
+        )
+
+        # Capture diffs from the workdir
+        diffs = await self._manager.get_diffs(workdir)
+        task.diffs = diffs
+
+        # Parse files from diffs
+        for diff in diffs:
+            path = diff.get("path", diff.get("filePath", ""))
+            if diff.get("status") == "added":
+                task.files_created.append(path)
+            elif diff.get("status") == "modified":
+                task.files_modified.append(path)
+
+        # Store raw output as logs
+        task.logs = result.get("logs", "")
+
+        task.status = TaskStatus.COMPLETED
+        task.completed_at = time.time()
+        log.info(
+            "forge task completed: %s — %d diffs, +%d ~%d files (tool_calls=%d)",
+            task_id,
+            len(diffs),
+            len(task.files_created),
+            len(task.files_modified),
+            tool_call_count,
+        )
 
         return task
 

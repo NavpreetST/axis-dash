@@ -35,3 +35,6 @@ inhibitory_gate.jsonl
 # uv
 .uv-cache/
 uv-receipt.json
+
+# Forge runtime state (top-level only — not aegis/forge/)
+/forge/

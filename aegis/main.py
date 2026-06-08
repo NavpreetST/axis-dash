@@ -131,8 +131,8 @@ async def _execute_and_log(task_id: str) -> None:
     try:
         task = await _forge_dispatcher.execute(task_id)
         await eventlog.log_event(
-            source="forge",
-            event_type="forge_task_completed",
+            source="aegis",
+            event_type="task_done",
             payload={
                 "task_id": task_id,
                 "status": task.status.value,
@@ -145,8 +145,8 @@ async def _execute_and_log(task_id: str) -> None:
         )
     except Exception as e:
         await eventlog.log_event(
-            source="forge",
-            event_type="forge_task_failed",
+            source="aegis",
+            event_type="error",
             payload={"task_id": task_id, "error": str(e)},
             severity="error",
             sensitivity="internal",
