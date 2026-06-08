@@ -20,6 +20,7 @@ const FIVE_MIN = 300;
 export function toActivityItems(logs: LogLine[]): ActivityItem[] {
   const now = Date.now();
   const out: ActivityItem[] = [];
+  const seen = new Map<string, number>();
 
   for (const log of logs) {
     const ts = typeof log.timestamp === 'string' ? log.timestamp : '';
@@ -29,10 +30,15 @@ export function toActivityItems(logs: LogLine[]): ActivityItem[] {
       : 'info';
     const message = typeof log.message === 'string' ? log.message : '';
 
-    const id =
-      typeof log.id === 'string' && log.id
-        ? log.id
-        : `act-${stableHash(ts + source + type + message)}`;
+    let id: string;
+    if (typeof log.id === 'string' && log.id) {
+      id = log.id;
+    } else {
+      const base = `act-${stableHash(ts + source + type + message)}`;
+      const count = seen.get(base) ?? 0;
+      seen.set(base, count + 1);
+      id = count === 0 ? base : `${base}-${count + 1}`;
+    }
 
     const parsed = parseTimestamp(ts);
     const offsetSec = parsed != null ? Math.floor((now - parsed) / 1000) : 0;

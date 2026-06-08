@@ -113,4 +113,37 @@ describe('toActivityItems', () => {
     const items = toActivityItems([log]);
     expect(items[0].time).toBe('3m ago');
   });
+
+  it('generates unique deterministic keys for colliding fallback ids', () => {
+    const logs = [
+      mk({
+        id: '' as unknown as string,
+        timestamp: '14:22:00',
+        source: 'tick',
+        type: 'info',
+        message: 'event'
+      }),
+      mk({
+        id: '' as unknown as string,
+        timestamp: '14:22:00',
+        source: 'tick',
+        type: 'info',
+        message: 'event'
+      }),
+      mk({
+        id: '' as unknown as string,
+        timestamp: '14:22:00',
+        source: 'tick',
+        type: 'info',
+        message: 'event'
+      })
+    ];
+    const items = toActivityItems(logs);
+    expect(items).toHaveLength(3);
+    const keys = items.map((i) => i.key);
+    expect(new Set(keys).size).toBe(3);
+    expect(keys[0]).toMatch(/^act-/);
+    expect(keys[1]).toMatch(/^act-.+-2$/);
+    expect(keys[2]).toMatch(/^act-.+-3$/);
+  });
 });
