@@ -159,7 +159,7 @@ async def test_upload_retries_on_failure(tmp_path: Path):
 
     with patch.object(b2_sync, "EVENTS_DIR", events_dir), \
          patch.object(b2_sync, "MANIFEST_PATH", manifest_path), \
-         patch("aegis.observability.b2_sync.b2_sync" if False else "aegis.observability.b2_sync._b2_upload", side_effect=_mock_b2_upload), \
+         patch("aegis.observability.b2_sync._b2_upload", side_effect=_mock_b2_upload), \
          patch("aegis.observability.b2_sync._b2_get_upload_url", new_callable=AsyncMock, return_value={"uploadUrl": "http://fake", "authorizationToken": "tok"}), \
          patch("aegis.observability.b2_sync.asyncio.sleep", new_callable=AsyncMock) as mock_sleep:
 

@@ -129,17 +129,21 @@ async def _b2_get_upload_url(auth: dict, bucket_id: str) -> dict:
 
 
 async def _b2_get_bucket_id(auth: dict) -> str:
-    """Resolve bucket name to bucket ID."""
+    """Resolve bucket name to bucket ID via b2_list_buckets."""
     import httpx
 
     async with httpx.AsyncClient(timeout=15.0) as client:
         resp = await client.post(
-            f"{auth['apiUrl']}/b2api/v2/b2_get_bucket",
+            f"{auth['apiUrl']}/b2api/v2/b2_list_buckets",
             headers={"Authorization": auth["authorizationToken"]},
-            json={"bucketName": B2_BUCKET},
+            json={"accountId": auth["accountId"], "bucketName": B2_BUCKET},
         )
         resp.raise_for_status()
-        return resp.json()["bucketId"]
+        buckets = resp.json().get("buckets", [])
+        for b in buckets:
+            if b.get("bucketName") == B2_BUCKET:
+                return b["bucketId"]
+        raise RuntimeError(f"b2: bucket {B2_BUCKET!r} not found")
 
 
 async def _b2_upload(

@@ -134,7 +134,7 @@ async def _reconcile_jsonl() -> None:
 
         # Parse + batch upsert
         batch: list[dict] = []
-        synced_up_to = last_line
+        committed_offset = last_line
 
         for i, raw_line in enumerate(new_lines):
             raw_line = raw_line.strip()
@@ -147,19 +147,17 @@ async def _reconcile_jsonl() -> None:
 
             if _validate_event(event):
                 batch.append(event)
-                synced_up_to = last_line + i + 1
 
             if len(batch) >= BATCH_SIZE:
                 try:
                     await _upsert_batch(batch)
                     total_backfilled += len(batch)
-                    state[fname] = synced_up_to
+                    committed_offset = last_line + i + 1
+                    state[fname] = committed_offset
                     _save_reconcile_state(state)
                 except Exception as e:
                     log.warning("supabase: reconcile batch error — %s", e)
-                    # Save progress up to this point
-                    state[fname] = synced_up_to
-                    _save_reconcile_state(state)
+                    # Do NOT advance state — failed batch will be retried
                     return  # stop reconcile on failure
                 batch = []
 
@@ -168,12 +166,12 @@ async def _reconcile_jsonl() -> None:
             try:
                 await _upsert_batch(batch)
                 total_backfilled += len(batch)
-                state[fname] = synced_up_to
+                committed_offset = last_line + len(new_lines)
+                state[fname] = committed_offset
                 _save_reconcile_state(state)
             except Exception as e:
                 log.warning("supabase: reconcile flush error — %s", e)
-                state[fname] = synced_up_to
-                _save_reconcile_state(state)
+                # Do NOT advance state — failed batch will be retried
                 return
 
     if total_backfilled:
