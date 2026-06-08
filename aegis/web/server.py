@@ -71,7 +71,7 @@ HELIOS_TOKEN: str | None = os.getenv("HELIOS_TOKEN") or None
 # (placeholder) and localhost:5173 for local dev. Override via env.
 _DEFAULT_ALLOWED_ORIGINS = (
     "http://localhost:5173,"
-    "https://axis-helios.vercel.app"
+    "https://axis-dash.vercel.app"
 )
 ALLOWED_ORIGINS: set[str] = {
     o.strip() for o in os.getenv("ALLOWED_ORIGINS", _DEFAULT_ALLOWED_ORIGINS).split(",")
@@ -144,9 +144,8 @@ class CORSMiddleware(BaseHTTPMiddleware):
     """Explicit-origin CORS. Reflects the request Origin if it's in the
     allowlist; never uses "*" because auth is involved (credentials mode)."""
 
-    def __init__(self, app: ASGIApp, allowed_origins: set[str]) -> None:
+    def __init__(self, app: ASGIApp) -> None:
         super().__init__(app)
-        self.allowed_origins = allowed_origins
 
     async def dispatch(self, request, call_next):
         origin = request.headers.get("origin")
@@ -172,7 +171,7 @@ class CORSMiddleware(BaseHTTPMiddleware):
 
 
 app = FastAPI(title="Helios Orb", docs_url=None, redoc_url=None)
-app.add_middleware(CORSMiddleware, allowed_origins=ALLOWED_ORIGINS)
+app.add_middleware(CORSMiddleware)
 
 
 def _load_json(path: Path) -> dict[str, Any]:
