@@ -56,13 +56,18 @@ export interface SparklinePoint {
 
 /**
  * Format a runtime sub-field value for display.
- * Objects are compact-stringified; arrays are joined; null/missing → `--`.
+ * Primitives pass through; arrays are joined; objects get a safe
+ * compact-stringify (circular-safe); null/missing → `--`.
  */
 export function formatRuntimeValue(v: unknown): string {
   if (v == null || v === '') return '--';
   if (typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean') return String(v);
   if (Array.isArray(v)) return v.join(', ');
-  return JSON.stringify(v);
+  try {
+    return JSON.stringify(v);
+  } catch {
+    return String(v);
+  }
 }
 
 export function scaleSparkline(data: number[], width: number, height: number): SparklinePoint[] {

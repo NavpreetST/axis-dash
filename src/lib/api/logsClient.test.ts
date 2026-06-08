@@ -118,18 +118,18 @@ describe('createLogsClient', () => {
     client.disconnect();
   });
 
-  it('does not reconnect after disconnect()', () => {
+  it('does not reconnect after disconnect() even when reconnect is queued', () => {
     vi.useFakeTimers();
     const client = createLogsClient();
     client.connect();
 
+    lastEs().onerror!();
     const instancesBeforeDisconnect = MockEventSource.instances.length;
     client.disconnect();
-    logs.setConnected(true);
 
     vi.advanceTimersByTime(5000);
 
     expect(MockEventSource.instances.length).toBe(instancesBeforeDisconnect);
-    expect(get(logsConnected)).toBe(true);
+    expect(get(logsConnected)).toBe(false);
   });
 });

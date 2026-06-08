@@ -65,7 +65,8 @@ const MAX_LOGS = 100;
 
 /**
  * Connection state for the logs stream.
- * - Mock mode: always `true` (the scheduler is always "connected")
+ * - Mock mode: starts `true`; `start()` sets `true`, `stop()` sets
+ *   `false` so the UI knows logs have been deliberately halted.
  * - Live mode: reflects the SSE `/logs` socket — `true` while open,
  *   `false` during reconnect backoff or after explicit stop.
  */
@@ -144,6 +145,7 @@ const createLogsStore = () => {
  * Shared logs store. Drives both the dashboard log strip and the full
  * logs page. In live mode entries are pushed by the SSE client and
  * {@link logsConnected} tracks the socket state; in mock mode the
- * internal scheduler fills it and `logsConnected` is always `true`.
+ * internal scheduler fills it and `logsConnected` starts `true`
+ * (flipped to `false` by `stop()`).
  */
 export const logs = createLogsStore();
