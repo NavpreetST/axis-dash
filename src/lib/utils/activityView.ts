@@ -22,18 +22,19 @@ export function toActivityItems(logs: LogLine[]): ActivityItem[] {
   const out: ActivityItem[] = [];
 
   for (const log of logs) {
-    const id =
-      typeof log.id === 'string' && log.id
-        ? log.id
-        : `act-${Math.random().toString(36).slice(2, 9)}`;
-    const timestamp = typeof log.timestamp === 'string' ? log.timestamp : '';
+    const ts = typeof log.timestamp === 'string' ? log.timestamp : '';
     const source = typeof log.source === 'string' ? log.source : 'sys';
     const type: LogLine['type'] = ['info', 'success', 'warning', 'error'].includes(log.type)
       ? log.type
       : 'info';
     const message = typeof log.message === 'string' ? log.message : '';
 
-    const parsed = parseTimestamp(timestamp);
+    const id =
+      typeof log.id === 'string' && log.id
+        ? log.id
+        : `act-${stableHash(ts + source + type + message)}`;
+
+    const parsed = parseTimestamp(ts);
     const offsetSec = parsed != null ? Math.floor((now - parsed) / 1000) : 0;
 
     out.push({
@@ -49,6 +50,17 @@ export function toActivityItems(logs: LogLine[]): ActivityItem[] {
   return out;
 }
 
+/** Deterministic hash from a string — stable across renders. */
+function stableHash(s: string): string {
+  let hash = 0;
+  for (let i = 0; i < s.length; i++) {
+    const chr = s.charCodeAt(i);
+    hash = (hash << 5) - hash + chr;
+    hash |= 0;
+  }
+  return Math.abs(hash).toString(36);
+}
+
 function parseTimestamp(ts: string): number | null {
   if (!ts) return null;
   const today = new Date();
@@ -57,7 +69,17 @@ function parseTimestamp(ts: string): number | null {
     const h = parseInt(parts[0], 10);
     const m = parseInt(parts[1], 10);
     const s = parseInt(parts[2], 10);
-    if (!isNaN(h) && !isNaN(m) && !isNaN(s)) {
+    if (
+      !isNaN(h) &&
+      !isNaN(m) &&
+      !isNaN(s) &&
+      h >= 0 &&
+      h <= 23 &&
+      m >= 0 &&
+      m <= 59 &&
+      s >= 0 &&
+      s <= 59
+    ) {
       today.setHours(h, m, s, 0);
       return today.getTime();
     }

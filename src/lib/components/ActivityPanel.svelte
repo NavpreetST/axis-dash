@@ -3,17 +3,6 @@
   import { telemetry } from '$lib/stores/telemetry';
   import { config } from '$lib/config';
   import { toActivityItems } from '$lib/utils/activityView';
-  import { onMount, onDestroy } from 'svelte';
-
-  onMount(() => {
-    if (!config.useLiveBridge) {
-      logs.start();
-    }
-  });
-
-  onDestroy(() => {
-    logs.stop();
-  });
 
   let bridgeStatus = $derived.by(() => {
     if (!config.useLiveBridge) return 'mock';
@@ -37,6 +26,7 @@
       <button
         type="button"
         onclick={() => (showAll = !showAll)}
+        aria-expanded={showAll}
         class="font-mono text-[10px] text-accent-cyan transition hover:text-accent-cyan/80"
       >
         {showAll ? 'show less' : `+${items.length - MAX_VISIBLE} more`}

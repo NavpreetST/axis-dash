@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import { toActivityItems } from './activityView.js';
 import type { LogLine } from '$lib/stores/logs';
 
@@ -12,6 +12,10 @@ const mk = (overrides: Partial<LogLine> = {}): LogLine => ({
 });
 
 describe('toActivityItems', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it('returns an empty array for empty input', () => {
     expect(toActivityItems([])).toEqual([]);
   });
@@ -27,8 +31,6 @@ describe('toActivityItems', () => {
     expect(items[0].type).toBe('info');
     expect(items[0].message).toBe('orb pulse ok');
     expect(items[0].time).toBe('just now');
-
-    vi.useRealTimers();
   });
 
   it('preserves all log types', () => {
@@ -39,8 +41,6 @@ describe('toActivityItems', () => {
     const logs = types.map((t, i) => mk({ id: `l-${i}`, type: t, timestamp: '14:22:08' }));
     const items = toActivityItems(logs);
     expect(items.map((i) => i.type)).toEqual(types);
-
-    vi.useRealTimers();
   });
 
   it('tolerates malformed log lines — missing id', () => {
@@ -80,49 +80,37 @@ describe('toActivityItems', () => {
 
   it('formats relative time for recent entries', () => {
     vi.useFakeTimers();
-    const now = new Date('2026-06-08T14:22:08');
-    vi.setSystemTime(now);
+    vi.setSystemTime(new Date('2026-06-08T14:22:08'));
 
     const log = mk({ timestamp: '14:22:08' });
     const items = toActivityItems([log]);
     expect(items[0].time).toBe('just now');
-
-    vi.useRealTimers();
   });
 
   it('shows "Xs ago" for entries less than 60s old', () => {
     vi.useFakeTimers();
-    const now = new Date('2026-06-08T14:22:08');
-    vi.setSystemTime(now);
+    vi.setSystemTime(new Date('2026-06-08T14:22:08'));
 
     const log = mk({ timestamp: '14:22:00' });
     const items = toActivityItems([log]);
     expect(items[0].time).toBe('8s ago');
-
-    vi.useRealTimers();
   });
 
   it('shows "Xm ago" for entries at least 60s old', () => {
     vi.useFakeTimers();
-    const now = new Date('2026-06-08T14:22:08');
-    vi.setSystemTime(now);
+    vi.setSystemTime(new Date('2026-06-08T14:22:08'));
 
     const log = mk({ timestamp: '14:21:08' });
     const items = toActivityItems([log]);
     expect(items[0].time).toBe('1m ago');
-
-    vi.useRealTimers();
   });
 
   it('shows "Xm ago" for entries within 5 minutes', () => {
     vi.useFakeTimers();
-    const now = new Date('2026-06-08T14:22:08');
-    vi.setSystemTime(now);
+    vi.setSystemTime(new Date('2026-06-08T14:22:08'));
 
     const log = mk({ timestamp: '14:19:08' });
     const items = toActivityItems([log]);
     expect(items[0].time).toBe('3m ago');
-
-    vi.useRealTimers();
   });
 });
