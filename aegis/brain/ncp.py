@@ -160,7 +160,6 @@ async def run() -> None:
             except Exception as e:
                 now = time.monotonic()
                 if now - _last_crash_emit >= _CRASH_WINDOW_S:
-                    _last_crash_emit = now
                     try:
                         await eventlog.log_event(
                             source="aegis",
@@ -169,6 +168,7 @@ async def run() -> None:
                             severity="error",
                             sensitivity="internal",
                         )
+                        _last_crash_emit = now
                     except Exception:
                         log.debug("ncp: failed to emit crash event", exc_info=True)
                 log.warning("ncp: forward-pass error — %s", e)

@@ -24,7 +24,7 @@ DAILY_BUDGET = int(os.getenv("AEGIS_GEMINI_DAILY_BUDGET", "240"))
 _USAGE_PATH = Path.home() / ".local" / "share" / "aegis" / "gemini_usage.json"
 _PROVIDER_TZ = ZoneInfo("America/Los_Angeles")
 
-# Sync-safe pending day-rollover notifications.
+# Pending day-rollover notifications (event-loop-safe, not thread-safe).
 # Dispatcher drains via pop_day_rollover() on every tick.
 _DAY_ROLLOVER_PENDING: list[str] = []
 

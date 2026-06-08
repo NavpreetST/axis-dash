@@ -418,12 +418,12 @@ async def test_brain_crash_still_publishes_next_tick():
             call_count = 0
             original_build = ncp_mod._build_input_vec
 
-            def failing_then_ok():
+            def failing_then_ok(*args, **kwargs):
                 nonlocal call_count
                 call_count += 1
                 if call_count == 1:
                     raise RuntimeError("first tick crash")
-                return original_build()
+                return original_build(*args, **kwargs)
 
             with patch("aegis.brain.ncp._build_input_vec", side_effect=failing_then_ok):
                 # First tick: crash

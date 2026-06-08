@@ -152,7 +152,7 @@ async def render(intent: dict) -> str:
                 },
                 json=payload,
             )
-        except (httpx.TimeoutException, httpx.NetworkError, httpx.RemoteProtocolError) as e:
+        except (httpx.TimeoutException, httpx.NetworkError, httpx.ProtocolError) as e:
             raise TransientError(f"gemini network/timeout: {e}") from e
 
     if r.status_code == 429:
