@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
-  import { logs, NeuroBusPanel, KpiStrip, RuntimePanel, telemetry } from '$lib';
+  import { logs, NeuroBusPanel, KpiStrip, RuntimePanel, ActivityPanel, telemetry } from '$lib';
   import { config } from '$lib/config';
 
   onMount(() => {
@@ -39,6 +39,9 @@
 
   <!-- Runtime Diagnostics (collapsible, read-only) -->
   <RuntimePanel />
+
+  <!-- Activity Timeline -->
+  <ActivityPanel />
 
   <!-- Live Log Panel -->
   <div

@@ -12,3 +12,4 @@ export {
 export { default as NeuroBusPanel } from './components/NeuroBusPanel.svelte';
 export { default as KpiStrip } from './components/KpiStrip.svelte';
 export { default as RuntimePanel } from './components/RuntimePanel.svelte';
+export { default as ActivityPanel } from './components/ActivityPanel.svelte';
