@@ -113,3 +113,55 @@ def test_10_health_query_token_rejected():
     resp = client.get("/health?token=test-token-12345")
     assert resp.status_code == 401
     assert resp.json() == {"detail": "auth_required"}
+
+
+def test_11_cors_preflight_allowed_origin():
+    client = TestClient(app)
+    resp = client.options("/logs", headers={
+        "Origin": "http://localhost:5173",
+        "Access-Control-Request-Method": "GET"
+    })
+    assert resp.status_code == 204
+    assert resp.headers.get("Access-Control-Allow-Origin") == "http://localhost:5173"
+    assert resp.headers.get("Access-Control-Allow-Credentials") == "true"
+    assert "GET" in resp.headers.get("Access-Control-Allow-Methods", "")
+
+
+def test_12_cors_preflight_preview_origin():
+    client = TestClient(app)
+    origin = "https://axis-dash-q66bs3qbn-navpreets-projects.vercel.app"
+    resp = client.options("/logs", headers={
+        "Origin": origin,
+        "Access-Control-Request-Method": "GET"
+    })
+    assert resp.status_code == 204
+    assert resp.headers.get("Access-Control-Allow-Origin") == origin
+    assert resp.headers.get("Access-Control-Allow-Credentials") == "true"
+
+
+def test_13_cors_preflight_disallowed_origin():
+    client = TestClient(app)
+    origin = "https://axis-dash-q66bs3qbn-navpreets-projects.vercel.app.malicious.com"
+    resp = client.options("/logs", headers={
+        "Origin": origin,
+        "Access-Control-Request-Method": "GET"
+    })
+    assert resp.status_code == 204
+    assert "Access-Control-Allow-Origin" not in resp.headers
+
+
+def test_14_ws_state_preview_origin_allowed():
+    client = TestClient(app)
+    origin = "https://axis-dash-q66bs3qbn-navpreets-projects.vercel.app"
+    with client.websocket_connect("/state?token=test-token-12345", headers={"Origin": origin}) as websocket:
+        data = websocket.receive_json()
+        assert isinstance(data, dict)
+
+
+def test_15_ws_state_disallowed_origin_rejected():
+    client = TestClient(app)
+    origin = "https://axis-dash-q66bs3qbn-navpreets-projects.vercel.app.malicious.com"
+    with pytest.raises(WebSocketDisconnect) as e:
+        with client.websocket_connect("/state?token=test-token-12345", headers={"Origin": origin}) as websocket:
+            websocket.receive_json()
+    assert e.value.code == 4401
