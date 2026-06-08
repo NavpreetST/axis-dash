@@ -19,7 +19,10 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const TELEMETRY_TS = resolve(import.meta.dirname || fileURLToPath(new URL('.', import.meta.url)), '../src/lib/stores/telemetry.ts');
+const TELEMETRY_TS = resolve(
+  import.meta.dirname || fileURLToPath(new URL('.', import.meta.url)),
+  '../src/lib/stores/telemetry.ts'
+);
 
 // Fields currently in TelemetryData.  If any of these are removed in a PR,
 // this guard FAILS.  New fields may be added freely.
@@ -163,7 +166,8 @@ function main() {
   console.log('\nOK — frontend ↔ /state contract is intact (no regressions).');
 }
 
-const isMain = process.argv[1] && resolve(fileURLToPath(import.meta.url)) === resolve(process.argv[1]);
+const isMain =
+  process.argv[1] && resolve(fileURLToPath(import.meta.url)) === resolve(process.argv[1]);
 if (isMain) {
   main();
 }
