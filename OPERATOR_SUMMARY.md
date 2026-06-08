@@ -128,7 +128,7 @@ class CORSMiddleware(BaseHTTPMiddleware):
 
 ### Configuration
 - `ALLOWED_ORIGINS` env var, comma-separated
-- Default: `http://localhost:5173,https://axis-helios.vercel.app`
+- Default: `http://localhost:5173,https://axis-dash.vercel.app`
 - Live: `https://axis-dash.vercel.app,http://localhost:5173`
 - Never `"*"` because credentials mode is involved
 
