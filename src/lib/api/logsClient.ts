@@ -43,10 +43,15 @@ export function createLogsClient() {
     es.onmessage = (event) => {
       try {
         const raw = JSON.parse(event.data);
+        const allowedTypes = ['info', 'success', 'warning', 'error'] as const;
+        const rawType = raw.type;
+        const type: (typeof allowedTypes)[number] = allowedTypes.includes(rawType)
+          ? rawType
+          : 'info';
         const entry: Omit<LogLine, 'id' | 'timestamp'> = {
-          source: raw.source ?? 'sys',
-          type: raw.type ?? 'info',
-          message: raw.message ?? String(event.data)
+          source: typeof raw.source === 'string' ? raw.source : 'sys',
+          type,
+          message: typeof raw.message === 'string' ? raw.message : String(event.data)
         };
         logs.addLog(entry);
       } catch {
