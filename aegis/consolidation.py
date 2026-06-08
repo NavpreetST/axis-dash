@@ -102,13 +102,13 @@ def _mark_consolidated(conn, ids: list[int]) -> None:
 
 
 def _store_consolidated(conn, text: str, neurobus: str) -> None:
-    """Store a consolidated episode with action='consolidated' and CURRENT ts."""
+    """Store a consolidated episode with action='consolidated', consolidated=1, and CURRENT ts."""
     from aegis.hive.text_encoder import get_model
     model = get_model()
     emb = model.encode(text, normalize_embeddings=True).tolist()
     conn.execute(
-        "INSERT INTO episodes (ts, text, embedding, neurobus, action) "
-        "VALUES (?, ?, ?, ?, ?)",
+        "INSERT INTO episodes (ts, text, embedding, neurobus, action, consolidated) "
+        "VALUES (?, ?, ?, ?, ?, 1)",
         (time.time(), f"CONSOLIDATED: {text}",
          array.array("f", emb).tobytes(),
          neurobus, "consolidated"),
