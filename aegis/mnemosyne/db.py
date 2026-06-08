@@ -17,20 +17,35 @@ DB_PATH.parent.mkdir(parents=True, exist_ok=True)
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS episodes (
-    id        INTEGER PRIMARY KEY AUTOINCREMENT,
-    ts        REAL    NOT NULL,
-    text      TEXT    NOT NULL,
-    embedding BLOB    NOT NULL,
-    neurobus  TEXT    NOT NULL,
-    action    TEXT
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts          REAL    NOT NULL,
+    text        TEXT    NOT NULL,
+    embedding   BLOB    NOT NULL,
+    neurobus    TEXT    NOT NULL,
+    action      TEXT,
+    consolidated INTEGER DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_episodes_ts ON episodes(ts);
 """
 
 
+def _migrate_consolidated_column(conn: sqlite3.Connection) -> None:
+    """Idempotent migration: add consolidated column if missing."""
+    cur = conn.execute("PRAGMA table_info(episodes)")
+    columns = {row[1] for row in cur.fetchall()}
+    if "consolidated" not in columns:
+        try:
+            conn.execute("ALTER TABLE episodes ADD COLUMN consolidated INTEGER DEFAULT 0")
+            conn.commit()
+            log.info("mnemosyne.db: added consolidated column")
+        except Exception as e:
+            log.warning("mnemosyne.db: consolidated column migration failed — %s", e)
+
+
 def get_conn() -> sqlite3.Connection:
     conn = sqlite3.connect(DB_PATH, check_same_thread=False)
     conn.executescript(SCHEMA)
+    _migrate_consolidated_column(conn)
     return conn
 
 
