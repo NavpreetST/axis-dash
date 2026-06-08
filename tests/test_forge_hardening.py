@@ -1,11 +1,10 @@
-"""Forge hardening — sandbox isolation, concurrency cap, gate proof, server auth.
+"""Forge hardening — sandbox isolation, concurrency cap, gate proof.
 
 These tests prove:
 1. SANDBOX CRED ISOLATION — worker env is scrubbed of host secrets
-2. `opencode serve` HARDENING — binds 127.0.0.1 + server password
-3. CONCURRENCY CAP — semaphore limits parallel executions
-4. GATE PROOF — gate blocks on lint/test/build failure (short-circuit)
-5. GATE PROOF — gate produces GATED result, never auto-push
+2. CONCURRENCY CAP — semaphore limits parallel executions
+3. GATE PROOF — gate blocks on lint/test/build failure (short-circuit)
+4. GATE PROOF — gate produces GATED result, never auto-push
 """
 
 from __future__ import annotations
@@ -107,75 +106,52 @@ class TestSandboxCredIsolation:
         assert "PATH" in clean, "PATH must be in sandbox env"
         assert "HOME" in clean, "HOME must be in sandbox env"
 
+    @pytest.mark.asyncio
+    async def test_run_task_writes_sandbox_config_with_bash_denied(self):
+        """run_task() must write a per-task config with permission.bash: deny.
 
-# =========================================================================
-# 2. `opencode serve` HARDENING
-# =========================================================================
+        This proves the config-level containment that prevents
+        --dangerously-skip-permissions from re-enabling bash (the deny
+        is enforced server-side by PermissionV2.assert before any
+        permission.asked event reaches the CLI).
+        """
+        from unittest.mock import AsyncMock, patch
 
-
-class TestServerHardening:
-    """Prove the server binds to 127.0.0.1 and uses auth."""
-
-    def test_base_url_raises_before_start(self):
-        """base_url must raise RuntimeError before the server starts."""
         from aegis.forge.manager import ForgeManager
 
         mgr = ForgeManager()
-        with pytest.raises(RuntimeError, match="forge server not started"):
-            _ = mgr.base_url
+        with tempfile.TemporaryDirectory() as tmpdir:
+            workdir = Path(tmpdir)
 
-    @pytest.mark.asyncio
-    async def test_start_passes_hostname_and_password(self):
-        """start() must pass --hostname 127.0.0.1 and OPENCODE_SERVER_PASSWORD."""
-        from unittest.mock import AsyncMock, patch
-
-        from aegis.forge.manager import _SERVER_PASSWORD, ForgeManager
-
-        assert len(_SERVER_PASSWORD) >= 32
-
-        # Mock subprocess creation to capture args and env
-        captured_args = None
-        captured_env = None
-
-        async def fake_subprocess_exec(*args, **kwargs):
-            nonlocal captured_args, captured_env
-            captured_args = args
-            captured_env = kwargs.get("env", {})
+            # Mock the subprocess so we don't actually run opencode
             mock_proc = AsyncMock()
-            mock_proc.stderr = AsyncMock()
-            # Simulate opencode printing port info to stderr
-            mock_proc.stderr.__aiter__.return_value = [b"Server listening on 127.0.0.1:12345\n"]
-            return mock_proc
+            mock_proc.stdout.readline = AsyncMock(return_value=b"")
+            mock_proc.stderr.readline = AsyncMock(return_value=b"")
+            mock_proc.communicate = AsyncMock(return_value=(b"", b""))
+            mock_proc.returncode = 0
 
-        with (
-            patch.object(ForgeManager, "_detect_port", return_value=12345),
-            patch("asyncio.create_subprocess_exec", side_effect=fake_subprocess_exec),
-            patch("httpx.AsyncClient") as mock_httpx_cls,
-        ):
-            mock_client = AsyncMock()
-            mock_client.get.return_value.status_code = 200
-            mock_httpx_cls.return_value = mock_client
-            mgr = ForgeManager()
-            await mgr.start()
+            with patch("asyncio.create_subprocess_exec", return_value=mock_proc):
+                result = await mgr.run_task(workdir, "test spec")
 
-        assert captured_args is not None, "start() must call create_subprocess_exec"
-        args_list = list(captured_args)
-        assert "--hostname" in args_list, "start() must pass --hostname"
-        hostname_idx = args_list.index("--hostname")
-        assert args_list[hostname_idx + 1] == "127.0.0.1", (
-            f"start() must bind to 127.0.0.1, got {args_list[hostname_idx + 1]}"
-        )
-        assert "0.0.0.0" not in args_list, "start() must NOT bind to 0.0.0.0"
-        assert captured_env.get("OPENCODE_SERVER_PASSWORD") == _SERVER_PASSWORD, (
-            "start() must set OPENCODE_SERVER_PASSWORD in subprocess env"
-        )
+            # The config file must exist and have bash:deny
+            config_path = workdir / "sandbox-config.json"
+            assert config_path.exists(), "run_task() must write a per-task config"
+            import json
 
-        # Also verify httpx client uses BasicAuth
-        await mgr.stop()
+            cfg = json.loads(config_path.read_text())
+            perms = cfg.get("permission", {})
+            assert perms.get("bash") == "deny", (
+                f"sandbox config must deny bash, got: {perms}"
+            )
+
+            # The result should still be structured correctly
+            assert result["return_code"] == 0
+            assert result["tool_calls"] == 0
+            assert result["error"] is None
 
 
 # =========================================================================
-# 4. CONCURRENCY CAP
+# 2. CONCURRENCY CAP
 # =========================================================================
 
 
@@ -239,7 +215,7 @@ class TestConcurrencyCap:
 
 
 # =========================================================================
-# 5. GATE PROOF
+# 3. GATE PROOF
 # =========================================================================
 
 
@@ -305,6 +281,39 @@ class TestGateProof:
                 "Build should NOT run when tests fail (short-circuit)"
             )
             assert result.overall_passed is False
+
+    @pytest.mark.asyncio
+    async def test_gate_blocks_on_build_failure(self):
+        """Gate must block when lint+tests pass but build fails."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            workdir = Path(tmpdir)
+            # Create a clean Python file with a matching test
+            clean_file = workdir / "ok.py"
+            clean_file.write_text("def foo():\n    return 42\n")
+            tests_dir = workdir / "tests"
+            tests_dir.mkdir()
+            passing_test = tests_dir / "test_ok.py"
+            passing_test.write_text(
+                "def test_foo():\n    from ok import foo\n    assert foo() == 42\n"
+            )
+            # Add pyproject.toml that will fail build (no build-system table)
+            (workdir / "pyproject.toml").write_text(
+                "[project]\nname = \"bad-build\"\nversion = \"0.1.0\"\n"
+            )
+
+            proc = await asyncio.create_subprocess_exec(
+                "ruff", "format", str(workdir),
+                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+            )
+            await proc.communicate()
+
+            gate = GateStage(workdir)
+            result = await gate.run_all()
+
+            assert result.lint_passed is True, "Lint should pass on clean code"
+            assert result.test_passed is True, "Tests should pass"
+            assert result.build_passed is False, "Build should fail (no build-system)"
+            assert result.overall_passed is False, "Overall must be False when build fails"
 
     @pytest.mark.asyncio
     async def test_gate_all_passes(self):

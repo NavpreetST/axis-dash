@@ -46,3 +46,6 @@ ignore = ["E501"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
+markers = [
+    "e2e: opt-in end-to-end tests that require external services (opencode binary, Groq API)",
+]

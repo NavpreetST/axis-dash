@@ -132,8 +132,8 @@ async def _execute_and_log(task_id: str) -> None:
     try:
         task = await _forge_dispatcher.execute(task_id)
         await eventlog.log_event(
-            source="forge",
-            event_type="forge_task_completed",
+            source="aegis",
+            event_type="task_done",
             payload={
                 "task_id": task_id,
                 "status": task.status.value,
@@ -146,8 +146,8 @@ async def _execute_and_log(task_id: str) -> None:
         )
     except Exception as e:
         await eventlog.log_event(
-            source="forge",
-            event_type="forge_task_failed",
+            source="aegis",
+            event_type="error",
             payload={"task_id": task_id, "error": str(e)},
             severity="error",
             sensitivity="internal",
@@ -222,16 +222,10 @@ async def main() -> None:
     await text_encoder.prime()
     _seed_if_empty(_MNEMO_CONN)
 
-    # Boot forge (opencode server) — non-fatal if it fails
+    # Boot forge (stateless opencode run subprocess)
     _forge_manager = ForgeManager()
-    try:
-        await _forge_manager.start()
-        log.info("forge online")
-        _forge_dispatcher = ForgeDispatcher(_forge_manager)
-    except Exception as e:
-        log.warning("forge failed to start (tasks unavailable): %s", e)
-        _forge_manager = None
-        _forge_dispatcher = None
+    _forge_dispatcher = ForgeDispatcher(_forge_manager)
+    log.info("forge online")
 
     async def _forge_reap_loop() -> None:
         """Periodically reap old completed forge tasks."""
@@ -311,8 +305,6 @@ async def main() -> None:
             t.cancel()
         if _forge_dispatcher:
             await _forge_dispatcher.shutdown()
-        if _forge_manager:
-            await _forge_manager.stop()
     except Exception as e:
         await eventlog.log_event(
             source="aegis",
@@ -323,8 +315,6 @@ async def main() -> None:
         )
         if _forge_dispatcher:
             await _forge_dispatcher.shutdown()
-        if _forge_manager:
-            await _forge_manager.stop()
         raise
 
 

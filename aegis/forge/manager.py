@@ -1,33 +1,44 @@
-"""Forge Manager — manages the opencode server lifecycle.
+"""Forge Manager — runs opencode tasks via `opencode run --format json`.
 
-Starts `opencode serve` as an asyncio subprocess on a random port,
-provides an httpx client for API calls, and handles graceful shutdown.
+Each task is executed as an ephemeral `opencode run` subprocess in an
+isolated sandbox workdir.  This replaced the earlier `opencode serve`-
+based backend because the serve API doesn't surface tool/function-calling
+for any of the no-login free models (big-pickle, mimo, nemotron, deepseek).
+`opencode run` drives opencode's own agent loop and produces real tool
+calls + file diffs with those same free models.
 
-SECURITY: The server subprocess runs with a scrubbed environment to
-prevent ~/.config/aegis/secrets.env or .git credentials from leaking
-into the opencode worker. Git/push credentials are injected ONLY at
-the gate stage, never here.
+SECURITY:
+  - The subprocess runs with a scrubbed environment (strict allowlist) to
+    prevent ~/.config/aegis/secrets.env or .git credentials from leaking
+    into the opencode worker.
+  - The process is sandboxed with an isolated HOME, an empty CWD outside
+    /opt/aegis, and a minimal opencode config (no instructions, no skills).
+  - permission.bash is set to "deny" to prevent arbitrary shell execution.
+  - git/push credentials are injected ONLY at the gate stage, never here.
+  - A hard subprocess timeout (120s) prevents runaway loops (opencode #26220).
 """
 
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
-import secrets
-import signal
+import time
 from pathlib import Path
-
-import httpx
 
 log = logging.getLogger(__name__)
 
 OPENCODE_BIN = os.getenv("OPENCODE_BIN", "opencode")
 FORGE_BASE = Path(os.getenv("AEGIS_FORGE_DIR", "/opt/aegis/forge"))
 
+# Isolated sandbox HOME to prevent opencode from loading the user's global
+# config or the project config at /opt/aegis/opencode.json.
+_SANDBOX_DIR = FORGE_BASE / ".sandbox"
+_SANDBOX_CWD = _SANDBOX_DIR / "cwd"
+_SANDBOX_HOME = _SANDBOX_DIR / "home"
+
 # Strict allowlist: ONLY these env vars reach the forge worker.
-# Everything else (API keys, tokens, git credentials, SSH agents) is STRIPPED.
-# This is a true allowlist — vars NOT listed here are NEVER forwarded.
 _SANDBOX_ALLOWLIST: frozenset[str] = frozenset(
     {
         "PATH",
@@ -47,193 +58,253 @@ _SANDBOX_ALLOWLIST: frozenset[str] = frozenset(
     }
 )
 
-# The server password we generate to lock the opencode serve endpoint.
-# Only the ForgeManager client knows it.
-_SERVER_PASSWORD: str = secrets.token_urlsafe(32)
+# Hard timeout for a single opencode run subprocess (loop guard).
+_RUN_TIMEOUT_SECONDS: float = 120.0
 
 
 class ForgeManager:
-    """Long-lived manager for the opencode server subprocess."""
+    """Runs opencode tasks via ephemeral `opencode run` subprocesses.
+
+    No long-lived server.  Each call to ``run_task()`` spawns a fresh
+    ``opencode run --format json`` subprocess in the task's sandbox
+    workdir, captures JSON events from stdout, and returns parsed results.
+
+    Concurrency is managed by the dispatcher's semaphore
+    (MAX_CONCURRENT_FORGE_TASKS=2 by default), NOT by the manager.
+    """
 
     def __init__(self) -> None:
-        self._proc: asyncio.subprocess.Process | None = None
-        self._port: int | None = None
-        self._client: httpx.AsyncClient | None = None
-        self._ready = asyncio.Event()
+        pass
 
-    @property
-    def base_url(self) -> str:
-        if self._port is None:
-            raise RuntimeError("forge server not started")
-        return f"http://127.0.0.1:{self._port}"
+    # ------------------------------------------------------------------
+    # Public API (called by ForgeDispatcher)
+    # ------------------------------------------------------------------
 
-    @property
-    def client(self) -> httpx.AsyncClient:
-        if self._client is None:
-            raise RuntimeError("forge server not started")
-        return self._client
+    async def run_task(self, workdir: Path, spec: str) -> dict:
+        """Run ``opencode run --format json`` in *workdir* with *spec*.
 
-    @property
-    def is_ready(self) -> bool:
-        return self._ready.is_set()
+        Returns a dict with:
+          - ``events``: list of parsed JSON lines from stdout
+          - ``session_id``: extracted from the first step_start event
+          - ``tool_calls``: list of tool_use events (for loop guard)
+          - ``time_s``: wall-clock seconds
+          - ``return_code``: subprocess exit code
+          - ``logs``: full stdout as a string
+        """
+        _SANDBOX_CWD.mkdir(parents=True, exist_ok=True)
+
+        # Per-task config to avoid race when multiple run_task() instances
+        # run concurrently reading/writing the shared _SANDBOX_CONFIG.
+        config_path = workdir / "sandbox-config.json"
+        cfg = {
+            "$schema": "https://opencode.ai/config.json",
+            "model": "opencode/big-pickle",
+            "permission": {
+                "bash": "deny",
+            },
+        }
+        config_path.write_text(json.dumps(cfg, indent=2))
+
+        env = self._sanitize_env()
+        env["HOME"] = str(_SANDBOX_HOME)
+        env["OPENCODE_CONFIG"] = str(config_path)
+        env["OPENCODE_LOG_LEVEL"] = "WARN"
+
+        args = [
+            OPENCODE_BIN,
+            "run",
+            "--format", "json",
+            "--model", "opencode/big-pickle",
+            "--pure",
+            "--dir", str(workdir),
+            "--dangerously-skip-permissions",
+            spec,
+        ]
+
+        log.info("forge: running opencode run in %s", workdir)
+        t0 = time.perf_counter()
+
+        proc = await asyncio.create_subprocess_exec(
+            *args,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            env=env,
+            cwd=str(_SANDBOX_CWD),
+        )
+
+        try:
+            stdout_bytes, stderr_bytes = await asyncio.wait_for(
+                proc.communicate(), timeout=_RUN_TIMEOUT_SECONDS
+            )
+        except TimeoutError:
+            proc.kill()
+            await proc.wait()
+            elapsed = time.perf_counter() - t0
+            log.error(
+                "forge: opencode run timed out after %.1fs (loop guard) — %s",
+                _RUN_TIMEOUT_SECONDS,
+                workdir,
+            )
+            # Return a partial result with the timeout error
+            return {
+                "events": [],
+                "session_id": None,
+                "tool_calls": 0,
+                "time_s": round(elapsed, 1),
+                "return_code": -1,
+                "logs": f"TIMEOUT after {_RUN_TIMEOUT_SECONDS}s",
+                "error": (
+                    f"task exceeded {_RUN_TIMEOUT_SECONDS}s limit "
+                    f"(possible big-pickle loop, see opencode #26220)"
+                ),
+            }
+
+        elapsed = time.perf_counter() - t0
+
+        stdout_text = stdout_bytes.decode(errors="replace")
+        stderr_text = stderr_bytes.decode(errors="replace")
+
+        if stderr_text.strip():
+            for line in stderr_text.strip().split("\n"):
+                log.debug("[forge-run stderr] %s", line.rstrip()[:200])
+
+        events = []
+        tool_calls = 0
+        session_id = None
+        for line in stdout_text.strip().split("\n"):
+            if not line.strip():
+                continue
+            try:
+                ev = json.loads(line)
+                events.append(ev)
+                if ev.get("type") == "step_start":
+                    session_id = ev.get("sessionID")
+                if ev.get("type") == "tool_use":
+                    tool_calls += 1
+            except json.JSONDecodeError:
+                log.warning("forge: failed to parse run output line: %.100s", line)
+
+        result = {
+            "events": events,
+            "session_id": session_id,
+            "tool_calls": tool_calls,
+            "time_s": round(elapsed, 1),
+            "return_code": proc.returncode or 0,
+            "logs": stdout_text,
+            "error": None,
+        }
+
+        log.info(
+            "forge: run completed in %.1fs — %d events, %d tool calls, rc=%d",
+            elapsed,
+            len(events),
+            tool_calls,
+            proc.returncode or 0,
+        )
+        return result
+
+    @staticmethod
+    async def get_diffs(workdir: Path) -> list[dict]:
+        """Run ``git diff --staged`` and ``git ls-files --others`` in *workdir*.
+
+        If *workdir* is not a git repo, fall back to listing all files
+        in the workdir tree.
+        Returns a list of diff dicts with keys: path, status.
+        """
+        has_git = False
+        try:
+            rc, _ = await _run_simple(["git", "rev-parse", "--git-dir"], cwd=workdir)
+            if rc == 0:
+                has_git = True
+        except Exception:
+            has_git = False
+
+        if has_git:
+            diffs = []
+
+            rc, out = await _run_simple(
+                ["git", "diff", "--staged", "--name-status"], cwd=workdir
+            )
+            if rc == 0 and out.strip():
+                for line in out.strip().split("\n"):
+                    parts = line.strip().split("\t")
+                    if len(parts) >= 2:
+                        status = parts[0]
+                        path = parts[-1]
+                        diffs.append({"path": path, "status": _map_git_status(status)})
+
+            rc2, out2 = await _run_simple(
+                ["git", "ls-files", "--others", "--exclude-standard"], cwd=workdir
+            )
+            if rc2 == 0 and out2.strip():
+                for path in out2.strip().split("\n"):
+                    if path.strip() and not any(d["path"] == path for d in diffs):
+                        diffs.append({"path": path.strip(), "status": "added"})
+
+            if not diffs:
+                # Fall back to listing all files in workdir
+                return _list_files_as_diffs(workdir)
+            return diffs
+
+        return _list_files_as_diffs(workdir)
+
+    # ------------------------------------------------------------------
+    # Internal helpers
+    # ------------------------------------------------------------------
 
     @staticmethod
     def _sanitize_env() -> dict[str, str]:
-        """Build a sandbox-safe environment for the opencode subprocess.
-
-        True allowlist: ONLY keys in ``_SANDBOX_ALLOWLIST`` are forwarded.
-        Everything else (API keys, tokens, SSH agent, git credentials) is
-        STRIPPED. Git/push auth is injected ONLY at the GateStage, never
-        in the worker.
-        """
+        """Build a sandbox-safe environment (strict allowlist)."""
         sandbox = {}
         for k, v in os.environ.items():
             if k in _SANDBOX_ALLOWLIST:
                 sandbox[k] = v
         return sandbox
 
-    async def start(self) -> None:
-        """Start opencode serve on a random port, wait for health."""
-        FORGE_BASE.mkdir(parents=True, exist_ok=True)
 
-        env = self._sanitize_env()
-        env["OPENCODE_LOG_LEVEL"] = "WARN"
-        env["OPENCODE_SERVER_PASSWORD"] = _SERVER_PASSWORD
+def _map_git_status(git_status: str) -> str:
+    """Map git status characters to our status labels."""
+    mapping = {
+        "A": "added",
+        "M": "modified",
+        "D": "deleted",
+        "R": "renamed",
+        "C": "copied",
+        "??": "added",
+    }
+    return mapping.get(git_status.strip(), "modified")
 
-        self._proc = await asyncio.create_subprocess_exec(
-            OPENCODE_BIN,
-            "serve",
-            "--port",
-            "0",
-            "--hostname",
-            "127.0.0.1",
+
+def _list_files_as_diffs(workdir: Path) -> list[dict]:
+    """Fallback: walk workdir and list all files as added diffs.
+    Skips internal sandbox files (e.g. sandbox-config.json) to avoid
+    exposing them in task diffs/files_created.
+    """
+    diffs = []
+    _INTERNAL_FILES = {"sandbox-config.json"}
+    if workdir.exists():
+        for f in sorted(workdir.rglob("*")):
+            if f.is_file() and f.name not in _INTERNAL_FILES:
+                try:
+                    rel = f.relative_to(workdir)
+                    diffs.append({"path": str(rel), "status": "added"})
+                except ValueError:
+                    pass
+    return diffs
+
+
+async def _run_simple(
+    args: list[str], cwd: Path | None = None, timeout: float = 10.0
+) -> tuple[int, str]:
+    """Run a simple subprocess and return (returncode, stdout)."""
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *args,
+            cwd=str(cwd) if cwd else None,
             stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            env=env,
+            stderr=asyncio.subprocess.STDOUT,
         )
-
-        # Parse port from stderr (opencode prints it on startup)
-        self._port = await self._detect_port()
-        self._client = httpx.AsyncClient(
-            base_url=self.base_url,
-            timeout=httpx.Timeout(300.0),  # tasks can be long
-            auth=httpx.BasicAuth("opencode", _SERVER_PASSWORD),
-        )
-
-        # Health check with retries
-        for _attempt in range(20):
-            try:
-                r = await self._client.get("/global/health")
-                if r.status_code == 200:
-                    self._ready.set()
-                    log.info("forge server ready on port %d", self._port)
-                    return
-            except (httpx.ConnectError, httpx.ReadTimeout):
-                pass
-            await asyncio.sleep(0.5)
-
-        log.error("forge server failed to become ready")
-        await self.stop()
-        raise RuntimeError("forge server startup timeout")
-
-    async def _detect_port(self) -> int:
-        """Read port from opencode's stderr output."""
-        if self._proc is None or self._proc.stderr is None:
-            raise RuntimeError("no process stderr")
-
-        # Read stderr lines until we find the port (with timeout)
-        async def _read_stderr() -> int:
-            async for raw_line in self._proc.stderr:
-                line = raw_line.decode(errors="replace").strip()
-                if "listening on" in line.lower():
-                    try:
-                        addr = line.split("127.0.0.1:")[-1].strip()
-                        return int(addr.split()[0])
-                    except (IndexError, ValueError):
-                        pass
-                if "port:" in line.lower():
-                    try:
-                        return int(line.split("port:")[-1].strip().split()[0])
-                    except (IndexError, ValueError):
-                        pass
-            raise RuntimeError("could not detect forge server port from stderr")
-
-        try:
-            return await asyncio.wait_for(_read_stderr(), timeout=30.0)
-        except TimeoutError:
-            if self._proc and self._proc.returncode is None:
-                self._proc.kill()
-                await self._proc.wait()
-            raise RuntimeError("forge server port detection timed out after 30s") from None
-
-    async def stop(self) -> None:
-        """Gracefully stop the opencode server."""
-        if self._client:
-            await self._client.aclose()
-            self._client = None
-
-        if self._proc and self._proc.returncode is None:
-            self._proc.send_signal(signal.SIGTERM)
-            try:
-                await asyncio.wait_for(self._proc.wait(), timeout=5.0)
-            except TimeoutError:
-                self._proc.kill()
-                await self._proc.wait()
-            log.info("forge server stopped")
-
-        self._proc = None
-        self._port = None
-        self._ready.clear()
-
-    async def create_session(self, workdir: Path) -> str:
-        """Create an opencode session bound to the sandbox workdir."""
-        r = await self.client.post(
-            "/session",
-            json={"title": f"forge:{workdir.name}"},
-            params={"directory": workdir.as_posix()},
-        )
-        r.raise_for_status()
-        session_id = r.json()["id"]
-        log.info("forge session created: %s — dir=%s", session_id, workdir)
-        return session_id
-
-    async def send_prompt(self, session_id: str, prompt: str) -> dict:
-        """Send a prompt and wait for the full response."""
-        r = await self.client.post(
-            f"/session/{session_id}/message",
-            json={"parts": [{"type": "text", "text": prompt}]},
-        )
-        r.raise_for_status()
-        return r.json()
-
-    async def get_diffs(self, session_id: str) -> list[dict]:
-        """Fetch file diffs for a session."""
-        r = await self.client.get(f"/session/{session_id}/diff")
-        r.raise_for_status()
-        return r.json()
-
-    async def get_messages(self, session_id: str) -> list[dict]:
-        """Fetch all messages for a session."""
-        r = await self.client.get(f"/session/{session_id}/message")
-        r.raise_for_status()
-        return r.json()
-
-    async def delete_session(self, session_id: str) -> None:
-        """Delete a session. Raises on failure."""
-        r = await self.client.delete(f"/session/{session_id}")
-        r.raise_for_status()
-
-    async def run_forever(self) -> None:
-        """Keep the server alive; restart on crash."""
-        while True:
-            try:
-                await self.start()
-                await self._ready.wait()
-                # Wait for process to exit (it shouldn't while healthy)
-                if self._proc:
-                    await self._proc.wait()
-                log.warning("forge server exited, restarting in 2s...")
-            except Exception as e:
-                log.error("forge server error: %s", e)
-            await self.stop()
-            await asyncio.sleep(2.0)
+        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+        return (proc.returncode or 0), stdout.decode(errors="replace")
+    except Exception as e:
+        return 1, str(e)

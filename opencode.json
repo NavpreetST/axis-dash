@@ -1,21 +1,9 @@
 {
   "$schema": "https://opencode.ai/config.json",
-  "provider": {
-    "groq": {
-      "name": "Groq (via Helios budgeter)",
-      "options": {},
-      "models": {
-        "llama-3.3-70b-versatile": {
-          "name": "Llama 3.3 70B",
-          "limit": { "context": 128000, "output": 32768 }
-        }
-      }
-    }
-  },
-  "model": "groq/llama-3.3-70b-versatile",
+  "model": "opencode/big-pickle",
   "permission": {
-    "edit": true,
-    "write": true,
-    "bash": false
+    "edit": "allow",
+    "write": "allow",
+    "bash": "deny"
   }
 }
