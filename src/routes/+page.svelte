@@ -1,6 +1,14 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
-  import { logs, NeuroBusPanel, KpiStrip, RuntimePanel, ActivityPanel, telemetry } from '$lib';
+  import {
+    logs,
+    NeuroBusPanel,
+    KpiStrip,
+    RuntimePanel,
+    ActivityPanel,
+    ForgePanel,
+    telemetry
+  } from '$lib';
   import { config } from '$lib/config';
 
   onMount(() => {
@@ -42,6 +50,11 @@
 
   <!-- Activity Timeline -->
   <ActivityPanel />
+
+  <!-- Forge Tasks (live bridge only) -->
+  {#if config.useLiveBridge}
+    <ForgePanel />
+  {/if}
 
   <!-- Live Log Panel -->
   <div
