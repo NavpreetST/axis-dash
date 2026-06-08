@@ -29,21 +29,19 @@ jobs:
       - run: npm ci
       - name: ESLint (changed files only)
         run: |
-          FILES=$(git diff --name-only --diff-filter=ACM origin/main...HEAD -- '*.ts' '*.svelte' '*.js' | xargs)
-          if [ -n "$FILES" ]; then
-            echo "Linting: $FILES"
-            npx eslint $FILES
-          else
+          if git diff --quiet --diff-filter=ACM origin/main...HEAD -- '*.ts' '*.svelte' '*.js'; then
             echo "No changed TS/Svelte/JS files — skipping ESLint."
+          else
+            echo "Linting changed files..."
+            git diff -z --name-only --diff-filter=ACM origin/main...HEAD -- '*.ts' '*.svelte' '*.js' | xargs -0 npx eslint
           fi
       - name: Prettier check (changed files only)
         run: |
-          FILES=$(git diff --name-only --diff-filter=ACM origin/main...HEAD -- '*.ts' '*.svelte' '*.js' '*.css' '*.json' '*.mjs' '*.yml' | xargs)
-          if [ -n "$FILES" ]; then
-            echo "Formatting: $FILES"
-            npx prettier --check $FILES
-          else
+          if git diff --quiet --diff-filter=ACM origin/main...HEAD -- '*.ts' '*.svelte' '*.js' '*.css' '*.json' '*.mjs' '*.yml'; then
             echo "No changed formattable files — skipping Prettier."
+          else
+            echo "Checking formatting of changed files..."
+            git diff -z --name-only --diff-filter=ACM origin/main...HEAD -- '*.ts' '*.svelte' '*.js' '*.css' '*.json' '*.mjs' '*.yml' | xargs -0 npx prettier --check
           fi
 
   # ── Gate 2: Tests + Type Check (BLOCKING) ──────────────────────────────

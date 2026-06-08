@@ -17,12 +17,16 @@
 
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-const TELEMETRY_TS = resolve(import.meta.dirname, '../src/lib/stores/telemetry.ts');
+const TELEMETRY_TS = resolve(
+  import.meta.dirname || fileURLToPath(new URL('.', import.meta.url)),
+  '../src/lib/stores/telemetry.ts'
+);
 
 // Fields currently in TelemetryData.  If any of these are removed in a PR,
 // this guard FAILS.  New fields may be added freely.
-const EXPECTED_IFACE_FIELDS = [
+export const EXPECTED_IFACE_FIELDS = [
   'uptime_seconds',
   'tick_rate',
   'pam',
@@ -33,12 +37,13 @@ const EXPECTED_IFACE_FIELDS = [
   'is_speaking',
   'neurobus',
   'neurobusHistory',
-  'hidden_state'
+  'hidden_state',
+  'runtime'
 ];
 
 // Fields that applyLiveFrame() currently reads from the frame.  If any are
 // removed, this guard FAILS.
-const EXPECTED_LIVE_FRAME_FIELDS = [
+export const EXPECTED_LIVE_FRAME_FIELDS = [
   'neurobus',
   'uptime_seconds',
   'tick_rate',
@@ -47,11 +52,16 @@ const EXPECTED_LIVE_FRAME_FIELDS = [
   'rpd_budget',
   'provider',
   'is_speaking',
-  'hidden_state'
+  'hidden_state',
+  'runtime'
 ];
 
-function extractInterfaceFields(source) {
-  const ifaceMatch = source.match(/interface\s+TelemetryData\s*\{([\s\S]*?)\n\}/);
+/**
+ * @param {string} source
+ * @returns {string[] | null}
+ */
+export function extractInterfaceFields(source) {
+  const ifaceMatch = source.match(/interface\s+TelemetryData\s*\{([\s\S]*?)\n\s*\}/);
   if (!ifaceMatch) return null;
 
   const body = ifaceMatch[1];
@@ -64,9 +74,13 @@ function extractInterfaceFields(source) {
   return fields;
 }
 
-function extractApplyLiveFrameFields(source) {
+/**
+ * @param {string} source
+ * @returns {string[] | null}
+ */
+export function extractApplyLiveFrameFields(source) {
   const fnMatch = source.match(
-    /const\s+applyLiveFrame\s*=\s*\([^)]*\)\s*=>\s*\{([\s\S]*?)\n[\s]{2}\};/
+    /const\s+applyLiveFrame\s*=\s*\([^)]*\)\s*=>\s*\{([\s\S]*?)\n\s*\};/
   );
   if (!fnMatch) return null;
 
@@ -84,28 +98,21 @@ function extractApplyLiveFrameFields(source) {
   return fields;
 }
 
-function main() {
-  let source;
-  try {
-    source = readFileSync(TELEMETRY_TS, 'utf-8');
-  } catch {
-    console.error(`ERROR: cannot read ${TELEMETRY_TS}`);
-    process.exit(1);
-  }
-
+/**
+ * @param {string} source
+ * @returns {{ ifaceFields: string[], liveFrameFields: string[], errors: string[] }}
+ */
+export function validateContract(source) {
+  const errors = [];
   const ifaceFields = extractInterfaceFields(source);
   if (!ifaceFields) {
-    console.error('ERROR: could not extract TelemetryData interface');
-    process.exit(1);
+    throw new Error('ERROR: could not extract TelemetryData interface');
   }
 
   const liveFrameFields = extractApplyLiveFrameFields(source);
-  console.log(`TelemetryData fields: ${ifaceFields.join(', ')}`);
-  if (liveFrameFields) {
-    console.log(`applyLiveFrame reads:  ${liveFrameFields.join(', ')}`);
+  if (!liveFrameFields || liveFrameFields.length === 0) {
+    throw new Error('ERROR: drift guard could not locate the live-frame fields — refusing to pass');
   }
-
-  const errors = [];
 
   // Check TelemetryData hasn't lost any fields
   for (const field of EXPECTED_IFACE_FIELDS) {
@@ -115,28 +122,52 @@ function main() {
   }
 
   // Check applyLiveFrame hasn't lost any field reads
-  if (liveFrameFields) {
-    for (const field of EXPECTED_LIVE_FRAME_FIELDS) {
-      if (!liveFrameFields.includes(field)) {
-        errors.push(`applyLiveFrame no longer reads "${field}" (was consumed before)`);
-      }
+  for (const field of EXPECTED_LIVE_FRAME_FIELDS) {
+    if (!liveFrameFields.includes(field)) {
+      errors.push(`applyLiveFrame no longer reads "${field}" (was consumed before)`);
     }
   }
 
-  if (errors.length > 0) {
-    console.error('\n*** DRIFT GUARD FAILED ***');
-    for (const e of errors) {
-      console.error(`  - ${e}`);
+  return { ifaceFields, liveFrameFields, errors };
+}
+
+function main() {
+  let source;
+  try {
+    source = readFileSync(TELEMETRY_TS, 'utf-8');
+  } catch {
+    console.error(`ERROR: cannot read ${TELEMETRY_TS}`);
+    process.exit(1);
+  }
+
+  try {
+    const { ifaceFields, liveFrameFields, errors } = validateContract(source);
+    console.log(`TelemetryData fields: ${ifaceFields.join(', ')}`);
+    console.log(`applyLiveFrame reads:  ${liveFrameFields.join(', ')}`);
+
+    if (errors.length > 0) {
+      console.error('\n*** DRIFT GUARD FAILED ***');
+      for (const e of errors) {
+        console.error(`  - ${e}`);
+      }
+      console.error(
+        '\nTo fix: if the field removal is intentional, update\n' +
+          'EXPECTED_IFACE_FIELDS / EXPECTED_LIVE_FRAME_FIELDS in this script\n' +
+          "and get Navpreet's approval."
+      );
+      process.exit(1);
     }
-    console.error(
-      '\nTo fix: if the field removal is intentional, update\n' +
-        'EXPECTED_IFACE_FIELDS / EXPECTED_LIVE_FRAME_FIELDS in this script\n' +
-        "and get Navpreet's approval."
-    );
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error(message);
     process.exit(1);
   }
 
   console.log('\nOK — frontend ↔ /state contract is intact (no regressions).');
 }
 
-main();
+const isMain =
+  process.argv[1] && resolve(fileURLToPath(import.meta.url)) === resolve(process.argv[1]);
+if (isMain) {
+  main();
+}

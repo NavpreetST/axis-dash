@@ -1,6 +1,22 @@
 import { writable } from 'svelte/store';
 import { config } from '$lib/config';
 
+/**
+ * Additive metadata the bridge emits on `/state` and `/health`.
+ * All sub-fields are optional — the contract is the 14 top-level
+ * telemetry fields; `runtime` is informational only.
+ */
+export interface RuntimeInfo {
+  commit?: string;
+  socket_path?: string | null;
+  launch_method?: string;
+  renderer_chain?: string;
+  memory_backend?: string;
+  ncp?: string | number;
+  budget?: string | number;
+  known_issues?: string[];
+}
+
 /** Scalar neurobus signal values (live bridge emits these as numbers per tick). */
 export interface Neurobus {
   reward: number;
@@ -41,6 +57,7 @@ export interface TelemetryData {
   neurobus: Neurobus;
   neurobusHistory: NeurobusHistory;
   hidden_state: number[];
+  runtime?: RuntimeInfo;
 }
 
 const NEUROBUS_KEYS = ['reward', 'novelty', 'attention', 'patience', 'threat', 'trust'] as const;
@@ -234,7 +251,8 @@ const createTelemetryStore = () => {
         is_speaking: frame.is_speaking ?? state.is_speaking,
         neurobus: nextNeurobus,
         neurobusHistory: nextHistory,
-        hidden_state: frame.hidden_state ?? state.hidden_state
+        hidden_state: frame.hidden_state ?? state.hidden_state,
+        runtime: frame.runtime ? { ...state.runtime, ...frame.runtime } : state.runtime
       };
     });
   };
