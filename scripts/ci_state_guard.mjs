@@ -15,48 +15,43 @@
  * Usage: node scripts/ci_state_guard.mjs
  */
 
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 
-const TELEMETRY_TS = resolve(
-  import.meta.dirname,
-  "../src/lib/stores/telemetry.ts"
-);
+const TELEMETRY_TS = resolve(import.meta.dirname, '../src/lib/stores/telemetry.ts');
 
 // Fields currently in TelemetryData.  If any of these are removed in a PR,
 // this guard FAILS.  New fields may be added freely.
 const EXPECTED_IFACE_FIELDS = [
-  "uptime_seconds",
-  "tick_rate",
-  "pam",
-  "rpd_used",
-  "rpd_budget",
-  "provider",
-  "connected",
-  "is_speaking",
-  "neurobus",
-  "neurobusHistory",
-  "hidden_state",
+  'uptime_seconds',
+  'tick_rate',
+  'pam',
+  'rpd_used',
+  'rpd_budget',
+  'provider',
+  'connected',
+  'is_speaking',
+  'neurobus',
+  'neurobusHistory',
+  'hidden_state'
 ];
 
 // Fields that applyLiveFrame() currently reads from the frame.  If any are
 // removed, this guard FAILS.
 const EXPECTED_LIVE_FRAME_FIELDS = [
-  "neurobus",
-  "uptime_seconds",
-  "tick_rate",
-  "pam",
-  "rpd_used",
-  "rpd_budget",
-  "provider",
-  "is_speaking",
-  "hidden_state",
+  'neurobus',
+  'uptime_seconds',
+  'tick_rate',
+  'pam',
+  'rpd_used',
+  'rpd_budget',
+  'provider',
+  'is_speaking',
+  'hidden_state'
 ];
 
 function extractInterfaceFields(source) {
-  const ifaceMatch = source.match(
-    /interface\s+TelemetryData\s*\{([\s\S]*?)\n\}/
-  );
+  const ifaceMatch = source.match(/interface\s+TelemetryData\s*\{([\s\S]*?)\n\}/);
   if (!ifaceMatch) return null;
 
   const body = ifaceMatch[1];
@@ -92,7 +87,7 @@ function extractApplyLiveFrameFields(source) {
 function main() {
   let source;
   try {
-    source = readFileSync(TELEMETRY_TS, "utf-8");
+    source = readFileSync(TELEMETRY_TS, 'utf-8');
   } catch {
     console.error(`ERROR: cannot read ${TELEMETRY_TS}`);
     process.exit(1);
@@ -100,14 +95,14 @@ function main() {
 
   const ifaceFields = extractInterfaceFields(source);
   if (!ifaceFields) {
-    console.error("ERROR: could not extract TelemetryData interface");
+    console.error('ERROR: could not extract TelemetryData interface');
     process.exit(1);
   }
 
   const liveFrameFields = extractApplyLiveFrameFields(source);
-  console.log(`TelemetryData fields: ${ifaceFields.join(", ")}`);
+  console.log(`TelemetryData fields: ${ifaceFields.join(', ')}`);
   if (liveFrameFields) {
-    console.log(`applyLiveFrame reads:  ${liveFrameFields.join(", ")}`);
+    console.log(`applyLiveFrame reads:  ${liveFrameFields.join(', ')}`);
   }
 
   const errors = [];
@@ -123,27 +118,25 @@ function main() {
   if (liveFrameFields) {
     for (const field of EXPECTED_LIVE_FRAME_FIELDS) {
       if (!liveFrameFields.includes(field)) {
-        errors.push(
-          `applyLiveFrame no longer reads "${field}" (was consumed before)`
-        );
+        errors.push(`applyLiveFrame no longer reads "${field}" (was consumed before)`);
       }
     }
   }
 
   if (errors.length > 0) {
-    console.error("\n*** DRIFT GUARD FAILED ***");
+    console.error('\n*** DRIFT GUARD FAILED ***');
     for (const e of errors) {
       console.error(`  - ${e}`);
     }
     console.error(
-      "\nTo fix: if the field removal is intentional, update\n" +
-        "EXPECTED_IFACE_FIELDS / EXPECTED_LIVE_FRAME_FIELDS in this script\n" +
+      '\nTo fix: if the field removal is intentional, update\n' +
+        'EXPECTED_IFACE_FIELDS / EXPECTED_LIVE_FRAME_FIELDS in this script\n' +
         "and get Navpreet's approval."
     );
     process.exit(1);
   }
 
-  console.log("\nOK — frontend ↔ /state contract is intact (no regressions).");
+  console.log('\nOK — frontend ↔ /state contract is intact (no regressions).');
 }
 
 main();
