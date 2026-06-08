@@ -259,6 +259,9 @@ class ForgeManager:
         for k, v in os.environ.items():
             if k in _SANDBOX_ALLOWLIST:
                 sandbox[k] = v
+        # Ensure HOME is always present for sandbox isolation
+        if "HOME" not in sandbox:
+            sandbox["HOME"] = str(Path.home())
         return sandbox
 
 

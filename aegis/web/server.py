@@ -716,6 +716,127 @@ async def health(request: Request) -> dict[str, Any]:
 
 # ---- P0 bridge: /chat (WS, auth via header or ?token=) --------------------
 
+# ---- Forge HTTP proxy routes (additive) -----------------------------------
+
+async def _forge_socket_cmd(command: str) -> str:
+    """Send a single command to the forge unix socket and return the response line.
+    Returns the raw response string without trailing newline. Raises HTTPException on socket errors.
+    """
+    # Use getattr to allow patching in tests on platforms lacking open_unix_connection
+    open_conn = getattr(asyncio, "open_unix_connection", None)
+    if open_conn is None:
+        raise HTTPException(status_code=501, detail="unix_socket_not_supported")
+    try:
+        reader, writer = await open_conn(str(SOCK_PATH))
+    except (FileNotFoundError, ConnectionRefusedError, PermissionError, OSError) as e:
+        log.warning("forge proxy socket open failed: %s", e)
+        raise HTTPException(status_code=503, detail="forge_socket_unavailable")
+    try:
+        writer.write((command + "\n").encode())
+        await writer.drain()
+        line = await asyncio.wait_for(reader.readline(), timeout=15.0)
+        resp = line.decode(errors="replace").strip()
+        return resp
+    except asyncio.TimeoutError:
+        raise HTTPException(status_code=504, detail="forge_socket_timeout")
+    finally:
+        try:
+            writer.close()
+            await writer.wait_closed()
+        except Exception:
+            pass
+
+@app.post("/forge/submit")
+async def forge_submit(request: Request) -> dict:
+    if not _check_token(request):
+        raise HTTPException(status_code=401, detail="auth_required")
+    body = await request.json()
+    spec = body.get("spec") if isinstance(body, dict) else None
+    if not isinstance(spec, str) or len(spec.strip()) < 10:
+        raise HTTPException(status_code=400, detail="invalid_spec")
+    resp = await _forge_socket_cmd(f"FORGE:SUBMIT:{spec.strip()}")
+    # Expected response: FORGE:OK:<id> or FORGE:ERR:...
+    if resp.startswith("FORGE:OK:"):
+        return {"task_id": resp.split(":", 2)[2]}
+    else:
+        raise HTTPException(status_code=502, detail=resp)
+
+@app.get("/forge/list")
+async def forge_list(request: Request) -> dict:
+    if not _check_token(request):
+        raise HTTPException(status_code=401, detail="auth_required")
+    resp = await _forge_socket_cmd("FORGE:LIST")
+    if resp.startswith("FORGE:LIST:"):
+        payload = resp.split(":", 2)[2]
+        try:
+            return {"tasks": json.loads(payload)}
+        except json.JSONDecodeError:
+            raise HTTPException(status_code=502, detail="malformed_response")
+    else:
+        raise HTTPException(status_code=502, detail=resp)
+
+@app.get("/forge/{task_id}/status")
+async def forge_status(task_id: str, request: Request) -> dict:
+    if not _check_token(request):
+        raise HTTPException(status_code=401, detail="auth_required")
+    resp = await _forge_socket_cmd(f"FORGE:POLL:{task_id}")
+    if resp.startswith("FORGE:STATUS:"):
+        payload = resp.split(":", 2)[2]
+        try:
+            return json.loads(payload)
+        except json.JSONDecodeError:
+            raise HTTPException(status_code=502, detail="malformed_response")
+    else:
+        raise HTTPException(status_code=502, detail=resp)
+
+@app.get("/forge/{task_id}/diff")
+async def forge_diff(task_id: str, request: Request) -> dict:
+    if not _check_token(request):
+        raise HTTPException(status_code=401, detail="auth_required")
+    resp = await _forge_socket_cmd(f"FORGE:FETCH:{task_id}")
+    if resp.startswith("FORGE:RESULT:"):
+        payload = resp.split(":", 2)[2]
+        try:
+            return json.loads(payload)
+        except json.JSONDecodeError:
+            raise HTTPException(status_code=502, detail="malformed_response")
+    else:
+        raise HTTPException(status_code=502, detail=resp)
+
+@app.post("/forge/{task_id}/gate")
+async def forge_gate(task_id: str, request: Request) -> dict:
+    if not _check_token(request):
+        raise HTTPException(status_code=401, detail="auth_required")
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    approve = body.get("approve") if isinstance(body, dict) else None
+    if not isinstance(approve, bool):
+        # Default reject when missing or malformed
+        raise HTTPException(status_code=400, detail="approval_required")
+    # The dispatcher gate step does owner approval internally; we just forward the command.
+    resp = await _forge_socket_cmd(f"FORGE:GATE:{task_id}")
+    if resp.startswith("FORGE:GATE:"):
+        payload = resp.split(":", 2)[2]
+        try:
+            return json.loads(payload)
+        except json.JSONDecodeError:
+            raise HTTPException(status_code=502, detail="malformed_response")
+    else:
+        raise HTTPException(status_code=502, detail=resp)
+
+@app.post("/forge/{task_id}/cleanup")
+async def forge_cleanup(task_id: str, request: Request) -> dict:
+    if not _check_token(request):
+        raise HTTPException(status_code=401, detail="auth_required")
+    resp = await _forge_socket_cmd(f"FORGE:CLEANUP:{task_id}")
+    if resp.startswith("FORGE:OK:"):
+        return {"result": resp}
+    else:
+        raise HTTPException(status_code=502, detail=resp)
+
+
 
 @app.websocket("/chat")
 async def chat_ws(ws: WebSocket) -> None:
