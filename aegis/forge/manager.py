@@ -39,6 +39,9 @@ _SANDBOX_CWD = _SANDBOX_DIR / "cwd"
 _SANDBOX_HOME = _SANDBOX_DIR / "home"
 
 # Strict allowlist: ONLY these env vars reach the forge worker.
+# CODERABBIT_API_KEY is declared here for auditability but is NEVER injected
+# via env — it is passed as a CLI flag (--api-key) in the gate's cr review
+# step, which runs OUTSIDE the sandbox (after opencode finishes).
 _SANDBOX_ALLOWLIST: frozenset[str] = frozenset(
     {
         "PATH",
@@ -55,6 +58,7 @@ _SANDBOX_ALLOWLIST: frozenset[str] = frozenset(
         "OPENCODE_CONFIG_CONTENT",
         "OPENCODE_PERMISSION",
         "AEGIS_FORGE_DIR",
+        "CODERABBIT_API_KEY",
     }
 )
 
@@ -106,6 +110,10 @@ class ForgeManager:
         config_path.write_text(json.dumps(cfg, indent=2))
 
         env = self._sanitize_env()
+        # Explicitly strip cr token — it is NEVER injected via env.
+        # The gate's cr review step passes it via --api-key CLI flag only,
+        # keeping it absent during opencode model generation.
+        env.pop("CODERABBIT_API_KEY", None)
         env["HOME"] = str(_SANDBOX_HOME)
         env["OPENCODE_CONFIG"] = str(config_path)
         env["OPENCODE_LOG_LEVEL"] = "WARN"
@@ -113,10 +121,13 @@ class ForgeManager:
         args = [
             OPENCODE_BIN,
             "run",
-            "--format", "json",
-            "--model", "opencode/big-pickle",
+            "--format",
+            "json",
+            "--model",
+            "opencode/big-pickle",
             "--pure",
-            "--dir", str(workdir),
+            "--dir",
+            str(workdir),
             "--dangerously-skip-permissions",
             spec,
         ]
@@ -222,9 +233,7 @@ class ForgeManager:
         if has_git:
             diffs = []
 
-            rc, out = await _run_simple(
-                ["git", "diff", "--staged", "--name-status"], cwd=workdir
-            )
+            rc, out = await _run_simple(["git", "diff", "--staged", "--name-status"], cwd=workdir)
             if rc == 0 and out.strip():
                 for line in out.strip().split("\n"):
                     parts = line.strip().split("\t")

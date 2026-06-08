@@ -140,9 +140,7 @@ class TestSandboxCredIsolation:
 
             cfg = json.loads(config_path.read_text())
             perms = cfg.get("permission", {})
-            assert perms.get("bash") == "deny", (
-                f"sandbox config must deny bash, got: {perms}"
-            )
+            assert perms.get("bash") == "deny", f"sandbox config must deny bash, got: {perms}"
 
             # The result should still be structured correctly
             assert result["return_code"] == 0
@@ -298,12 +296,15 @@ class TestGateProof:
             )
             # Add pyproject.toml that will fail build (no build-system table)
             (workdir / "pyproject.toml").write_text(
-                "[project]\nname = \"bad-build\"\nversion = \"0.1.0\"\n"
+                '[project]\nname = "bad-build"\nversion = "0.1.0"\n'
             )
 
             proc = await asyncio.create_subprocess_exec(
-                "ruff", "format", str(workdir),
-                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+                "ruff",
+                "format",
+                str(workdir),
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
             )
             await proc.communicate()
 
@@ -409,4 +410,469 @@ class TestGateProof:
         assert "lint_output" in d
         assert "test_output" in d
         assert "build_output" in d
+        assert "cr_output" in d
+        assert "cr_findings" in d
+        assert "cr_loop_iterations" in d
         assert "owner_approved" in d
+
+    def test_gate_result_tracks_cr_fields(self):
+        """GateResult must expose all cr review fields."""
+        result = GateResult()
+        assert hasattr(result, "cr_passed")
+        assert hasattr(result, "cr_output")
+        assert hasattr(result, "cr_findings")
+        assert hasattr(result, "cr_loop_iterations")
+        assert result.cr_passed is True  # default: True (skipped)
+        assert result.cr_findings == []
+
+    def test_cr_parse_findings_detects_severity_lines(self):
+        """_parse_cr_findings must extract lines starting with severity markers."""
+        from aegis.forge.gate import GateStage
+
+        output = """\
+CodeRabbit Review — Findings
+
+error: Missing type hints on public function foo()
+warning: Unused import os
+info: Consider adding a docstring
+Some random text without severity
+critical: Potential SQL injection vector
+"""
+        findings = GateStage._parse_cr_findings(output)
+        assert len(findings) == 4
+        assert findings[0]["severity"] == "error"
+        assert findings[1]["severity"] == "warning"
+        assert findings[2]["severity"] == "info"
+        assert findings[3]["severity"] == "critical"
+
+    def test_cr_parse_findings_returns_empty_for_clean_output(self):
+        """_parse_cr_findings must return [] when no severity markers."""
+        from aegis.forge.gate import GateStage
+
+        assert GateStage._parse_cr_findings("All good!\nNo issues found.") == []
+
+    def test_cr_parse_findings_handles_empty_input(self):
+        from aegis.forge.gate import GateStage
+
+        assert GateStage._parse_cr_findings("") == []
+
+
+# =========================================================================
+# 4. GATE — CodeRabbit REVIEW STAGE
+# =========================================================================
+
+
+class TestGateCrStage:
+    """Prove the cr review stage integrates correctly into the gate pipeline."""
+
+    # ------------------------------------------------------------------
+    # Availability helpers
+    # ------------------------------------------------------------------
+
+    def test_cr_binary_returns_none_when_not_on_path(self):
+        """_cr_binary must return None when neither cr nor coderabbit exist."""
+        from aegis.forge.gate import _cr_binary
+
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setenv("PATH", "/dev/null")
+            assert _cr_binary() is None
+
+    def test_cr_token_returns_none_when_missing(self):
+        """_cr_token must return None when no env var or secrets file."""
+        from aegis.forge.gate import _cr_token
+
+        with pytest.MonkeyPatch.context() as mp:
+            # Ensure the env key is absent
+            mp.delenv("CODERABBIT_API_KEY", raising=False)
+            # Point HOME to a temp dir without a secrets file
+            import tempfile
+
+            with tempfile.TemporaryDirectory() as tmp:
+                mp.setenv("HOME", tmp)
+                assert _cr_token() is None
+
+    def test_cr_token_reads_from_env(self):
+        """_cr_token must return the env var value when set."""
+        from aegis.forge.gate import _cr_token
+
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setenv("CODERABBIT_API_KEY", "cr_test_key_123")
+            assert _cr_token() == "cr_test_key_123"
+
+    def test_cr_token_reads_from_secrets_file(self):
+        """_cr_token must read from ~/.config/aegis/secrets.env as fallback."""
+        from aegis.forge.gate import _cr_token
+
+        with pytest.MonkeyPatch.context() as mp:
+            mp.delenv("CODERABBIT_API_KEY", raising=False)
+            import os
+            import tempfile
+
+            with tempfile.TemporaryDirectory() as tmp:
+                fake_home = Path(tmp)
+                secrets_dir = fake_home / ".config" / "aegis"
+                secrets_dir.mkdir(parents=True)
+                (secrets_dir / "secrets.env").write_text(
+                    "OTHER_KEY=val\nCODERABBIT_API_KEY=from_file\n"
+                )
+                mp.setenv("HOME", str(fake_home))
+                mp.setenv("PATH", os.environ.get("PATH", "/usr/bin"))
+                assert _cr_token() == "from_file"
+
+    # ------------------------------------------------------------------
+    # Token isolation
+    # ------------------------------------------------------------------
+
+    def test_cr_token_in_allowlist_but_stripped_by_run_task(self):
+        """CODERABBIT_API_KEY is allowlisted (documentary) but run_task() pops it."""
+        from aegis.forge.manager import _SANDBOX_ALLOWLIST, ForgeManager
+
+        # Confirms it IS in the allowlist (documentary requirement)
+        assert "CODERABBIT_API_KEY" in _SANDBOX_ALLOWLIST
+
+        # Confirms _sanitize_env passes it through (it's in allowlist)
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setenv("CODERABBIT_API_KEY", "should_not_leak")
+            sandbox = ForgeManager._sanitize_env()
+            assert "CODERABBIT_API_KEY" in sandbox, (
+                "Token is in allowlist so _sanitize_env keeps it"
+            )
+
+    @pytest.mark.asyncio
+    async def test_run_task_strips_cr_token_before_subprocess(self):
+        """run_task() must pop CODERABBIT_API_KEY from the subprocess env."""
+        from unittest.mock import AsyncMock, patch
+
+        from aegis.forge.manager import ForgeManager
+
+        mgr = ForgeManager()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            workdir = Path(tmpdir)
+            mock_proc = AsyncMock()
+            mock_proc.communicate = AsyncMock(return_value=(b"", b""))
+            mock_proc.returncode = 0
+
+            captured_env = {}
+
+            async def _fake_exec(*args, **kwargs):
+                captured_env.update(kwargs.get("env", {}))
+                return mock_proc
+
+            with (
+                patch("asyncio.create_subprocess_exec", side_effect=_fake_exec),
+                pytest.MonkeyPatch.context() as mp,
+            ):
+                mp.setenv("CODERABBIT_API_KEY", "should_not_leak")
+                await mgr.run_task(workdir, "test")
+
+            assert "CODERABBIT_API_KEY" not in captured_env, (
+                f"Token leaked into subprocess env: {captured_env}"
+            )
+
+    # ------------------------------------------------------------------
+    # Gate integration — cr stage order and advisory behavior
+    # ------------------------------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_gate_skips_cr_when_not_available(self):
+        """Gate must skip cr when binary or token is missing, overall_passed=True."""
+        import os as _os
+
+        with (
+            tempfile.TemporaryDirectory() as tmpdir,
+            pytest.MonkeyPatch.context() as mp,
+        ):
+            workdir = Path(tmpdir)
+            (workdir / "ok.py").write_text("x = 1\n")
+
+            # Keep real PATH for ruff but remove cr from it
+            real_path = _os.environ.get("PATH", "/usr/bin")
+            mp.setenv("PATH", real_path)
+            mp.delenv("CODERABBIT_API_KEY", raising=False)
+
+            gate = GateStage(workdir)
+            result = await gate.run_all()
+
+            assert result.lint_passed is True
+            assert result.cr_passed is True, "cr should be skipped, not failed"
+            assert "skipped" in result.cr_output.lower()
+            assert result.cr_findings == []
+            assert result.cr_loop_iterations == 0
+            assert result.overall_passed is True
+
+    @pytest.mark.asyncio
+    async def test_gate_cr_is_advisory(self):
+        """cr findings must NOT set overall_passed=False (advisory by default)."""
+        from unittest.mock import AsyncMock, patch
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            workdir = Path(tmpdir)
+            (workdir / "ok.py").write_text("x = 1\n")
+
+            gate = GateStage(workdir)
+
+            with (
+                patch("aegis.forge.gate._cr_binary", return_value="/usr/bin/cr"),
+                patch("aegis.forge.gate._cr_token", return_value="test_token"),
+                patch.object(gate, "_ensure_git_repo", AsyncMock()),
+                patch.object(
+                    gate,
+                    "_run_single_cr_review",
+                    return_value=(
+                        False,
+                        "Issues found",
+                        [{"severity": "error", "text": "test finding"}],
+                    ),
+                ),
+                patch.object(gate, "_get_cr_fix_prompt", return_value=None),
+            ):
+                result = await gate.run_all()
+
+            assert result.lint_passed is True
+            assert result.cr_passed is False
+            # findings accumulate across all MAX_CR_LOOP+1 iterations
+            from aegis.forge.gate import MAX_CR_LOOP
+
+            assert len(result.cr_findings) == MAX_CR_LOOP + 1
+            assert result.cr_loop_iterations == MAX_CR_LOOP
+            # overall_passed is lint+test+build only — cr is advisory
+            assert result.overall_passed is True, "cr is advisory — must not flip overall_passed"
+
+    @pytest.mark.asyncio
+    async def test_gate_cr_loop_fires_on_findings(self):
+        """cr loop-back must invoke _get_cr_fix_prompt + run_task when findings exist."""
+        from unittest.mock import AsyncMock, patch
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            workdir = Path(tmpdir)
+            (workdir / "ok.py").write_text("x = 1\n")
+
+            mock_manager = AsyncMock()
+            mock_manager.run_task = AsyncMock()
+
+            gate = GateStage(workdir, manager=mock_manager)
+
+            with (
+                patch("aegis.forge.gate._cr_binary", return_value="/usr/bin/cr"),
+                patch("aegis.forge.gate._cr_token", return_value="test_token"),
+                patch.object(gate, "_ensure_git_repo", AsyncMock()),
+                patch.object(
+                    gate,
+                    "_run_single_cr_review",
+                    side_effect=[
+                        (
+                            False,
+                            "Issues: error something",
+                            [{"severity": "error", "text": "something"}],
+                        ),
+                        (True, "All clean", []),
+                    ],
+                ),
+                patch.object(gate, "_get_cr_fix_prompt", return_value="fix the issues"),
+                # Mock git commit to avoid real subprocess calls
+                patch("aegis.forge.gate._run_cmd", return_value=(0, "")),
+            ):
+                result = await gate.run_all()
+
+            assert result.cr_passed is True
+            assert result.cr_loop_iterations == 1
+            assert len(result.cr_findings) == 1
+            assert result.overall_passed is True
+            mock_manager.run_task.assert_awaited_once_with(workdir, "fix the issues")
+
+    @pytest.mark.asyncio
+    async def test_gate_cr_loop_capped_at_max_iterations(self):
+        """cr loop must NOT exceed MAX_CR_LOOP iterations even with persistent issues."""
+        from unittest.mock import AsyncMock, patch
+
+        from aegis.forge.gate import MAX_CR_LOOP
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            workdir = Path(tmpdir)
+            (workdir / "ok.py").write_text("x = 1\n")
+
+            mock_manager = AsyncMock()
+            mock_manager.run_task = AsyncMock()
+
+            gate = GateStage(workdir, manager=mock_manager)
+
+            with (
+                patch("aegis.forge.gate._cr_binary", return_value="/usr/bin/cr"),
+                patch("aegis.forge.gate._cr_token", return_value="test_token"),
+                patch.object(gate, "_ensure_git_repo", AsyncMock()),
+                patch.object(
+                    gate,
+                    "_run_single_cr_review",
+                    return_value=(
+                        False,
+                        "Issues persist",
+                        [{"severity": "error", "text": "still broken"}],
+                    ),
+                ),
+                patch.object(gate, "_get_cr_fix_prompt", return_value="fix again"),
+                patch("aegis.forge.gate._run_cmd", return_value=(0, "")),
+            ):
+                result = await gate.run_all()
+
+            assert result.cr_passed is False
+            assert result.cr_loop_iterations == MAX_CR_LOOP
+            assert mock_manager.run_task.await_count == MAX_CR_LOOP
+            assert result.overall_passed is True  # still advisory
+
+    @pytest.mark.asyncio
+    async def test_gate_cr_preserves_stage_order(self):
+        """cr must run after build (not before)."""
+        from unittest.mock import patch
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            workdir = Path(tmpdir)
+            (workdir / "bad.py").write_text("import os, sys\n")  # lint will fail
+
+            gate = GateStage(workdir)
+            result = await gate.run_all()
+
+            # Lint fails → short-circuit → cr never ran
+            assert result.lint_passed is False
+            # cr should have its default value
+            assert result.cr_passed is True
+            assert result.cr_output == ""
+
+            # Now test with all-clean workdir + mocked cr
+            workdir2 = Path(tempfile.mkdtemp())
+            (workdir2 / "ok.py").write_text("x = 1\n")
+            gate2 = GateStage(workdir2)
+
+            # Track execution order
+            execution_order = []
+
+            async def _fake_lint():
+                execution_order.append("lint")
+                return True, ""
+
+            async def _fake_tests():
+                execution_order.append("test")
+                return True, ""
+
+            async def _fake_build():
+                execution_order.append("build")
+                return True, ""
+
+            async def _fake_cr():
+                execution_order.append("cr")
+                return True, "", [], 0
+
+            with (
+                patch.object(gate2, "_run_lint", _fake_lint),
+                patch.object(gate2, "_run_tests", _fake_tests),
+                patch.object(gate2, "_run_build", _fake_build),
+                patch.object(gate2, "_cr_available", return_value=True),
+                patch.object(gate2, "_run_cr_loop", _fake_cr),
+            ):
+                await gate2.run_all()
+
+            assert execution_order == ["lint", "test", "build", "cr"], (
+                f"Expected lint→test→build→cr, got {execution_order}"
+            )
+
+    # ------------------------------------------------------------------
+    # Owner approval with cr findings
+    # ------------------------------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_gate_owner_approval_still_required_after_cr(self):
+        """owner approval must still be required after cr stage passes."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            workdir = Path(tmpdir)
+            (workdir / "ok.py").write_text("x = 1\n")
+
+            gate = GateStage(workdir)
+            result = await gate.run_all()
+
+            assert result.overall_passed is True
+            approved = await gate.request_owner_approval("test-task", result)
+            assert approved is False, "Owner must explicitly approve"
+
+    @pytest.mark.asyncio
+    async def test_gate_owner_approval_includes_cr_summary_in_log(self):
+        """request_owner_approval must log cr findings summary."""
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            workdir = Path(tmpdir)
+            gate = GateStage(workdir)
+
+            result = GateResult(
+                cr_passed=False,
+                cr_findings=[{"severity": "error", "text": "test"}],
+                cr_loop_iterations=1,
+                overall_passed=True,
+            )
+
+            with pytest.MonkeyPatch.context() as mp:
+                messages = []
+
+                class FakeLogger:
+                    def warning(self, msg, *args, **kwargs):
+                        messages.append(msg % args if args else msg)
+
+                mp.setattr("aegis.forge.gate.log", FakeLogger())
+                await gate.request_owner_approval("task-42", result)
+
+            assert any("cr: 1 finding after 1 loop" in m for m in messages), (
+                f"Expected cr summary in log, got: {messages}"
+            )
+
+    # ------------------------------------------------------------------
+    # Git repo initialization for cr review
+    # ------------------------------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_ensure_git_repo_inits_when_missing(self):
+        """_ensure_git_repo must init a git repo when the workdir lacks one."""
+        from aegis.forge.gate import GateStage, _run_cmd
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            workdir = Path(tmpdir)
+            (workdir / "test.py").write_text("pass\n")
+
+            assert not (workdir / ".git").exists()
+            await GateStage._ensure_git_repo(workdir)
+            assert (workdir / ".git").exists()
+
+            # Verify git works
+            rc, out = await _run_cmd(
+                ["git", "rev-parse", "--git-dir"],
+                cwd=workdir,
+            )
+            assert rc == 0, f"git failed: {out}"
+
+    @pytest.mark.asyncio
+    async def test_ensure_git_repo_skips_if_already_git(self):
+        """_ensure_git_repo must not re-init an existing git repo."""
+        from aegis.forge.gate import GateStage
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            workdir = Path(tmpdir)
+            # Init git first
+            proc = await asyncio.create_subprocess_exec(
+                "git",
+                "init",
+                "-b",
+                "main",
+                cwd=str(workdir),
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            await proc.communicate()
+
+            assert (workdir / ".git").exists()
+            git_dir_mtime = (workdir / ".git").stat().st_mtime
+
+            # Sleep briefly to ensure mtime would differ on re-init
+            import time as time_mod
+
+            time_mod.sleep(0.01)
+
+            await GateStage._ensure_git_repo(workdir)
+            assert (workdir / ".git").stat().st_mtime == git_dir_mtime, (
+                "git dir should not have been re-initialized"
+            )
