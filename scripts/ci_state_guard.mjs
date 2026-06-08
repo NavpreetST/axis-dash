@@ -19,10 +19,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const TELEMETRY_TS = resolve(
-  import.meta.dirname || fileURLToPath(new URL('.', import.meta.url)),
-  '../src/lib/stores/telemetry.ts'
-);
+const TELEMETRY_TS = resolve(import.meta.dirname || fileURLToPath(new URL('.', import.meta.url)), '../src/lib/stores/telemetry.ts');
 
 // Fields currently in TelemetryData.  If any of these are removed in a PR,
 // this guard FAILS.  New fields may be added freely.
@@ -56,6 +53,10 @@ export const EXPECTED_LIVE_FRAME_FIELDS = [
   'runtime'
 ];
 
+/**
+ * @param {string} source
+ * @returns {string[] | null}
+ */
 export function extractInterfaceFields(source) {
   const ifaceMatch = source.match(/interface\s+TelemetryData\s*\{([\s\S]*?)\n\s*\}/);
   if (!ifaceMatch) return null;
@@ -70,6 +71,10 @@ export function extractInterfaceFields(source) {
   return fields;
 }
 
+/**
+ * @param {string} source
+ * @returns {string[] | null}
+ */
 export function extractApplyLiveFrameFields(source) {
   const fnMatch = source.match(
     /const\s+applyLiveFrame\s*=\s*\([^)]*\)\s*=>\s*\{([\s\S]*?)\n\s*\};/
@@ -90,6 +95,10 @@ export function extractApplyLiveFrameFields(source) {
   return fields;
 }
 
+/**
+ * @param {string} source
+ * @returns {{ ifaceFields: string[], liveFrameFields: string[], errors: string[] }}
+ */
 export function validateContract(source) {
   const errors = [];
   const ifaceFields = extractInterfaceFields(source);
@@ -146,15 +155,15 @@ function main() {
       process.exit(1);
     }
   } catch (err) {
-    console.error(err.message);
+    const message = err instanceof Error ? err.message : String(err);
+    console.error(message);
     process.exit(1);
   }
 
   console.log('\nOK — frontend ↔ /state contract is intact (no regressions).');
 }
 
-const isMain =
-  process.argv[1] && resolve(fileURLToPath(import.meta.url)) === resolve(process.argv[1]);
+const isMain = process.argv[1] && resolve(fileURLToPath(import.meta.url)) === resolve(process.argv[1]);
 if (isMain) {
   main();
 }
