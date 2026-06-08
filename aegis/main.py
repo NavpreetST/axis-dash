@@ -260,9 +260,34 @@ async def main() -> None:
     ]
     log.info("aegis online — connect via the aegis CLI")
     try:
+        # Emit startup event — best-effort, never block boot
+        try:
+            await eventlog.log_event(
+                source="aegis",
+                event_type="task_done",
+                payload={"task": "boot", "status": "online"},
+                severity="info",
+                sensitivity="internal",
+            )
+        except Exception:
+            log.debug("main: failed to emit startup event", exc_info=True)
         await asyncio.gather(*tasks)
     except (KeyboardInterrupt, asyncio.CancelledError):
         log.info("shutting down")
+        # Emit shutdown event — best-effort, never hang teardown
+        try:
+            await asyncio.wait_for(
+                eventlog.log_event(
+                    source="aegis",
+                    event_type="error",
+                    payload={"where": "main_loop", "reason": "shutdown"},
+                    severity="warn",
+                    sensitivity="internal",
+                ),
+                timeout=2.0,
+            )
+        except Exception:
+            log.debug("main: failed to emit shutdown event", exc_info=True)
         for t in tasks:
             t.cancel()
         if _forge_dispatcher:
