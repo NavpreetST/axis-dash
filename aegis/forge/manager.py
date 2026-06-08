@@ -2,6 +2,11 @@
 
 Starts `opencode serve` as an asyncio subprocess on a random port,
 provides an httpx client for API calls, and handles graceful shutdown.
+
+SECURITY: The server subprocess runs with a scrubbed environment to
+prevent ~/.config/aegis/secrets.env or .git credentials from leaking
+into the opencode worker. Git/push credentials are injected ONLY at
+the gate stage, never here.
 """
 
 from __future__ import annotations
@@ -9,6 +14,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import secrets
 import signal
 from pathlib import Path
 
@@ -18,6 +24,47 @@ log = logging.getLogger(__name__)
 
 OPENCODE_BIN = os.getenv("OPENCODE_BIN", "opencode")
 FORGE_BASE = Path(os.getenv("AEGIS_FORGE_DIR", "/opt/aegis/forge"))
+
+# Env-var keys that are allowed to pass through to the opencode sandbox.
+# Everything else (API keys, tokens, git credentials) is STRIPPED.
+_SANDBOX_ALLOWLIST: frozenset[str] = frozenset(
+    {
+        "PATH",
+        "HOME",
+        "USER",
+        "LANG",
+        "LC_ALL",
+        "SHELL",
+        "TERM",
+        "TMPDIR",
+        "OPENCODE_BIN",
+        "OPENCODE_LOG_LEVEL",
+        "OPENCODE_CONFIG",
+        "OPENCODE_CONFIG_CONTENT",
+        "OPENCODE_PERMISSION",
+        "AEGIS_FORGE_DIR",
+    }
+)
+
+# Known secret env-var prefixes that must NEVER reach the sandbox.
+_SECRET_PREFIXES: tuple[str, ...] = (
+    "API_KEY",
+    "TOKEN",
+    "SECRET",
+    "PASSWORD",
+    "AUTH",
+    "CREDENTIAL",
+    "GROQ_",
+    "GEMINI_",
+    "OPENAI_",
+    "ANTHROPIC_",
+    "HF_",
+    "HUGGINGFACE_",
+)
+
+# The server password we generate to lock the opencode serve endpoint.
+# Only the ForgeManager client knows it.
+_SERVER_PASSWORD: str = secrets.token_urlsafe(32)
 
 
 class ForgeManager:
@@ -45,13 +92,38 @@ class ForgeManager:
     def is_ready(self) -> bool:
         return self._ready.is_set()
 
+    @staticmethod
+    def _sanitize_env() -> dict[str, str]:
+        """Build a sandbox-safe environment for the opencode subprocess.
+
+        Strips all known secret env vars so forge workers NEVER have access to
+        host credentials (~/.config/aegis/secrets.env, .git credentials, etc.).
+        Git/push auth is injected ONLY at the GateStage, never in the worker.
+        """
+        sandbox = {}
+        for k, v in os.environ.items():
+            upper = k.upper()
+            # Allow-listed keys always pass through
+            if k in _SANDBOX_ALLOWLIST:
+                sandbox[k] = v
+                continue
+            # Strip anything that looks like a credential
+            if any(upper.startswith(p) or upper.endswith(p) for p in _SECRET_PREFIXES):
+                continue
+            # Strip common secret names by exact match
+            if upper in ("SECRET", "PRIVATE_KEY", "ACCESS_KEY", "API_KEY"):
+                continue
+            # Default: pass through non-secret-looking vars
+            sandbox[k] = v
+        return sandbox
+
     async def start(self) -> None:
         """Start opencode serve on a random port, wait for health."""
         FORGE_BASE.mkdir(parents=True, exist_ok=True)
 
-        # Use port 0 to let OS assign a free port
-        env = os.environ.copy()
+        env = self._sanitize_env()
         env["OPENCODE_LOG_LEVEL"] = "WARN"
+        env["OPENCODE_SERVER_PASSWORD"] = _SERVER_PASSWORD
 
         self._proc = await asyncio.create_subprocess_exec(
             OPENCODE_BIN,
@@ -70,6 +142,7 @@ class ForgeManager:
         self._client = httpx.AsyncClient(
             base_url=self.base_url,
             timeout=httpx.Timeout(300.0),  # tasks can be long
+            auth=httpx.BasicAuth("opencode", _SERVER_PASSWORD),
         )
 
         # Health check with retries

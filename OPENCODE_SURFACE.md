@@ -97,3 +97,66 @@ opencode run --model openrouter/anthropic/claude-sonnet-4 "prompt"
 5. Cleanup via `DELETE /session/:id`
 
 This avoids per-task cold boot and shares MCP/LSP connections across tasks.
+
+### Forge Server Hardening (v1.16.2)
+
+**Bind address**: The ForgeManager always starts `opencode serve` with
+`--hostname 127.0.0.1`. The server is NEVER exposed on 0.0.0.0. Confirmed by
+source inspection (`aegis/forge/manager.py` line 132).
+
+**Auth**: A random 32-byte `OPENCODE_SERVER_PASSWORD` is generated at module
+load (`secrets.token_urlsafe(32)`) and injected into the server subprocess env.
+The httpx client uses `BasicAuth("opencode", password)` for every request. An
+unauth'd request to the server will be rejected. This prevents the pre-1.1.10
+RCE vector (unauth'd local server).
+
+**Sandbox env scrubbing**: The server subprocess receives a sanitized
+environment. `_sanitize_env()` in `manager.py` strips all env vars matching
+known secret prefixes (`GROQ_`, `GEMINI_`, `HF_`, `OPENAI_`, `ANTHROPIC_`,
+`API_KEY`, `TOKEN`, `PASSWORD`, `AUTH`, `CREDENTIAL`, `SECRET`) and only
+passes through vars in `_SANDBOX_ALLOWLIST` (PATH, HOME, USER, LANG, etc.)
+plus non-secret-looking vars. Git/push credentials are injected ONLY at the
+GateStage — never into the opencode worker.
+
+**Concurrency cap**: `MAX_CONCURRENT_FORGE_TASKS` (default 2, env override
+`AEGIS_FORGE_MAX_CONCURRENT`) limits parallel opencode runs via an asyncio
+Semaphore. The host has 16 GB RAM, no GPU; each opencode worker consumes
+~2-4 GB. This prevents OOM.
+
+**Gate stage**: After a forge task completes, `GateStage.run_all()` runs
+lint → test → build sequentially with short-circuit on first failure. Only
+after all three pass AND the owner explicitly approves (`request_owner_approval`)
+is a push permitted. The smoke path produces a GATED result, never an auto-push.
+
+## Budgeter Seam
+
+**Current choice**: Model calls route directly to Groq (free tier) via
+`opencode.json`. This is deliberate — the budgeter (P3.5, Helios renderer)
+chains its own API calls and does NOT route through the opencode server.
+
+**How to switch to metered**: Replace the `groq` provider block in
+`opencode.json` with a P3.5-compatible `openai-compatible` provider pointing
+at the budgeter endpoint:
+
+```jsonc
+{
+  "provider": {
+    "budgeter-proxy": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "P3.5 Budgeter",
+      "options": { "baseURL": "http://127.0.0.1:PORT/v1" },
+      "models": {
+        "metered-model": {
+          "name": "Budgeted Model",
+          "limit": { "context": 128000, "output": 32768 }
+        }
+      }
+    }
+  },
+  "model": "budgeter-proxy/metered-model"
+}
+```
+
+Only the `provider` + `model` keys in `opencode.json` need changing — no code
+changes required in `manager.py` or `dispatcher.py`. This is the documented
+seam for runtime metering when moving off the free tier.

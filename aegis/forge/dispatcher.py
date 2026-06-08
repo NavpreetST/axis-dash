@@ -3,6 +3,10 @@
 Each task runs in an isolated sandbox workdir under /opt/aegis/forge/<task-id>/.
 The dispatcher creates the session, sends the prompt, captures diffs/files/logs,
 and stores results for the gate stage.
+
+CONCURRENCY: A semaphore caps parallel task execution at
+MAX_CONCURRENT_FORGE_TASKS (default 2, tunable via env var) to avoid
+OOM on the 16 GB host. Additional submissions are queued automatically.
 """
 
 from __future__ import annotations
@@ -11,6 +15,7 @@ import asyncio
 import contextlib
 import json
 import logging
+import os
 import shutil
 import time
 import uuid
@@ -21,6 +26,10 @@ from pathlib import Path
 from aegis.forge.manager import FORGE_BASE, ForgeManager
 
 log = logging.getLogger(__name__)
+
+# Max parallel forge tasks. This host has 16 GB RAM, no GPU — each
+# opencode worker consumes ~2-4 GB. Cap at 2 by default to prevent OOM.
+MAX_CONCURRENT_FORGE_TASKS = int(os.getenv("AEGIS_FORGE_MAX_CONCURRENT", "2"))
 
 
 class TaskStatus(StrEnum):
@@ -89,11 +98,19 @@ def list_tasks() -> list[ForgeTask]:
 
 
 class ForgeDispatcher:
-    """Dispatches coding tasks to opencode in isolated sandboxes."""
+    """Dispatches coding tasks to opencode in isolated sandboxes.
+
+    Max ``MAX_CONCURRENT_FORGE_TASKS`` run in parallel; additional
+    submissions queue automatically behind the semaphore.
+    """
+
+    _semaphore: asyncio.Semaphore | None = None
 
     def __init__(self, manager: ForgeManager) -> None:
         self._manager = manager
         _load_tasks()
+        if ForgeDispatcher._semaphore is None:
+            ForgeDispatcher._semaphore = asyncio.Semaphore(MAX_CONCURRENT_FORGE_TASKS)
 
     async def submit(self, spec: str) -> ForgeTask:
         """Submit a new coding task. Returns task with ID."""
@@ -120,63 +137,67 @@ class ForgeDispatcher:
         if task.status != TaskStatus.PENDING:
             raise ValueError(f"task {task_id} already {task.status.value}")
 
-        workdir = Path(task.workdir)
-        task.status = TaskStatus.RUNNING
-        _save_tasks()
-
-        try:
-            # Create opencode session
-            session_id = await self._manager.create_session(workdir)
-            task.session_id = session_id
-
-            # Build the prompt with workdir context
-            prompt = (
-                f"Work in directory: {workdir}\n\n"
-                f"Task: {task.spec}\n\n"
-                "Make the necessary changes. Show me the diff when done."
-            )
-
-            # Send prompt and wait for response
-            await self._manager.send_prompt(session_id, prompt)
-
-            # Capture diffs
-            diffs = await self._manager.get_diffs(session_id)
-            task.diffs = diffs
-
-            # Parse files from diffs
-            for diff in diffs:
-                path = diff.get("path", diff.get("filePath", ""))
-                if diff.get("status") == "added":
-                    task.files_created.append(path)
-                elif diff.get("status") == "modified":
-                    task.files_modified.append(path)
-
-            # Capture messages for logs
-            messages = await self._manager.get_messages(session_id)
-            task.logs = json.dumps(messages, indent=2, default=str)
-
-            task.status = TaskStatus.COMPLETED
-            task.completed_at = time.time()
-            log.info(
-                "forge task completed: %s — %d diffs, +%d ~%d files",
-                task_id,
-                len(diffs),
-                len(task.files_created),
-                len(task.files_modified),
-            )
-
-        except Exception as e:
-            task.status = TaskStatus.FAILED
-            task.error = str(e)
-            task.completed_at = time.time()
-            log.error("forge task failed: %s — %s", task_id, e)
-
-        finally:
+        sem = ForgeDispatcher._semaphore
+        if sem is None:
+            raise RuntimeError("ForgeDispatcher not initialized")
+        async with sem:
+            workdir = Path(task.workdir)
+            task.status = TaskStatus.RUNNING
             _save_tasks()
-            # Cleanup: delete session but keep workdir for gate stage
-            if task.session_id:
-                with contextlib.suppress(Exception):
-                    await self._manager.delete_session(task.session_id)
+
+            try:
+                # Create opencode session
+                session_id = await self._manager.create_session(workdir)
+                task.session_id = session_id
+
+                # Build the prompt with workdir context
+                prompt = (
+                    f"Work in directory: {workdir}\n\n"
+                    f"Task: {task.spec}\n\n"
+                    "Make the necessary changes. Show me the diff when done."
+                )
+
+                # Send prompt and wait for response
+                await self._manager.send_prompt(session_id, prompt)
+
+                # Capture diffs
+                diffs = await self._manager.get_diffs(session_id)
+                task.diffs = diffs
+
+                # Parse files from diffs
+                for diff in diffs:
+                    path = diff.get("path", diff.get("filePath", ""))
+                    if diff.get("status") == "added":
+                        task.files_created.append(path)
+                    elif diff.get("status") == "modified":
+                        task.files_modified.append(path)
+
+                # Capture messages for logs
+                messages = await self._manager.get_messages(session_id)
+                task.logs = json.dumps(messages, indent=2, default=str)
+
+                task.status = TaskStatus.COMPLETED
+                task.completed_at = time.time()
+                log.info(
+                    "forge task completed: %s — %d diffs, +%d ~%d files",
+                    task_id,
+                    len(diffs),
+                    len(task.files_created),
+                    len(task.files_modified),
+                )
+
+            except Exception as e:
+                task.status = TaskStatus.FAILED
+                task.error = str(e)
+                task.completed_at = time.time()
+                log.error("forge task failed: %s — %s", task_id, e)
+
+            finally:
+                _save_tasks()
+                # Cleanup: delete session but keep workdir for gate stage
+                if task.session_id:
+                    with contextlib.suppress(Exception):
+                        await self._manager.delete_session(task.session_id)
 
         return task
 
