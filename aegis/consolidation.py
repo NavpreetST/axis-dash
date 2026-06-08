@@ -33,7 +33,6 @@ from aegis.nim_budget import (
     NIM_BATCH_SIZE,
     NIM_MODEL,
     NIM_BUDGET,
-    NimBudget,
 )
 from aegis.observability import eventlog
 
@@ -239,7 +238,7 @@ async def run() -> None:
     from aegis.renderer._quota import pop_day_rollover
     from aegis.mnemosyne.db import CONN
 
-    log.info("consolidation: enabled (NIM model=%s, RPM cap=%d)", NIM_MODEL, NimBudget().rpm_cap)
+    log.info("consolidation: enabled (NIM model=%s, RPM cap=%d)", NIM_MODEL, NIM_BUDGET.rpm_cap)
 
     tick_q = BUS.subscribe("tick")
 
