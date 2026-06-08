@@ -4,7 +4,7 @@ from __future__ import annotations
 import json
 import tempfile
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import patch, AsyncMock
 
 import pytest
 
@@ -17,6 +17,7 @@ from aegis.observability.eventlog import (
     VALID_SOURCES,
     append_event,
     make_event,
+    _CONTRACTS_PATH,
 )
 
 
@@ -100,6 +101,17 @@ def test_append_event_writes_jsonl(tmp_path: Path):
     assert parsed["payload"] == {"text": "hi"}
 
 
+def test_append_event_fsyncs(tmp_path: Path):
+    """append_event must fsync after write for crash safety."""
+    events_dir = tmp_path / "events"
+    event = make_event(source="aegis", event_type="chat_turn", payload={})
+
+    with patch("aegis.observability.eventlog.EVENTS_DIR", events_dir):
+        with patch("aegis.observability.eventlog.os.fsync") as mock_fsync:
+            append_event(event)
+            mock_fsync.assert_called_once()
+
+
 def test_all_valid_sources():
     for src in VALID_SOURCES:
         event = make_event(source=src, event_type="chat_turn", payload={})
@@ -122,3 +134,230 @@ def test_all_valid_sensitivities():
     for sens in VALID_SENSITIVITIES:
         event = make_event(source="aegis", event_type="chat_turn", payload={}, sensitivity=sens)
         assert event["sensitivity"] == sens
+
+
+def test_valid_sources_derived_from_schema():
+    """VALID_SOURCES must match the schema contract, not a hardcoded list."""
+    schema = json.loads(_CONTRACTS_PATH.read_text(encoding="utf-8"))
+    schema_sources = frozenset(schema["properties"]["source"]["enum"])
+    assert VALID_SOURCES == schema_sources, (
+        f"VALID_SOURCES ({VALID_SOURCES}) doesn't match schema ({schema_sources}). "
+        "Update contracts/event.schema.json, not the code."
+    )
+
+
+def test_navpreets_removed_from_schema():
+    """navpreets must NOT be in the frozen source enum."""
+    schema = json.loads(_CONTRACTS_PATH.read_text(encoding="utf-8"))
+    assert "navpreets" not in schema["properties"]["source"]["enum"]
+
+
+# ---------------------------------------------------------------------------
+# log_event() tests — publishes to eventlog.append, does NOT call append_event
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_log_event_publishes_to_eventlog_append():
+    """log_event() must publish to the BUS 'eventlog.append' topic."""
+    from aegis.observability.eventlog import log_event
+
+    with patch("aegis.observability.eventlog.BUS") as mock_bus:
+        mock_bus.publish = AsyncMock()
+        await log_event(
+            source="aegis",
+            event_type="chat_turn",
+            payload={"prompt": "hi", "reply": "hello"},
+        )
+        mock_bus.publish.assert_called_once()
+        call_args = mock_bus.publish.call_args
+        assert call_args[0][0] == "eventlog.append"
+        event = call_args[0][1]
+        assert event["event_type"] == "chat_turn"
+        assert event["schema_version"] == 1
+
+
+@pytest.mark.asyncio
+async def test_log_event_does_not_call_append_event():
+    """log_event() must NOT call append_event() directly — sole writer is run()."""
+    from aegis.observability.eventlog import log_event
+
+    with patch("aegis.observability.eventlog.BUS") as mock_bus:
+        mock_bus.publish = AsyncMock()
+        with patch("aegis.observability.eventlog.append_event") as mock_append:
+            await log_event(
+                source="aegis",
+                event_type="error",
+                payload={"err": "test"},
+                severity="error",
+            )
+            mock_append.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# run() tests — sole writer, writes JSONL + publishes to eventlog.write
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_run_writes_jsonl_from_eventlog_append(tmp_path: Path):
+    """run() must pick up events from eventlog.append, write JSONL, and publish to eventlog.write."""
+    from aegis.observability.eventlog import run
+
+    events_dir = tmp_path / "events"
+    event = make_event(source="aegis", event_type="chat_turn", payload={"prompt": "hi"})
+
+    with patch("aegis.observability.eventlog.EVENTS_DIR", events_dir):
+        with patch("aegis.observability.eventlog.BUS") as mock_bus:
+            # Set up a queue that delivers one event then blocks forever
+            import asyncio
+            q: asyncio.Queue = asyncio.Queue()
+            q.put_nowait(type("Msg", (), {"payload": event})())
+            mock_bus.subscribe.return_value = q
+            mock_bus.publish = AsyncMock()
+
+            # Run run() for a short time
+            task = asyncio.create_task(run())
+            await asyncio.sleep(0.05)
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+
+    # Verify JSONL was written
+    jsonl_files = list(events_dir.glob("*.jsonl"))
+    assert len(jsonl_files) == 1
+    line = jsonl_files[0].read_text().strip()
+    parsed = json.loads(line)
+    assert parsed["event_type"] == "chat_turn"
+    assert parsed["schema_version"] == 1
+
+
+@pytest.mark.asyncio
+async def test_run_publishes_to_eventlog_write(tmp_path: Path):
+    """run() must publish to eventlog.write after writing JSONL (for cloud consumers)."""
+    from aegis.observability.eventlog import run
+
+    events_dir = tmp_path / "events"
+    event = make_event(source="aegis", event_type="error", payload={"err": "test"})
+
+    with patch("aegis.observability.eventlog.EVENTS_DIR", events_dir):
+        with patch("aegis.observability.eventlog.BUS") as mock_bus:
+            import asyncio
+            q: asyncio.Queue = asyncio.Queue()
+            q.put_nowait(type("Msg", (), {"payload": event})())
+            mock_bus.subscribe.return_value = q
+            mock_bus.publish = AsyncMock()
+
+            task = asyncio.create_task(run())
+            await asyncio.sleep(0.05)
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+
+            # Verify eventlog.write was published to (for supabase/b2)
+            write_calls = [
+                c for c in mock_bus.publish.call_args_list
+                if c[0][0] == "eventlog.write"
+            ]
+            assert len(write_calls) == 1
+            assert write_calls[0][0][1]["event_type"] == "error"
+
+
+# ---------------------------------------------------------------------------
+# Secret-payload redaction
+# ---------------------------------------------------------------------------
+
+
+def test_append_event_redacts_secret_in_error_log(caplog):
+    """When sensitivity=secret and append fails, payload must be redacted in logs."""
+    from aegis.observability.eventlog import _log_append_error
+    import logging
+
+    event = make_event(
+        source="aegis",
+        event_type="error",
+        payload={"secret_key": "hunter2"},
+        sensitivity="secret",
+    )
+
+    with caplog.at_level(logging.WARNING):
+        _log_append_error(event, OSError("test failure"))
+        matching = [r.message for r in caplog.records if "append failed" in r.message]
+        assert matching, "Expected an append-failure warning log"
+        for message in matching:
+            assert "hunter2" not in message
+            assert "<REDACTED>" in message
+
+
+def test_secret_payload_redacted_in_jsonl(tmp_path: Path):
+    """sensitivity=secret payloads must be redacted in JSONL — never persisted in plaintext."""
+    events_dir = tmp_path / "events"
+    event = make_event(
+        source="aegis",
+        event_type="error",
+        payload={"api_key": "sk-live-supersecret"},
+        sensitivity="secret",
+    )
+
+    with patch("aegis.observability.eventlog.EVENTS_DIR", events_dir):
+        append_event(event)
+
+    jsonl_file = list(events_dir.glob("*.jsonl"))[0]
+    parsed = json.loads(jsonl_file.read_text().strip())
+    # The payload in JSONL must NOT contain the secret
+    assert "sk-live-supersecret" not in json.dumps(parsed)
+    assert parsed["payload"]["redacted"] is True
+    assert parsed["sensitivity"] == "secret"
+
+
+# ---------------------------------------------------------------------------
+# Durability guarantee — append failure skips cloud mirror
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_run_skips_cloud_mirror_on_append_failure(tmp_path: Path):
+    """When append_event() raises, run() must NOT publish to eventlog.write."""
+    from aegis.observability.eventlog import run
+
+    events_dir = tmp_path / "events"
+    event = make_event(source="aegis", event_type="error", payload={"err": "test"})
+
+    with patch("aegis.observability.eventlog.EVENTS_DIR", events_dir):
+        with patch("aegis.observability.eventlog.BUS") as mock_bus:
+            import asyncio
+            q: asyncio.Queue = asyncio.Queue()
+            q.put_nowait(type("Msg", (), {"payload": event})())
+            mock_bus.subscribe.return_value = q
+            mock_bus.publish = AsyncMock()
+
+            # Use an Event to synchronize: append_event is called → set event
+            append_called = asyncio.Event()
+
+            def _fail_append(evt):
+                append_called.set()
+                raise OSError("disk full")
+
+            with patch("aegis.observability.eventlog.append_event", side_effect=_fail_append):
+                task = asyncio.create_task(run())
+                await append_called.wait()  # wait until append_event was called
+                await asyncio.sleep(0)      # let run() hit the continue
+                task.cancel()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
+
+            # Verify eventlog.write was NOT published to
+            write_calls = [
+                c for c in mock_bus.publish.call_args_list
+                if c[0][0] == "eventlog.write"
+            ]
+            assert len(write_calls) == 0, (
+                f"eventlog.write should NOT be published when append fails, "
+                f"but got {len(write_calls)} calls"
+            )

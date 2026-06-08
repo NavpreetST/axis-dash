@@ -6,7 +6,7 @@
   "properties": {
     "schema_version": { "type": "integer", "const": 1 },
     "timestamp": { "type": "string", "format": "date-time" },
-    "source": { "enum": ["notion","antigravity","opencode","helios","aegis","coderabbit","ci","navpreets"] },
+    "source": { "enum": ["notion","antigravity","opencode","helios","aegis","coderabbit","ci"] },
     "event_type": { "enum": ["chat_turn","error","task_created","task_updated","task_done","pr_opened","review_posted","gate_result","merge","drift_flag"] },
     "payload": { "type": "object" },
     "severity": { "enum": ["info","warn","error","critical"] },

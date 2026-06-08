@@ -61,10 +61,9 @@ async def serve_unix_socket() -> None:
                     reply_text = msg.payload["text"]
                     writer.write((reply_text + "\n").encode())
                     await writer.drain()
-                    
-                    from aegis.eventlog import log_event
-                    await asyncio.to_thread(
-                        log_event,
+
+                    # Log chat_turn → eventlog.append → sole writer → JSONL + cloud
+                    await eventlog.log_event(
                         source="aegis",
                         event_type="chat_turn",
                         payload={
@@ -117,9 +116,8 @@ async def main() -> None:
         for t in tasks:
             t.cancel()
     except Exception as e:
-        from aegis.eventlog import log_event
-        await asyncio.to_thread(
-            log_event,
+        # Log error → eventlog.append → sole writer → JSONL + cloud
+        await eventlog.log_event(
             source="aegis",
             event_type="error",
             payload={"where": "main_loop", "err": str(e)},
