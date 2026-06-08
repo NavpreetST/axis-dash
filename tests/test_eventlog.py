@@ -335,10 +335,17 @@ async def test_run_skips_cloud_mirror_on_append_failure(tmp_path: Path):
             mock_bus.subscribe.return_value = q
             mock_bus.publish = AsyncMock()
 
-            # Patch append_event to raise
-            with patch("aegis.observability.eventlog.append_event", side_effect=OSError("disk full")):
+            # Use an Event to synchronize: append_event is called → set event
+            append_called = asyncio.Event()
+
+            def _fail_append(evt):
+                append_called.set()
+                raise OSError("disk full")
+
+            with patch("aegis.observability.eventlog.append_event", side_effect=_fail_append):
                 task = asyncio.create_task(run())
-                await asyncio.sleep(0.05)
+                await append_called.wait()  # wait until append_event was called
+                await asyncio.sleep(0)      # let run() hit the continue
                 task.cancel()
                 try:
                     await task
