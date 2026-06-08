@@ -104,9 +104,9 @@
         if (!hasToken) return 'No token — set PUBLIC_HELIOS_TOKEN or log in';
         return 'PUBLIC_HELIOS_API_URL or PUBLIC_HELIOS_WS_URL is missing';
       case 'live-ok':
-        return 'Connected to Helios bridge';
+        return 'live data flowing from the Helios bridge';
       case 'live-down':
-        return 'Live mode on, but /state socket is not connected — check bridge URL, token, or redeploy';
+        return 'Live mode on — reconnecting… (socket dropped; backed off and retrying)';
     }
   });
 
