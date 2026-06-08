@@ -37,6 +37,7 @@ from aegis.mnemosyne.db import seed_if_empty as _seed_if_empty
 from aegis.nexus import clock, neurobus
 from aegis.nexus.bus import BUS
 from aegis.observability import b2_sync, eventlog, supabase_sync, turns
+from aegis import consolidation
 from aegis.renderer import dispatcher
 from aegis.renderer.gemini import validate_sku as _validate_sku
 
@@ -244,6 +245,23 @@ async def main() -> None:
                 except Exception as e:
                     log.error("forge: reap error: %s", e)
 
+    async def _supervised_consolidation() -> None:
+        """Supervised wrapper for consolidation.run().
+
+        Crash isolation: catches any exception from consolidation.run()
+        and logs it, but NEVER lets it propagate into the daemon's
+        asyncio.gather().  This ensures consolidation crashes never
+        cancel sibling tasks or take down the 1 Hz Nexus.
+        """
+        while True:
+            try:
+                await consolidation.run()
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                log.error("consolidation: supervised crash — %s", e, exc_info=True)
+                await asyncio.sleep(60)  # backoff before retry
+
     tasks = [
         asyncio.create_task(clock.run(hz=1.0)),
         asyncio.create_task(neurobus.run()),
@@ -257,6 +275,7 @@ async def main() -> None:
         asyncio.create_task(retrieve.run()),
         asyncio.create_task(serve_unix_socket()),
         asyncio.create_task(_forge_reap_loop()),
+        asyncio.create_task(_supervised_consolidation()),
     ]
     log.info("aegis online — connect via the aegis CLI")
     try:
