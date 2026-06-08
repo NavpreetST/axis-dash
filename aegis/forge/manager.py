@@ -221,8 +221,7 @@ class ForgeManager:
     async def delete_session(self, session_id: str) -> None:
         """Delete a session. Raises on failure."""
         r = await self.client.delete(f"/session/{session_id}")
-        if r.status_code >= 400:
-            r.raise_for_status()
+        r.raise_for_status()
 
     async def run_forever(self) -> None:
         """Keep the server alive; restart on crash."""

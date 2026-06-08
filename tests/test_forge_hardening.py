@@ -91,29 +91,13 @@ class TestSandboxCredIsolation:
 
     def test_sanitize_env_never_leaks_host_secrets(self):
         """Integration-level: prove real host secrets are stripped."""
-        from aegis.forge.manager import ForgeManager
+        from aegis.forge.manager import _SANDBOX_ALLOWLIST, ForgeManager
 
         clean = ForgeManager._sanitize_env()
 
         # Only allowlisted keys should exist
-        allowlist = {
-            "PATH",
-            "HOME",
-            "USER",
-            "LANG",
-            "LC_ALL",
-            "SHELL",
-            "TERM",
-            "TMPDIR",
-            "OPENCODE_BIN",
-            "OPENCODE_LOG_LEVEL",
-            "OPENCODE_CONFIG",
-            "OPENCODE_CONFIG_CONTENT",
-            "OPENCODE_PERMISSION",
-            "AEGIS_FORGE_DIR",
-        }
         for key in clean:
-            assert key in allowlist, f"Unexpected key in sandbox env: {key}"
+            assert key in _SANDBOX_ALLOWLIST, f"Unexpected key in sandbox env: {key}"
 
     def test_sanitize_env_allows_basic_vars(self):
         """Basic env vars like PATH, HOME, SHELL must pass through."""
@@ -229,18 +213,29 @@ class TestConcurrencyCap:
 
     def test_max_concurrent_tunable_via_env(self):
         """AEGIS_FORGE_MAX_CONCURRENT must override the default."""
-        # Re-import the module with a custom env var
         import importlib
+        import sys
+
+        module_name = "aegis.forge.dispatcher"
+        mod = sys.modules[module_name]
+
+        # Save original semaphore so we can restore later
+        original_semaphore = ForgeDispatcher._semaphore
+        # Reset so module-level code re-executes cleanly
+        ForgeDispatcher._semaphore = None
 
         with pytest.MonkeyPatch.context() as mp:
             mp.setenv("AEGIS_FORGE_MAX_CONCURRENT", "4")
-            import aegis.forge.dispatcher as dispatcher_reloaded
+            importlib.reload(mod)
+            assert mod.MAX_CONCURRENT_FORGE_TASKS == 4
 
-            importlib.reload(dispatcher_reloaded)
-            assert dispatcher_reloaded.MAX_CONCURRENT_FORGE_TASKS == 4
+        # Restore: reload without the env override
+        ForgeDispatcher._semaphore = None
+        importlib.reload(mod)
+        assert mod.MAX_CONCURRENT_FORGE_TASKS == 2
 
-        # Reset for other tests
-        importlib.reload(__import__("aegis.forge.dispatcher"))
+        # Restore original semaphore for any tests holding the old class ref
+        ForgeDispatcher._semaphore = original_semaphore
 
 
 # =========================================================================
