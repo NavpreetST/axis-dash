@@ -32,6 +32,7 @@ from aegis.nexus.bus import BUS
 from aegis.nim_budget import (
     NIM_BATCH_SIZE,
     NIM_MODEL,
+    NIM_BUDGET,
     NimBudget,
 )
 from aegis.observability import eventlog
@@ -118,15 +119,20 @@ def _store_consolidated(conn, text: str, neurobus: str) -> None:
 
 async def _call_nim(payload: dict) -> dict | None:
     """Call NIM with exponential backoff. Returns response or None on failure."""
-    budget = NimBudget()
     backoff = INITIAL_BACKOFF
 
     for attempt in range(MAX_RETRIES):
-        # Rate-limit gate
-        wait = budget.wait_s()
+        # Rate-limit gate — use module-level singleton to share history
+        wait = NIM_BUDGET.wait_s()
         if wait > 0:
             log.debug("consolidation: rate-limited, sleeping %.1fs", wait)
             await asyncio.sleep(wait)
+
+        # Record the attempt in the shared budget
+        if not NIM_BUDGET.allow():
+            log.debug("consolidation: budget exhausted after allow check")
+            await asyncio.sleep(1.0)
+            continue
 
         try:
             async with httpx.AsyncClient(timeout=30.0) as client:

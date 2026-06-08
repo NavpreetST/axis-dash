@@ -224,9 +224,9 @@ class TestCallNim:
             mock_client.return_value.__aexit__ = AsyncMock(return_value=False)
 
             with patch("aegis.consolidation.NVIDIA_API_KEY", "test-key"):
-                from aegis.nim_budget import NimBudget
-                with patch.object(NimBudget, "allow", return_value=True), \
-                     patch.object(NimBudget, "wait_s", return_value=0.0):
+                from aegis.nim_budget import NIM_BUDGET
+                with patch.object(NIM_BUDGET, "allow", return_value=True), \
+                     patch.object(NIM_BUDGET, "wait_s", return_value=0.0):
                     result = await _call_nim({"model": "test", "messages": []})
 
             assert result is not None

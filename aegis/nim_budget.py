@@ -6,8 +6,8 @@ window.  Designed for the overnight consolidation loop: 10-20 calls/min
 target, 30-40 hard cap.
 
 Usage:
-    budget = NimBudget(rpm_cap=40)
-    if budget.allow():
+    from aegis.nim_budget import NIM_BUDGET
+    if NIM_BUDGET.allow():
         await _call_nim(...)
 """
 from __future__ import annotations
@@ -34,30 +34,34 @@ class NimBudget:
         self.window_s = window_s
         self._timestamps: list[float] = []
 
-    def allow(self) -> bool:
-        """Return True if a call is within budget, and record the timestamp."""
+    def _evict_stale(self) -> None:
+        """Remove timestamps older than the sliding window."""
         now = time.time()
         cutoff = now - self.window_s
         self._timestamps = [t for t in self._timestamps if t > cutoff]
+
+    def allow(self) -> bool:
+        """Return True if a call is within budget, and record the timestamp."""
+        self._evict_stale()
         if len(self._timestamps) >= self.rpm_cap:
             return False
-        self._timestamps.append(now)
+        self._timestamps.append(time.time())
         return True
 
     @property
     def remaining(self) -> int:
         """Remaining calls in the current window."""
-        now = time.time()
-        cutoff = now - self.window_s
-        self._timestamps = [t for t in self._timestamps if t > cutoff]
+        self._evict_stale()
         return max(0, self.rpm_cap - len(self._timestamps))
 
     def wait_s(self) -> float:
         """Seconds to wait until the next call is allowed (0.0 if immediate)."""
-        now = time.time()
-        cutoff = now - self.window_s
-        self._timestamps = [t for t in self._timestamps if t > cutoff]
+        self._evict_stale()
         if len(self._timestamps) < self.rpm_cap:
             return 0.0
         oldest = self._timestamps[0]
-        return max(0.0, oldest + self.window_s - now)
+        return max(0.0, oldest + self.window_s - time.time())
+
+
+# Module-level singleton — shared across all _call_nim invocations
+NIM_BUDGET = NimBudget()

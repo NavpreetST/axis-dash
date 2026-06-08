@@ -39,7 +39,7 @@ def _migrate_consolidated_column(conn: sqlite3.Connection) -> None:
             conn.commit()
             log.info("mnemosyne.db: added consolidated column")
         except Exception as e:
-            log.debug("mnemosyne.db: consolidated column migration — %s", e)
+            log.warning("mnemosyne.db: consolidated column migration failed — %s", e)
 
 
 def get_conn() -> sqlite3.Connection:
