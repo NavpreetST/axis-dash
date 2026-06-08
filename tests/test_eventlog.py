@@ -17,6 +17,7 @@ from aegis.observability.eventlog import (
     VALID_SOURCES,
     append_event,
     make_event,
+    _CONTRACTS_PATH,
 )
 
 
@@ -100,6 +101,17 @@ def test_append_event_writes_jsonl(tmp_path: Path):
     assert parsed["payload"] == {"text": "hi"}
 
 
+def test_append_event_fsyncs(tmp_path: Path):
+    """append_event must fsync after write for crash safety."""
+    events_dir = tmp_path / "events"
+    event = make_event(source="aegis", event_type="chat_turn", payload={})
+
+    with patch("aegis.observability.eventlog.EVENTS_DIR", events_dir):
+        with patch("aegis.observability.eventlog.os.fsync") as mock_fsync:
+            append_event(event)
+            mock_fsync.assert_called_once()
+
+
 def test_all_valid_sources():
     for src in VALID_SOURCES:
         event = make_event(source=src, event_type="chat_turn", payload={})
@@ -122,3 +134,50 @@ def test_all_valid_sensitivities():
     for sens in VALID_SENSITIVITIES:
         event = make_event(source="aegis", event_type="chat_turn", payload={}, sensitivity=sens)
         assert event["sensitivity"] == sens
+
+
+def test_valid_sources_derived_from_schema():
+    """VALID_SOURCES must match the schema contract, not a hardcoded list."""
+    schema = json.loads(_CONTRACTS_PATH.read_text(encoding="utf-8"))
+    schema_sources = frozenset(schema["properties"]["source"]["enum"])
+    assert VALID_SOURCES == schema_sources, (
+        f"VALID_SOURCES ({VALID_SOURCES}) doesn't match schema ({schema_sources}). "
+        "Update contracts/event.schema.json, not the code."
+    )
+
+
+def test_navpreets_removed_from_schema():
+    """navpreets must NOT be in the frozen source enum."""
+    schema = json.loads(_CONTRACTS_PATH.read_text(encoding="utf-8"))
+    assert "navpreets" not in schema["properties"]["source"]["enum"]
+
+
+@pytest.mark.asyncio
+async def test_log_event_writes_and_publishes(tmp_path: Path):
+    """log_event() must append to JSONL and publish to the BUS."""
+    from unittest.mock import AsyncMock
+    from aegis.observability.eventlog import log_event
+
+    events_dir = tmp_path / "events"
+
+    with patch("aegis.observability.eventlog.EVENTS_DIR", events_dir):
+        with patch("aegis.observability.eventlog.BUS") as mock_bus:
+            mock_bus.publish = AsyncMock()
+            await log_event(
+                source="aegis",
+                event_type="chat_turn",
+                payload={"prompt": "hi", "reply": "hello"},
+            )
+            mock_bus.publish.assert_called_once()
+            call_args = mock_bus.publish.call_args
+            assert call_args[0][0] == "eventlog.write"
+            event = call_args[0][1]
+            assert event["event_type"] == "chat_turn"
+            assert event["schema_version"] == 1
+
+    # Verify JSONL was written
+    jsonl_files = list(events_dir.glob("*.jsonl"))
+    assert len(jsonl_files) == 1
+    line = jsonl_files[0].read_text().strip()
+    parsed = json.loads(line)
+    assert parsed["event_type"] == "chat_turn"

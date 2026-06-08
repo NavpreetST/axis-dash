@@ -1,14 +1,16 @@
 """Event log — append-only JSONL writer with frozen 8-field schema.
 
 Schema is FROZEN at schema_version 1.  DO NOT add fields.
-Source of truth: /opt/aegis/contracts/event.schema.json
+Source of truth: contracts/event.schema.json
 
 Architecture:
   1. JSONL append (always) — writes to STATE_DIR/events/YYYY-MM-DD.jsonl
   2. Supabase mirror (optional) — batched upserts when SUPABASE_URL + key set
   3. B2 cold backup (optional) — periodic upload when B2 credentials set
 
-Creds for Supabase/B2 come from ~/.config/aegis/secrets.env, NEVER from repo .env.
+Single-writer guarantee: only this module writes to the JSONL files.
+No threading.Lock() needed — all writes go through append_event() which
+is called from the async run() task or via the log_event() helper.
 """
 from __future__ import annotations
 
@@ -18,6 +20,8 @@ import logging
 import os
 from datetime import datetime, timezone
 from pathlib import Path
+
+from aegis.nexus.bus import BUS
 
 log = logging.getLogger(__name__)
 
@@ -35,18 +39,46 @@ REQUIRED_FIELDS = frozenset({
     "sensitivity",
 })
 
-VALID_SOURCES = frozenset({
-    "notion", "antigravity", "opencode", "helios",
-    "aegis", "coderabbit", "ci", "navpreets",
-})
+# ---------------------------------------------------------------------------
+# Load enum validation sets from contracts/event.schema.json (source of truth)
+# ---------------------------------------------------------------------------
 
-VALID_EVENT_TYPES = frozenset({
-    "chat_turn", "error", "task_created", "task_updated", "task_done",
-    "pr_opened", "review_posted", "gate_result", "merge", "drift_flag",
-})
+_CONTRACTS_PATH = (
+    Path(__file__).resolve().parent.parent.parent / "contracts" / "event.schema.json"
+)
 
-VALID_SEVERITIES = frozenset({"info", "warn", "error", "critical"})
-VALID_SENSITIVITIES = frozenset({"public", "internal", "secret"})
+
+def _load_enum_from_schema(property_name: str) -> frozenset[str]:
+    """Load an enum set from the frozen JSON schema contract.
+
+    Falls back to a hardcoded default if the schema file is missing
+    (e.g. during tests that mock the path).
+    """
+    _DEFAULTS = {
+        "source": frozenset({
+            "notion", "antigravity", "opencode", "helios",
+            "aegis", "coderabbit", "ci",
+        }),
+        "event_type": frozenset({
+            "chat_turn", "error", "task_created", "task_updated", "task_done",
+            "pr_opened", "review_posted", "gate_result", "merge", "drift_flag",
+        }),
+        "severity": frozenset({"info", "warn", "error", "critical"}),
+        "sensitivity": frozenset({"public", "internal", "secret"}),
+    }
+    try:
+        schema = json.loads(_CONTRACTS_PATH.read_text(encoding="utf-8"))
+        values = schema["properties"][property_name]["enum"]
+        return frozenset(values)
+    except (FileNotFoundError, KeyError, json.JSONDecodeError) as e:
+        log.debug("eventlog: could not load %s from schema — using default: %s", property_name, e)
+        return _DEFAULTS[property_name]
+
+
+VALID_SOURCES = _load_enum_from_schema("source")
+VALID_EVENT_TYPES = _load_enum_from_schema("event_type")
+VALID_SEVERITIES = _load_enum_from_schema("severity")
+VALID_SENSITIVITIES = _load_enum_from_schema("sensitivity")
 
 STATE_DIR = Path(os.getenv("AEGIS_STATE_DIR", "/var/lib/aegis"))
 EVENTS_DIR = STATE_DIR / "events"
@@ -106,7 +138,7 @@ def _today_path() -> Path:
 
 
 def append_event(event: dict) -> None:
-    """Append a single event to today's JSONL file."""
+    """Append a single event to today's JSONL file with fsync (crash-safe)."""
     # Validate the event has exactly the 8 frozen fields
     actual_keys = set(event.keys())
     if actual_keys != REQUIRED_FIELDS:
@@ -127,6 +159,8 @@ def append_event(event: dict) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
         with open(path, "a", encoding="utf-8") as f:
             f.write(json.dumps(event, ensure_ascii=False, default=str) + "\n")
+            f.flush()
+            os.fsync(f.fileno())
     except (OSError, ValueError) as e:
         log.warning("eventlog: failed to append %s — %s", path, e)
 
@@ -146,13 +180,51 @@ def _warn_if_large() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Async helpers — for main.py to call from async context
+# ---------------------------------------------------------------------------
+
+async def log_event(
+    *,
+    source: str,
+    event_type: str,
+    payload: dict,
+    severity: str = "info",
+    provenance: dict | None = None,
+    sensitivity: str = "internal",
+) -> None:
+    """Async wrapper: build event, append to JSONL, publish to BUS.
+
+    Called from main.py's handle() and error handler.  The blocking
+    fsync runs in a thread via asyncio.to_thread so the event loop
+    is never stalled.
+    """
+    event = make_event(
+        source=source,
+        event_type=event_type,
+        payload=_sanitize_for_json(payload),
+        severity=severity,
+        provenance=provenance,
+        sensitivity=sensitivity,
+    )
+    await asyncio.to_thread(append_event, event)
+    _warn_if_large()
+    try:
+        await BUS.publish("eventlog.write", event)
+    except Exception as e:
+        log.debug("eventlog: failed to publish to eventlog.write — %s", e)
+
+
+# ---------------------------------------------------------------------------
 # Async run entry point — subscribes to BUS events and writes them
 # ---------------------------------------------------------------------------
 
 async def run() -> None:
-    """Listen to the BUS and append matching events to JSONL."""
-    from aegis.nexus.bus import BUS
+    """Listen to the BUS and append matching events to JSONL.
 
+    This is the single writer task.  It subscribes to action.speak and
+    intent.packet, writes JSONL, and publishes to eventlog.write for
+    supabase_sync and b2_sync to consume.
+    """
     log.info("eventlog writer running")
 
     # Subscribe to all bus topics we care about
@@ -182,7 +254,7 @@ async def run() -> None:
                     payload=payload,
                     severity="info",
                 )
-                append_event(event)
+                await asyncio.to_thread(append_event, event)
                 _warn_if_large()
                 try:
                     await BUS.publish("eventlog.write", event)
