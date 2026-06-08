@@ -76,6 +76,10 @@ async def smoke_test() -> int:
         print(f"  Overall: {'PASS' if gate_result.overall_passed else 'FAIL'}")
         print(f"  Gate time: {gate_result.gate_ms}ms")
 
+        if not gate_result.overall_passed:
+            print("  GATE FAILED — exiting non-zero")
+            return 1
+
         # 5. Verify sandbox contents
         print("[5/5] Checking sandbox...")
         workdir = Path(task.workdir)
@@ -83,6 +87,17 @@ async def smoke_test() -> int:
             files = list(workdir.rglob("*"))
             print(f"  Workdir: {workdir}")
             print(f"  Files: {[f.name for f in files if f.is_file()]}")
+            # Validate the created hello.py artifact
+            hello_py = workdir / "hello.py"
+            if hello_py.exists():
+                content = hello_py.read_text()
+                assert "def hello(" in content, (
+                    f"hello.py must contain def hello(), got:\n{content}"
+                )
+                assert "hello from forge" in content, (
+                    f"hello.py must return expected string, got:\n{content}"
+                )
+                print(f"  hello.py validated — {len(content)} chars")
         else:
             print(f"  Workdir missing: {workdir}")
 

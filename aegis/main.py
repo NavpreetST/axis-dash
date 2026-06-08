@@ -67,16 +67,17 @@ async def _handle_forge_command(line: str) -> str:
     if cmd == "SUBMIT":
         if _forge_dispatcher is None:
             return "FORGE:ERR:forge not initialized"
+        spec = (parts[2] if len(parts) > 2 else "").strip()
+        if not spec or len(spec) < 10:
+            return "FORGE:ERR:invalid spec (must be >= 10 chars)"
         try:
-            spec = parts[2] if len(parts) > 2 else ""
             task = await _forge_dispatcher.submit(spec)
-            # Fire-and-forget execution
             asyncio.create_task(_execute_and_log(task.id))
             return f"FORGE:OK:{task.id}"
         except Exception as e:
             return f"FORGE:ERR:{e}"
 
-    elif cmd == "POLL":
+    elif cmd in ("POLL", "FETCH"):
         if _forge_dispatcher is None:
             return "FORGE:ERR:forge not initialized"
         task_id = parts[2] if len(parts) > 2 else ""
@@ -85,18 +86,8 @@ async def _handle_forge_command(line: str) -> str:
         task = get_task(task_id)
         if task is None:
             return f"FORGE:ERR:unknown task {task_id}"
-        return f"FORGE:STATUS:{json.dumps(task.to_dict())}"
-
-    elif cmd == "FETCH":
-        if _forge_dispatcher is None:
-            return "FORGE:ERR:forge not initialized"
-        task_id = parts[2] if len(parts) > 2 else ""
-        from aegis.forge.dispatcher import get_task
-
-        task = get_task(task_id)
-        if task is None:
-            return f"FORGE:ERR:unknown task {task_id}"
-        return f"FORGE:RESULT:{json.dumps(task.to_dict())}"
+        prefix = "STATUS" if cmd == "POLL" else "RESULT"
+        return f"FORGE:{prefix}:{json.dumps(task.to_dict())}"
 
     elif cmd == "LIST":
         from aegis.forge.dispatcher import list_tasks
@@ -117,18 +108,8 @@ async def _handle_forge_command(line: str) -> str:
             return f"FORGE:ERR:task not completed (status={task.status.value})"
         gate = GateStage(task.workdir)
         result = await gate.run_all()
-        task.gate_result = result.to_dict()
-        if result.overall_passed:
-            approved = await gate.request_owner_approval(task_id, result)
-            if approved:
-                task.status = TaskStatus.GATED
-            else:
-                task.status = TaskStatus.REJECTED
-        else:
-            task.status = TaskStatus.REJECTED
-        from aegis.forge.dispatcher import _save_tasks
-
-        _save_tasks()
+        approved = await gate.request_owner_approval(task_id, result) if result.overall_passed else False
+        task = await _forge_dispatcher.complete_gate(task_id, result, approved)
         return f"FORGE:GATE:{json.dumps(result.to_dict())}"
 
     elif cmd == "CLEANUP":
@@ -188,7 +169,11 @@ async def serve_unix_socket() -> None:
 
                 # Intercept FORGE: commands before brain pipeline
                 if line.startswith("FORGE:"):
-                    response = await _handle_forge_command(line.strip())
+                    try:
+                        response = await _handle_forge_command(line.strip())
+                    except Exception as e:
+                        log.exception("unhandled error in forge handler")
+                        response = f"FORGE:ERR:internal error: {e}"
                     writer.write((response + "\n").encode())
                     await writer.drain()
                     continue
@@ -238,10 +223,10 @@ async def main() -> None:
 
     # Boot forge (opencode server) — non-fatal if it fails
     _forge_manager = ForgeManager()
-    _forge_dispatcher = ForgeDispatcher(_forge_manager)
     try:
         await _forge_manager.start()
         log.info("forge online")
+        _forge_dispatcher = ForgeDispatcher(_forge_manager)
     except Exception as e:
         log.warning("forge failed to start (tasks unavailable): %s", e)
         _forge_manager = None
@@ -252,9 +237,12 @@ async def main() -> None:
         while True:
             await asyncio.sleep(300)  # every 5 min
             if _forge_dispatcher:
-                n = _forge_dispatcher.reap_completed(max_age_seconds=3600)
-                if n:
-                    log.info("forge: reaped %d old tasks", n)
+                try:
+                    n = _forge_dispatcher.reap_completed(max_age_seconds=3600)
+                    if n:
+                        log.info("forge: reaped %d old tasks", n)
+                except Exception as e:
+                    log.error("forge: reap error: %s", e)
 
     tasks = [
         asyncio.create_task(clock.run(hz=1.0)),
@@ -277,6 +265,8 @@ async def main() -> None:
         log.info("shutting down")
         for t in tasks:
             t.cancel()
+        if _forge_dispatcher:
+            await _forge_dispatcher.shutdown()
         if _forge_manager:
             await _forge_manager.stop()
     except Exception as e:
@@ -287,6 +277,8 @@ async def main() -> None:
             severity="error",
             sensitivity="internal",
         )
+        if _forge_dispatcher:
+            await _forge_dispatcher.shutdown()
         if _forge_manager:
             await _forge_manager.stop()
         raise

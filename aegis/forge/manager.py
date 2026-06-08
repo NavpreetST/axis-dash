@@ -166,25 +166,30 @@ class ForgeManager:
         if self._proc is None or self._proc.stderr is None:
             raise RuntimeError("no process stderr")
 
-        # Read stderr lines until we find the port
-        async for raw_line in self._proc.stderr:
-            line = raw_line.decode(errors="replace").strip()
-            # opencode prints: "Server listening on 127.0.0.1:PORT"
-            if "listening on" in line.lower():
-                # Extract port from line like "Server listening on 127.0.0.1:54321"
-                try:
-                    addr = line.split("127.0.0.1:")[-1].strip()
-                    return int(addr.split()[0])
-                except (IndexError, ValueError):
-                    pass
-            # Also handle: "port: 54321" format
-            if "port:" in line.lower():
-                try:
-                    return int(line.split("port:")[-1].strip().split()[0])
-                except (IndexError, ValueError):
-                    pass
+        # Read stderr lines until we find the port (with timeout)
+        async def _read_stderr() -> int:
+            async for raw_line in self._proc.stderr:
+                line = raw_line.decode(errors="replace").strip()
+                if "listening on" in line.lower():
+                    try:
+                        addr = line.split("127.0.0.1:")[-1].strip()
+                        return int(addr.split()[0])
+                    except (IndexError, ValueError):
+                        pass
+                if "port:" in line.lower():
+                    try:
+                        return int(line.split("port:")[-1].strip().split()[0])
+                    except (IndexError, ValueError):
+                        pass
+            raise RuntimeError("could not detect forge server port from stderr")
 
-        raise RuntimeError("could not detect forge server port from stderr")
+        try:
+            return await asyncio.wait_for(_read_stderr(), timeout=30.0)
+        except TimeoutError:
+            if self._proc and self._proc.returncode is None:
+                self._proc.kill()
+                await self._proc.wait()
+            raise RuntimeError("forge server port detection timed out after 30s") from None
 
     async def stop(self) -> None:
         """Gracefully stop the opencode server."""
@@ -206,11 +211,15 @@ class ForgeManager:
         self._ready.clear()
 
     async def create_session(self, workdir: Path) -> str:
-        """Create an opencode session, return session ID."""
-        r = await self.client.post("/session", json={"title": f"forge:{workdir.name}"})
+        """Create an opencode session bound to the sandbox workdir."""
+        r = await self.client.post(
+            "/session",
+            json={"title": f"forge:{workdir.name}"},
+            params={"directory": workdir.as_posix()},
+        )
         r.raise_for_status()
         session_id = r.json()["id"]
-        log.info("forge session created: %s", session_id)
+        log.info("forge session created: %s — dir=%s", session_id, workdir)
         return session_id
 
     async def send_prompt(self, session_id: str, prompt: str) -> dict:
@@ -235,8 +244,10 @@ class ForgeManager:
         return r.json()
 
     async def delete_session(self, session_id: str) -> None:
-        """Delete a session."""
-        await self.client.delete(f"/session/{session_id}")
+        """Delete a session. Raises on failure."""
+        r = await self.client.delete(f"/session/{session_id}")
+        if r.status_code >= 400:
+            r.raise_for_status()
 
     async def run_forever(self) -> None:
         """Keep the server alive; restart on crash."""

@@ -14,6 +14,29 @@ from pathlib import Path
 
 log = logging.getLogger(__name__)
 
+_SUBPROCESS_TIMEOUT: float = 120.0  # seconds per subprocess call
+
+
+async def _run_cmd(
+    args: list[str],
+    cwd: str | Path | None = None,
+    timeout: float = _SUBPROCESS_TIMEOUT,
+) -> tuple[int, str]:
+    """Run a subprocess with timeout. Returns (returncode, stdout+stderr)."""
+    proc = await asyncio.create_subprocess_exec(
+        *args,
+        cwd=str(cwd) if cwd else None,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.STDOUT,
+    )
+    try:
+        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+    except TimeoutError:
+        proc.kill()
+        await proc.wait()
+        raise TimeoutError(f"subprocess timed out after {timeout}s: {' '.join(args)}") from None
+    return proc.returncode or 0, stdout.decode(errors="replace")
+
 
 @dataclass
 class GateResult:
@@ -74,33 +97,16 @@ class GateStage:
         if not changed_py:
             return True, "no Python files to lint"
 
-        # Ruff check
-        proc = await asyncio.create_subprocess_exec(
-            "ruff",
-            "check",
-            *[str(f) for f in changed_py],
-            cwd=str(self.workdir),
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.STDOUT,
+        rc1, out1 = await _run_cmd(
+            ["ruff", "check", *[str(f) for f in changed_py]],
+            cwd=self.workdir,
         )
-        stdout, _ = await proc.communicate()
-        check_ok = proc.returncode == 0
-
-        # Ruff format check
-        proc2 = await asyncio.create_subprocess_exec(
-            "ruff",
-            "format",
-            "--check",
-            *[str(f) for f in changed_py],
-            cwd=str(self.workdir),
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.STDOUT,
+        rc2, out2 = await _run_cmd(
+            ["ruff", "format", "--check", *[str(f) for f in changed_py]],
+            cwd=self.workdir,
         )
-        stdout2, _ = await proc2.communicate()
-        format_ok = proc2.returncode == 0
-
-        output = f"ruff check: {stdout.decode()}\nruff format: {stdout2.decode()}"
-        return check_ok and format_ok, output
+        output = f"ruff check: {out1}\nruff format: {out2}"
+        return rc1 == 0 and rc2 == 0, output
 
     async def _run_tests(self) -> tuple[bool, str]:
         """Run pytest if tests/ exists in workdir."""
@@ -108,18 +114,11 @@ class GateStage:
         if not tests_dir.exists():
             return True, "no tests/ directory — skipped"
 
-        proc = await asyncio.create_subprocess_exec(
-            "python",
-            "-m",
-            "pytest",
-            "-v",
-            "--tb=short",
-            cwd=str(self.workdir),
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.STDOUT,
+        rc, out = await _run_cmd(
+            ["python", "-m", "pytest", "-v", "--tb=short"],
+            cwd=self.workdir,
         )
-        stdout, _ = await proc.communicate()
-        return proc.returncode == 0, stdout.decode()
+        return rc == 0, out
 
     async def _run_build(self) -> tuple[bool, str]:
         """Run python -m build if setup.py/pyproject.toml exists."""
@@ -128,26 +127,23 @@ class GateStage:
         if not has_setup and not has_setup_py:
             return True, "no pyproject.toml or setup.py — skipped"
 
-        proc = await asyncio.create_subprocess_exec(
-            "python",
-            "-m",
-            "build",
-            "--no-isolation",
-            cwd=str(self.workdir),
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.STDOUT,
+        rc, out = await _run_cmd(
+            ["python", "-m", "build", "--no-isolation"],
+            cwd=self.workdir,
         )
-        stdout, _ = await proc.communicate()
-        return proc.returncode == 0, stdout.decode()
+        return rc == 0, out
 
     async def request_owner_approval(self, task_id: str, gate_result: GateResult) -> bool:
         """Placeholder for owner approval gate.
 
         In production this would notify Navpreet via the socket or webhook
-        and wait for explicit approval. For now, returns True (auto-approve
-        for smoke testing).
+        and wait for explicit approval. Default returns False — owner must
+        explicitly approve via the GATE:APPROVE command.
         """
-        log.info("gate: owner approval requested for %s", task_id)
+        log.warning(
+            "gate: owner approval requested for %s — NOT auto-approved. "
+            "Use GATE:APPROVE:<task_id> to approve.",
+            task_id,
+        )
         # TODO: integrate with notification system / socket
-        # For smoke test: auto-approve
-        return True
+        return False

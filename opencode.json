@@ -16,6 +16,6 @@
   "permission": {
     "edit": true,
     "write": true,
-    "bash": true
+    "bash": false
   }
 }

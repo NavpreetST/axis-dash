@@ -359,9 +359,12 @@ class TestGateProof:
             assert result.overall_passed is True, "Gate checks should pass"
 
             # Owner approval is separate — test the request method
+            # Default is False (owner must explicitly approve)
             approved = await gate.request_owner_approval("test-task", result)
-            assert approved is True, "request_owner_approval must return True for smoke testing"
-            # In production this would be a real gating step
+            assert approved is False, (
+                "request_owner_approval must return False by default — "
+                "owner must explicitly approve"
+            )
 
     def test_gate_result_tracks_all_stages(self):
         """GateResult must expose all individual stage results."""

@@ -23,6 +23,7 @@ from dataclasses import asdict, dataclass, field
 from enum import StrEnum
 from pathlib import Path
 
+from aegis.forge.gate import GateResult
 from aegis.forge.manager import FORGE_BASE, ForgeManager
 
 log = logging.getLogger(__name__)
@@ -73,7 +74,11 @@ def _load_tasks() -> None:
     if _tasks_file.exists():
         try:
             data = json.loads(_tasks_file.read_text())
-            _tasks = {k: ForgeTask(**v) for k, v in data.items()}
+            _tasks = {}
+            for k, v in data.items():
+                if isinstance(v.get("status"), str):
+                    v["status"] = TaskStatus(v["status"])
+                _tasks[k] = ForgeTask(**v)
         except Exception:
             _tasks = {}
 
@@ -206,11 +211,50 @@ class ForgeDispatcher:
         task = _tasks.get(task_id)
         if task and task.workdir:
             workdir = Path(task.workdir)
+            # Guard: ensure workdir is inside FORGE_BASE to prevent path traversal
+            try:
+                resolved = workdir.resolve(strict=False)
+                if not str(resolved).startswith(str(FORGE_BASE.resolve())):
+                    log.warning(
+                        "forge: path traversal blocked — %s outside %s",
+                        resolved, FORGE_BASE,
+                    )
+                    _tasks.pop(task_id, None)
+                    _save_tasks()
+                    return
+            except (OSError, ValueError):
+                pass
             if workdir.exists():
                 shutil.rmtree(workdir, ignore_errors=True)
                 log.info("forge sandbox cleaned: %s", task_id)
         _tasks.pop(task_id, None)
         _save_tasks()
+
+    async def shutdown(self) -> None:
+        """Shutdown the dispatcher, cancel pending tasks, flush state."""
+        for tid, task in list(_tasks.items()):
+            if task.status == TaskStatus.RUNNING:
+                log.warning("forge: aborting running task %s on shutdown", tid)
+            if task.status in (TaskStatus.PENDING, TaskStatus.RUNNING):
+                task.status = TaskStatus.FAILED
+                task.error = "dispatcher shut down"
+                task.completed_at = time.time()
+        _save_tasks()
+        log.info("forge dispatcher shut down (%d tasks flushed)", len(_tasks))
+
+    async def complete_gate(
+        self, task_id: str, gate_result: GateResult, approved: bool,
+    ) -> ForgeTask:
+        """Record gate outcome and update task status. Does NOT call _save_tasks internally — caller must."""
+        task = _tasks.get(task_id)
+        if task is None:
+            raise KeyError(f"unknown task: {task_id}")
+        if task.status != TaskStatus.COMPLETED:
+            raise ValueError(f"task {task_id} not completed (status={task.status.value})")
+        task.gate_result = gate_result.to_dict()
+        task.status = TaskStatus.GATED if approved else TaskStatus.REJECTED
+        _save_tasks()
+        return task
 
     def reap_completed(self, max_age_seconds: float = 3600) -> int:
         """Remove completed tasks older than max_age. Returns count removed."""
