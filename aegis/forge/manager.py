@@ -37,7 +37,6 @@ FORGE_BASE = Path(os.getenv("AEGIS_FORGE_DIR", "/opt/aegis/forge"))
 _SANDBOX_DIR = FORGE_BASE / ".sandbox"
 _SANDBOX_CWD = _SANDBOX_DIR / "cwd"
 _SANDBOX_HOME = _SANDBOX_DIR / "home"
-_SANDBOX_CONFIG = _SANDBOX_HOME / ".opencode" / "opencode.json"
 
 # Strict allowlist: ONLY these env vars reach the forge worker.
 _SANDBOX_ALLOWLIST: frozenset[str] = frozenset(
@@ -277,11 +276,15 @@ def _map_git_status(git_status: str) -> str:
 
 
 def _list_files_as_diffs(workdir: Path) -> list[dict]:
-    """Fallback: walk workdir and list all files as added diffs."""
+    """Fallback: walk workdir and list all files as added diffs.
+    Skips internal sandbox files (e.g. sandbox-config.json) to avoid
+    exposing them in task diffs/files_created.
+    """
     diffs = []
+    _INTERNAL_FILES = {"sandbox-config.json"}
     if workdir.exists():
         for f in sorted(workdir.rglob("*")):
-            if f.is_file():
+            if f.is_file() and f.name not in _INTERNAL_FILES:
                 try:
                     rel = f.relative_to(workdir)
                     diffs.append({"path": str(rel), "status": "added"})
