@@ -59,7 +59,7 @@ async def _handle_forge_command(line: str) -> str:
     """Handle FORGE: prefixed commands. Returns response string."""
     global _forge_manager, _forge_dispatcher
 
-    parts = line.split(":", 2)
+    parts = line.split(":", 3)
     if len(parts) < 2:
         return "FORGE:ERR:malformed command"
 
@@ -109,8 +109,14 @@ async def _handle_forge_command(line: str) -> str:
             return f"FORGE:ERR:task not completed (status={task.status.value})"
         gate = GateStage(task.workdir, manager=_forge_manager)
         result = await gate.run_all()
-        approved = await gate.request_owner_approval(task_id, result) if result.overall_passed else False
-        task = await _forge_dispatcher.complete_gate(task_id, result, approved)
+        
+        # Parse approval flag from command (default: reject)
+        approved = False
+        if len(parts) > 3:
+            approved = parts[3].strip().lower() == "true"
+        
+        # Only approve if automated checks pass AND explicit approval given
+        task = await _forge_dispatcher.complete_gate(task_id, result, approved and result.overall_passed)
         return f"FORGE:GATE:{json.dumps(result.to_dict())}"
 
     elif cmd == "CLEANUP":
