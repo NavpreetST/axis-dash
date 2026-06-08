@@ -55,10 +55,16 @@ export interface SparklinePoint {
 }
 
 /**
- * Scale an array of numbers into x, y coordinates for a sparkline SVG.
- * Normalizes values based on the min/max of the data array.
- * Centers flat or single-value datasets vertically.
+ * Format a runtime sub-field value for display.
+ * Objects are compact-stringified; arrays are joined; null/missing → `--`.
  */
+export function formatRuntimeValue(v: unknown): string {
+  if (v == null || v === '') return '--';
+  if (typeof v === 'string' || typeof v === 'number' || typeof v === 'boolean') return String(v);
+  if (Array.isArray(v)) return v.join(', ');
+  return JSON.stringify(v);
+}
+
 export function scaleSparkline(data: number[], width: number, height: number): SparklinePoint[] {
   if (!data || data.length === 0) return [];
   const n = data.length;

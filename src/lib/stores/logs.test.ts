@@ -1,10 +1,11 @@
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import { get } from 'svelte/store';
-import { logs, type LogLine } from './logs.js';
+import { logs, logsConnected, type LogLine } from './logs.js';
 
 describe('logs store', () => {
   afterEach(() => {
     logs.stop();
+    logs.setConnected(true);
     vi.useRealTimers();
   });
 
@@ -293,6 +294,46 @@ describe('logs store', () => {
 
       expect(snapshots.length).toBeGreaterThan(callsBefore);
       expect(snapshots[snapshots.length - 1][0].message).toBe('subscription test');
+    });
+  });
+
+  // --- Connection state ---
+  describe('connection state', () => {
+    it('starts connected in mock mode', () => {
+      const connected = get(logsConnected);
+      expect(connected).toBe(true);
+    });
+
+    it('setConnected(true) updates the connected flag', () => {
+      logs.setConnected(false);
+      expect(get(logsConnected)).toBe(false);
+      logs.setConnected(true);
+      expect(get(logsConnected)).toBe(true);
+    });
+
+    it('start() sets connected to true', () => {
+      logs.setConnected(false);
+      logs.start();
+      expect(get(logsConnected)).toBe(true);
+      logs.stop();
+    });
+
+    it('stop() sets connected to false', () => {
+      logs.start();
+      logs.stop();
+      expect(get(logsConnected)).toBe(false);
+    });
+
+    it('notifies subscribers of connected changes', () => {
+      const values: boolean[] = [];
+      const unsubscribe = logsConnected.subscribe((v) => values.push(v));
+
+      logs.setConnected(false);
+      logs.setConnected(true);
+      unsubscribe();
+
+      expect(values.length).toBeGreaterThanOrEqual(3);
+      expect(values[values.length - 1]).toBe(true);
     });
   });
 });

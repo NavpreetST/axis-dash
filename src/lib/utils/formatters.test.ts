@@ -5,7 +5,8 @@ import {
   rpdOverBudget,
   rpdPercent,
   formatTickRate,
-  scaleSparkline
+  scaleSparkline,
+  formatRuntimeValue
 } from './formatters';
 
 // ── formatUptime ────────────────────────────────────────────────
@@ -157,5 +158,51 @@ describe('scaleSparkline', () => {
       { x: 50, y: 0 },
       { x: 100, y: 25 }
     ]);
+  });
+});
+
+// ── formatRuntimeValue ───────────────────────────────────────────
+describe('formatRuntimeValue', () => {
+  it('returns -- for null', () => {
+    expect(formatRuntimeValue(null)).toBe('--');
+  });
+
+  it('returns -- for undefined', () => {
+    expect(formatRuntimeValue(undefined)).toBe('--');
+  });
+
+  it('returns -- for empty string', () => {
+    expect(formatRuntimeValue('')).toBe('--');
+  });
+
+  it('returns the string itself for a string value', () => {
+    expect(formatRuntimeValue('lmdb')).toBe('lmdb');
+  });
+
+  it('returns the stringified number for a number value', () => {
+    expect(formatRuntimeValue(4)).toBe('4');
+  });
+
+  it('returns the stringified number for a numeric string', () => {
+    expect(formatRuntimeValue('12h')).toBe('12h');
+  });
+
+  it('joins an array with comma+space', () => {
+    expect(formatRuntimeValue(['a', 'b'])).toBe('a, b');
+  });
+
+  it('compact-stringifies a plain object', () => {
+    expect(formatRuntimeValue({ type: 'lmdb', path: '/data' })).toBe(
+      '{"type":"lmdb","path":"/data"}'
+    );
+  });
+
+  it('returns true/false for boolean values', () => {
+    expect(formatRuntimeValue(true)).toBe('true');
+    expect(formatRuntimeValue(false)).toBe('false');
+  });
+
+  it('handles 0 as a real value (not falsy)', () => {
+    expect(formatRuntimeValue(0)).toBe('0');
   });
 });

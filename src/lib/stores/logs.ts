@@ -1,4 +1,5 @@
 import { writable } from 'svelte/store';
+import { config } from '$lib/config';
 
 /** A single rendered log line. The dashboard caps the live list at 100 entries. */
 export interface LogLine {
@@ -62,6 +63,14 @@ const mockMessages: Omit<LogLine, 'timestamp' | 'id'>[] = [
 
 const MAX_LOGS = 100;
 
+/**
+ * Connection state for the logs stream.
+ * - Mock mode: always `true` (the scheduler is always "connected")
+ * - Live mode: reflects the SSE `/logs` socket — `true` while open,
+ *   `false` during reconnect backoff or after explicit stop.
+ */
+export const logsConnected = writable<boolean>(!config.useLiveBridge);
+
 const createLogsStore = () => {
   const { subscribe, update } = writable<LogLine[]>(initialLogs);
   let timer: ReturnType<typeof setTimeout> | null = null;
@@ -85,8 +94,13 @@ const createLogsStore = () => {
    * 3–8 seconds. Idempotent — subsequent calls are no-ops. Should
    * only be used when live bridge is disabled.
    */
+  const setConnected = (v: boolean) => {
+    logsConnected.set(v);
+  };
+
   const start = () => {
     if (timer) return;
+    setConnected(true);
     const scheduleNext = () => {
       const delay = Math.random() * 5000 + 3000;
       timer = setTimeout(() => {
@@ -104,6 +118,7 @@ const createLogsStore = () => {
 
   /** Stop the mock log scheduler. Idempotent. */
   const stop = () => {
+    setConnected(false);
     if (timer) {
       clearTimeout(timer);
       timer = null;
@@ -120,13 +135,15 @@ const createLogsStore = () => {
     start,
     stop,
     addLog,
-    clearLogs
+    clearLogs,
+    setConnected
   };
 };
 
 /**
  * Shared logs store. Drives both the dashboard log strip and the full
- * logs page. In live mode entries are pushed by the SSE client; in
- * mock mode the internal scheduler fills it.
+ * logs page. In live mode entries are pushed by the SSE client and
+ * {@link logsConnected} tracks the socket state; in mock mode the
+ * internal scheduler fills it and `logsConnected` is always `true`.
  */
 export const logs = createLogsStore();

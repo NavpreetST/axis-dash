@@ -1,12 +1,11 @@
 <script lang="ts">
-  import { logs } from '$lib/stores/logs';
-  import { telemetry } from '$lib/stores/telemetry';
+  import { logs, logsConnected } from '$lib/stores/logs';
   import { config } from '$lib/config';
   import { toActivityItems } from '$lib/utils/activityView';
 
   let bridgeStatus = $derived.by(() => {
     if (!config.useLiveBridge) return 'mock';
-    return $telemetry.connected ? 'live-ok' : 'live-down';
+    return $logsConnected ? 'live-ok' : 'live-down';
   });
 
   let items = $derived(toActivityItems($logs));
