@@ -34,6 +34,12 @@ from starlette.types import ASGIApp
 
 log = logging.getLogger("web.server")
 
+# Ensure asyncio.open_unix_connection exists for testing (Windows lacks it)
+if not hasattr(asyncio, "open_unix_connection"):
+    async def _dummy_open_unix_connection(path: str) -> None:
+        raise NotImplementedError("Unix sockets not supported on this platform")
+    asyncio.open_unix_connection = _dummy_open_unix_connection
+
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 STATE_DIR = Path(os.getenv("AEGIS_STATE_DIR", "/var/lib/aegis"))
 EVENTS_DIR = STATE_DIR / "events"
@@ -718,8 +724,26 @@ async def health(request: Request) -> dict[str, Any]:
 
 # ---- Forge HTTP proxy routes (additive) -----------------------------------
 
+_TASK_ID_PATTERN = re.compile(r"^[a-zA-Z0-9_\-\.]{1,128}$")
+
+def _sanitize_field(value: str, name: str = "field") -> str:
+    """Strip CR/LF, reject empty."""
+    sanitized = value.strip().replace("\r", "").replace("\n", "")
+    if not sanitized:
+        raise HTTPException(status_code=400, detail=f"invalid_{name}")
+    return sanitized
+
+
+def _sanitize_task_id(task_id: str) -> str:
+    """Strip CR/LF and validate task_id pattern."""
+    sanitized = _sanitize_field(task_id, "task_id")
+    if not _TASK_ID_PATTERN.match(sanitized):
+        raise HTTPException(status_code=400, detail="invalid_task_id")
+    return sanitized
+
+
 async def _forge_socket_cmd(command: str) -> str:
-    """Send a single command to the forge unix socket and return the response line.
+    """Send a single command to the forge unix socket and return the response.
     Returns the raw response string without trailing newline. Raises HTTPException on socket errors.
     """
     # Use getattr to allow patching in tests on platforms lacking open_unix_connection
@@ -746,23 +770,28 @@ async def _forge_socket_cmd(command: str) -> str:
         except Exception:
             pass
 
+
 @app.post("/forge/submit")
 async def forge_submit(request: Request) -> dict:
+    """Submit a forge task spec. Requires auth token."""
     if not _check_token(request):
         raise HTTPException(status_code=401, detail="auth_required")
     body = await request.json()
     spec = body.get("spec") if isinstance(body, dict) else None
     if not isinstance(spec, str) or len(spec.strip()) < 10:
         raise HTTPException(status_code=400, detail="invalid_spec")
-    resp = await _forge_socket_cmd(f"FORGE:SUBMIT:{spec.strip()}")
+    spec_safe = _sanitize_field(spec, "spec")
+    resp = await _forge_socket_cmd(f"FORGE:SUBMIT:{spec_safe}")
     # Expected response: FORGE:OK:<id> or FORGE:ERR:...
     if resp.startswith("FORGE:OK:"):
         return {"task_id": resp.split(":", 2)[2]}
     else:
         raise HTTPException(status_code=502, detail=resp)
 
+
 @app.get("/forge/list")
 async def forge_list(request: Request) -> dict:
+    """List active forge tasks via FORGE:LIST socket command. Requires auth token."""
     if not _check_token(request):
         raise HTTPException(status_code=401, detail="auth_required")
     resp = await _forge_socket_cmd("FORGE:LIST")
@@ -775,11 +804,14 @@ async def forge_list(request: Request) -> dict:
     else:
         raise HTTPException(status_code=502, detail=resp)
 
+
 @app.get("/forge/{task_id}/status")
 async def forge_status(task_id: str, request: Request) -> dict:
+    """Poll forge task status via FORGE:POLL socket command. Requires auth token."""
     if not _check_token(request):
         raise HTTPException(status_code=401, detail="auth_required")
-    resp = await _forge_socket_cmd(f"FORGE:POLL:{task_id}")
+    tid = _sanitize_task_id(task_id)
+    resp = await _forge_socket_cmd(f"FORGE:POLL:{tid}")
     if resp.startswith("FORGE:STATUS:"):
         payload = resp.split(":", 2)[2]
         try:
@@ -789,11 +821,14 @@ async def forge_status(task_id: str, request: Request) -> dict:
     else:
         raise HTTPException(status_code=502, detail=resp)
 
+
 @app.get("/forge/{task_id}/diff")
 async def forge_diff(task_id: str, request: Request) -> dict:
+    """Fetch forge task diff via FORGE:FETCH socket command. Requires auth token."""
     if not _check_token(request):
         raise HTTPException(status_code=401, detail="auth_required")
-    resp = await _forge_socket_cmd(f"FORGE:FETCH:{task_id}")
+    tid = _sanitize_task_id(task_id)
+    resp = await _forge_socket_cmd(f"FORGE:FETCH:{tid}")
     if resp.startswith("FORGE:RESULT:"):
         payload = resp.split(":", 2)[2]
         try:
@@ -803,20 +838,21 @@ async def forge_diff(task_id: str, request: Request) -> dict:
     else:
         raise HTTPException(status_code=502, detail=resp)
 
+
 @app.post("/forge/{task_id}/gate")
 async def forge_gate(task_id: str, request: Request) -> dict:
+    """Approve forge task gate. Requires auth token and approve=True."""
     if not _check_token(request):
         raise HTTPException(status_code=401, detail="auth_required")
+    tid = _sanitize_task_id(task_id)
     try:
         body = await request.json()
     except Exception:
         body = {}
     approve = body.get("approve") if isinstance(body, dict) else None
-    if not isinstance(approve, bool):
-        # Default reject when missing or malformed
+    if approve is not True:
         raise HTTPException(status_code=400, detail="approval_required")
-    # The dispatcher gate step does owner approval internally; we just forward the command.
-    resp = await _forge_socket_cmd(f"FORGE:GATE:{task_id}")
+    resp = await _forge_socket_cmd(f"FORGE:GATE:{tid}")
     if resp.startswith("FORGE:GATE:"):
         payload = resp.split(":", 2)[2]
         try:
@@ -826,16 +862,18 @@ async def forge_gate(task_id: str, request: Request) -> dict:
     else:
         raise HTTPException(status_code=502, detail=resp)
 
+
 @app.post("/forge/{task_id}/cleanup")
 async def forge_cleanup(task_id: str, request: Request) -> dict:
+    """Cleanup forge task sandbox. Requires auth token."""
     if not _check_token(request):
         raise HTTPException(status_code=401, detail="auth_required")
-    resp = await _forge_socket_cmd(f"FORGE:CLEANUP:{task_id}")
+    tid = _sanitize_task_id(task_id)
+    resp = await _forge_socket_cmd(f"FORGE:CLEANUP:{tid}")
     if resp.startswith("FORGE:OK:"):
         return {"result": resp}
     else:
         raise HTTPException(status_code=502, detail=resp)
-
 
 
 @app.websocket("/chat")
@@ -932,8 +970,6 @@ async def chat_ws(ws: WebSocket) -> None:
 
 
 # ---- P0 bridge: /logs (SSE, auth via header or ?token=) -------------------
-
-
 
 
 def _today_eventlog_path() -> Path:

@@ -30,6 +30,9 @@ async def _run_cmd(
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
         )
+    except FileNotFoundError:
+        # Tool not installed – treat as failure
+        return 1, f"{args[0]} not found"
     except Exception as e:
         return 1, f"subprocess spawn failed: {e}"
     try:
@@ -108,6 +111,9 @@ class GateStage:
             ["ruff", "format", "--check", *[str(f) for f in changed_py]],
             cwd=self.workdir,
         )
+        # If ruff tool missing, treat as lint failure
+        if "not found" in out1.lower() or "not found" in out2.lower():
+            return False, "ruff not installed - lint cannot run"
         output = f"ruff check: {out1}\nruff format: {out2}"
         return rc1 == 0 and rc2 == 0, output
 
