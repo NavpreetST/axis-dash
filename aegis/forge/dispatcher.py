@@ -12,7 +12,6 @@ OOM on the 16 GB host. Additional submissions are queued automatically.
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import json
 import logging
 import os
@@ -30,7 +29,12 @@ log = logging.getLogger(__name__)
 
 # Max parallel forge tasks. This host has 16 GB RAM, no GPU — each
 # opencode worker consumes ~2-4 GB. Cap at 2 by default to prevent OOM.
-MAX_CONCURRENT_FORGE_TASKS = int(os.getenv("AEGIS_FORGE_MAX_CONCURRENT", "2"))
+_MAX_CONCURRENT_RAW = os.getenv("AEGIS_FORGE_MAX_CONCURRENT", "2")
+try:
+    MAX_CONCURRENT_FORGE_TASKS = max(1, int(_MAX_CONCURRENT_RAW))
+except (ValueError, TypeError):
+    log.warning("forge: invalid AEGIS_FORGE_MAX_CONCURRENT=%r, using 2", _MAX_CONCURRENT_RAW)
+    MAX_CONCURRENT_FORGE_TASKS = 2
 
 
 class TaskStatus(StrEnum):
@@ -196,13 +200,23 @@ class ForgeDispatcher:
                 task.error = str(e)
                 task.completed_at = time.time()
                 log.error("forge task failed: %s — %s", task_id, e)
+                raise
 
             finally:
-                _save_tasks()
                 # Cleanup: delete session but keep workdir for gate stage
                 if task.session_id:
-                    with contextlib.suppress(Exception):
+                    try:
                         await self._manager.delete_session(task.session_id)
+                    except Exception as e:
+                        log.warning(
+                            "forge: failed to delete session %s for task %s: %s",
+                            task.session_id,
+                            task_id,
+                            e,
+                        )
+                    else:
+                        task.session_id = None
+                _save_tasks()
 
         return task
 
@@ -214,18 +228,18 @@ class ForgeDispatcher:
             # Guard: ensure workdir is inside FORGE_BASE to prevent path traversal
             try:
                 resolved = workdir.resolve(strict=False)
-                if not str(resolved).startswith(str(FORGE_BASE.resolve())):
-                    log.warning(
-                        "forge: path traversal blocked — %s outside %s",
-                        resolved, FORGE_BASE,
-                    )
-                    _tasks.pop(task_id, None)
-                    _save_tasks()
-                    return
+                resolved.relative_to(FORGE_BASE.resolve())
             except (OSError, ValueError):
-                pass
-            if workdir.exists():
-                shutil.rmtree(workdir, ignore_errors=True)
+                log.warning(
+                    "forge: path traversal blocked — %s outside %s",
+                    task.workdir,
+                    FORGE_BASE,
+                )
+                _tasks.pop(task_id, None)
+                _save_tasks()
+                return
+            if resolved != FORGE_BASE.resolve() and resolved.exists():
+                shutil.rmtree(resolved, ignore_errors=True)
                 log.info("forge sandbox cleaned: %s", task_id)
         _tasks.pop(task_id, None)
         _save_tasks()
@@ -243,7 +257,10 @@ class ForgeDispatcher:
         log.info("forge dispatcher shut down (%d tasks flushed)", len(_tasks))
 
     async def complete_gate(
-        self, task_id: str, gate_result: GateResult, approved: bool,
+        self,
+        task_id: str,
+        gate_result: GateResult,
+        approved: bool,
     ) -> ForgeTask:
         """Record gate outcome and update task status. Does NOT call _save_tasks internally — caller must."""
         task = _tasks.get(task_id)

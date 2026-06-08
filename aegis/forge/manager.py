@@ -25,8 +25,9 @@ log = logging.getLogger(__name__)
 OPENCODE_BIN = os.getenv("OPENCODE_BIN", "opencode")
 FORGE_BASE = Path(os.getenv("AEGIS_FORGE_DIR", "/opt/aegis/forge"))
 
-# Env-var keys that are allowed to pass through to the opencode sandbox.
-# Everything else (API keys, tokens, git credentials) is STRIPPED.
+# Strict allowlist: ONLY these env vars reach the forge worker.
+# Everything else (API keys, tokens, git credentials, SSH agents) is STRIPPED.
+# This is a true allowlist — vars NOT listed here are NEVER forwarded.
 _SANDBOX_ALLOWLIST: frozenset[str] = frozenset(
     {
         "PATH",
@@ -44,22 +45,6 @@ _SANDBOX_ALLOWLIST: frozenset[str] = frozenset(
         "OPENCODE_PERMISSION",
         "AEGIS_FORGE_DIR",
     }
-)
-
-# Known secret env-var prefixes that must NEVER reach the sandbox.
-_SECRET_PREFIXES: tuple[str, ...] = (
-    "API_KEY",
-    "TOKEN",
-    "SECRET",
-    "PASSWORD",
-    "AUTH",
-    "CREDENTIAL",
-    "GROQ_",
-    "GEMINI_",
-    "OPENAI_",
-    "ANTHROPIC_",
-    "HF_",
-    "HUGGINGFACE_",
 )
 
 # The server password we generate to lock the opencode serve endpoint.
@@ -96,25 +81,15 @@ class ForgeManager:
     def _sanitize_env() -> dict[str, str]:
         """Build a sandbox-safe environment for the opencode subprocess.
 
-        Strips all known secret env vars so forge workers NEVER have access to
-        host credentials (~/.config/aegis/secrets.env, .git credentials, etc.).
-        Git/push auth is injected ONLY at the GateStage, never in the worker.
+        True allowlist: ONLY keys in ``_SANDBOX_ALLOWLIST`` are forwarded.
+        Everything else (API keys, tokens, SSH agent, git credentials) is
+        STRIPPED. Git/push auth is injected ONLY at the GateStage, never
+        in the worker.
         """
         sandbox = {}
         for k, v in os.environ.items():
-            upper = k.upper()
-            # Allow-listed keys always pass through
             if k in _SANDBOX_ALLOWLIST:
                 sandbox[k] = v
-                continue
-            # Strip anything that looks like a credential
-            if any(upper.startswith(p) or upper.endswith(p) for p in _SECRET_PREFIXES):
-                continue
-            # Strip common secret names by exact match
-            if upper in ("SECRET", "PRIVATE_KEY", "ACCESS_KEY", "API_KEY"):
-                continue
-            # Default: pass through non-secret-looking vars
-            sandbox[k] = v
         return sandbox
 
     async def start(self) -> None:

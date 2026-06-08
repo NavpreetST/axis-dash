@@ -23,19 +23,22 @@ async def _run_cmd(
     timeout: float = _SUBPROCESS_TIMEOUT,
 ) -> tuple[int, str]:
     """Run a subprocess with timeout. Returns (returncode, stdout+stderr)."""
-    proc = await asyncio.create_subprocess_exec(
-        *args,
-        cwd=str(cwd) if cwd else None,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.STDOUT,
-    )
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *args,
+            cwd=str(cwd) if cwd else None,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+        )
+    except Exception as e:
+        return 1, f"subprocess spawn failed: {e}"
     try:
         stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=timeout)
     except TimeoutError:
         proc.kill()
         await proc.wait()
         raise TimeoutError(f"subprocess timed out after {timeout}s: {' '.join(args)}") from None
-    return proc.returncode or 0, stdout.decode(errors="replace")
+    return (proc.returncode or 0), stdout.decode(errors="replace")
 
 
 @dataclass

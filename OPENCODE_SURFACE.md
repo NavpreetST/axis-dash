@@ -93,7 +93,7 @@ opencode run --model openrouter/anthropic/claude-sonnet-4 "prompt"
 1. Start `opencode serve --port 0` (OS picks port) at daemon boot
 2. Submit tasks via HTTP `POST /session` + `POST /session/:id/message`
 3. Capture results via `GET /session/:id/diff`
-4. Route model calls through opencode.json config pointing at budgeted backend
+4. Route model calls through opencode.json config pointing at Groq (free tier — no DAILY_BUDGET drain)
 5. Cleanup via `DELETE /session/:id`
 
 This avoids per-task cold boot and shares MCP/LSP connections across tasks.
@@ -111,12 +111,13 @@ unauth'd request to the server will be rejected. This prevents the pre-1.1.10
 RCE vector (unauth'd local server).
 
 **Sandbox env scrubbing**: The server subprocess receives a sanitized
-environment. `_sanitize_env()` in `manager.py` strips all env vars matching
-known secret prefixes (`GROQ_`, `GEMINI_`, `HF_`, `OPENAI_`, `ANTHROPIC_`,
-`API_KEY`, `TOKEN`, `PASSWORD`, `AUTH`, `CREDENTIAL`, `SECRET`) and only
-passes through vars in `_SANDBOX_ALLOWLIST` (PATH, HOME, USER, LANG, etc.)
-plus non-secret-looking vars. Git/push credentials are injected ONLY at the
-GateStage — never into the opencode worker.
+environment. `_sanitize_env()` in `manager.py` is a **strict allowlist** —
+ONLY keys in `_SANDBOX_ALLOWLIST` (PATH, HOME, USER, LANG, LC_ALL, SHELL,
+TERM, TMPDIR, OPENCODE_BIN, OPENCODE_LOG_LEVEL, OPENCODE_CONFIG,
+OPENCODE_CONFIG_CONTENT, OPENCODE_PERMISSION, AEGIS_FORGE_DIR) reach the
+worker. Everything else (API keys, tokens, SSH agent, git credentials) is
+STRIPPED. Git/push auth is injected ONLY at the GateStage — never into
+the opencode worker.
 
 **Concurrency cap**: `MAX_CONCURRENT_FORGE_TASKS` (default 2, env override
 `AEGIS_FORGE_MAX_CONCURRENT`) limits parallel opencode runs via an asyncio
@@ -130,13 +131,35 @@ is a push permitted. The smoke path produces a GATED result, never an auto-push.
 
 ## Budgeter Seam
 
-**Current choice**: Model calls route directly to Groq (free tier) via
-`opencode.json`. This is deliberate — the budgeter (P3.5, Helios renderer)
-chains its own API calls and does NOT route through the opencode server.
+**Current choice**: Model calls route directly to Groq (free tier, no
+DAILY_BUDGET drain) via `opencode.json`. This is deliberate — the budgeter
+(P3.5, Helios renderer) chains its own API calls and does NOT route through
+the opencode server. The forge worker has unlimited Groq access during the
+free-tier phase; no metering is applied.
 
-**How to switch to metered**: Replace the `groq` provider block in
-`opencode.json` with a P3.5-compatible `openai-compatible` provider pointing
-at the budgeter endpoint:
+**Provider config** (`opencode.json` — the single switch):
+```jsonc
+{
+  "provider": {
+    "groq": {
+      "npm": "@ai-sdk/groq",
+      "name": "Groq Direct",
+      "models": {
+        "llama-3.3-70b-versatile": {
+          "name": "Llama 3.3 70B",
+          "limit": { "context": 128000, "output": 32768 }
+        }
+      }
+    }
+  },
+  "model": "groq/llama-3.3-70b-versatile"
+}
+```
+
+**How to switch to metered** (single seam — no code changes):
+Replace only the `provider` + `model` keys in `opencode.json` with a
+P3.5-compatible `openai-compatible` provider pointing at the budgeter
+endpoint. Nothing in `manager.py` or `dispatcher.py` needs changing.
 
 ```jsonc
 {
@@ -157,6 +180,5 @@ at the budgeter endpoint:
 }
 ```
 
-Only the `provider` + `model` keys in `opencode.json` need changing — no code
-changes required in `manager.py` or `dispatcher.py`. This is the documented
-seam for runtime metering when moving off the free tier.
+This is the documented seam for runtime metering when moving off the free
+tier — one file, two keys, zero code changes.
