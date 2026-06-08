@@ -1,4 +1,7 @@
 import { describe, it, expect } from 'vitest';
+import { execSync } from 'node:child_process';
+import { readFileSync, writeFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { validateContract } from '../../../scripts/ci_state_guard.mjs';
 
 const VALID_SOURCE = `
@@ -90,5 +93,23 @@ const applyLiveFrameMismatchedName = () => {};
     );
     const { errors } = validateContract(source);
     expect(errors).toContain('applyLiveFrame no longer reads "runtime" (was consumed before)');
+  });
+
+  it('exits with non-zero code (1) when runtime is missing from telemetry.ts', () => {
+    const telemetryPath = resolve(__dirname, './telemetry.ts');
+    const originalContent = readFileSync(telemetryPath, 'utf-8');
+
+    // Remove runtime from the interface in the actual file temporarily
+    const modifiedContent = originalContent.replace(/runtime\?: RuntimeInfo;/g, '');
+    writeFileSync(telemetryPath, modifiedContent, 'utf-8');
+
+    try {
+      expect(() => {
+        execSync('node scripts/ci_state_guard.mjs', { stdio: 'pipe' });
+      }).toThrow();
+    } finally {
+      // Restore original file
+      writeFileSync(telemetryPath, originalContent, 'utf-8');
+    }
   });
 });
