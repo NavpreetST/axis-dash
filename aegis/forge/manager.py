@@ -24,7 +24,6 @@ import asyncio
 import json
 import logging
 import os
-import secrets
 import time
 from pathlib import Path
 
@@ -44,6 +43,7 @@ _SANDBOX_CONFIG = _SANDBOX_HOME / ".opencode" / "opencode.json"
 _SANDBOX_ALLOWLIST: frozenset[str] = frozenset(
     {
         "PATH",
+        "HOME",
         "USER",
         "LANG",
         "LC_ALL",
@@ -75,7 +75,7 @@ class ForgeManager:
     """
 
     def __init__(self) -> None:
-        self._server_password: str = secrets.token_urlsafe(32)  # kept for compat
+        pass
 
     # ------------------------------------------------------------------
     # Public API (called by ForgeDispatcher)
@@ -92,9 +92,11 @@ class ForgeManager:
           - ``return_code``: subprocess exit code
           - ``logs``: full stdout as a string
         """
-        _SANDBOX_CONFIG.parent.mkdir(parents=True, exist_ok=True)
         _SANDBOX_CWD.mkdir(parents=True, exist_ok=True)
 
+        # Per-task config to avoid race when multiple run_task() instances
+        # run concurrently reading/writing the shared _SANDBOX_CONFIG.
+        config_path = workdir / "sandbox-config.json"
         cfg = {
             "$schema": "https://opencode.ai/config.json",
             "model": "opencode/big-pickle",
@@ -102,11 +104,11 @@ class ForgeManager:
                 "bash": "deny",
             },
         }
-        _SANDBOX_CONFIG.write_text(json.dumps(cfg, indent=2))
+        config_path.write_text(json.dumps(cfg, indent=2))
 
         env = self._sanitize_env()
         env["HOME"] = str(_SANDBOX_HOME)
-        env["OPENCODE_CONFIG"] = str(_SANDBOX_CONFIG)
+        env["OPENCODE_CONFIG"] = str(config_path)
         env["OPENCODE_LOG_LEVEL"] = "WARN"
 
         args = [
@@ -206,7 +208,8 @@ class ForgeManager:
     async def get_diffs(workdir: Path) -> list[dict]:
         """Run ``git diff --staged`` and ``git ls-files --others`` in *workdir*.
 
-        If *workdir* is not a git repo, fall back to listing all ``*.py`` files.
+        If *workdir* is not a git repo, fall back to listing all files
+        in the workdir tree.
         Returns a list of diff dicts with keys: path, status.
         """
         has_git = False

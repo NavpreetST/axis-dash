@@ -13,7 +13,8 @@ surface tool/function-calling for no-login free models; ``opencode run``
 drives opencode's own agent loop and produces real tool calls + diffs.
  
 LOOP GUARD: big-pickle (opencode #26220) can loop after tool calls finish.
-The manager enforces a hard per-task timeout (120s) on the subprocess.
+``_RUN_TIMEOUT_SECONDS`` in manager.py enforces a hard per-task timeout
+(120s) on the subprocess.
 """
  
 from __future__ import annotations
@@ -43,10 +44,6 @@ except (ValueError, TypeError):
     log.warning("forge: invalid AEGIS_FORGE_MAX_CONCURRENT=%r, using 2", _MAX_CONCURRENT_RAW)
     MAX_CONCURRENT_FORGE_TASKS = 2
  
-# Hard limit: loop guard enforced by manager subprocess timeout (120s).
-_MAX_EXECUTE_SECONDS: float = 120.0
-
-
 class TaskStatus(StrEnum):
     PENDING = "pending"
     RUNNING = "running"

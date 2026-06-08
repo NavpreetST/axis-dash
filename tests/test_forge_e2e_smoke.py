@@ -69,6 +69,7 @@ class TestForgeE2ESmoke:
     """
 
     @pytest.mark.asyncio
+    @pytest.mark.e2e
     async def test_e2e_lifecycle(self, monkeypatch, tmp_path: Path) -> None:
         if not os.getenv("AEGIS_FORGE_E2E"):
             pytest.skip(_SKIP_REASON)
@@ -76,7 +77,7 @@ class TestForgeE2ESmoke:
         events_dir = tmp_path / "forge-events"
         monkeypatch.setattr(eventlog, "EVENTS_DIR", events_dir)
 
-        # Load the Groq API key from secrets.env so the forge server can
+        # Load the Groq API key from secrets.env so opencode run can
         # authenticate with Groq when processing prompts.
         _secrets_path = Path.home() / ".config" / "aegis" / "secrets.env"
         if _secrets_path.exists():
@@ -93,10 +94,9 @@ class TestForgeE2ESmoke:
         monkeypatch.setattr(forge_dispatcher_mod, "FORGE_BASE", forge_base)
 
         # NOTE: The forge manager's sandbox HOME + OPENCODE_CONFIG env var
-        # (set by ForgeManager._ensure_sandbox) prevents opencode from
-        # loading the user-level or project-level config.  No swap needed.
-        # No serve server is started — each task runs as an ephemeral
-        # ``opencode run`` subprocess in the sandbox workdir.
+        # prevents opencode from loading the user-level or project-level
+        # config.  No swap needed.  No serve server — each task runs as
+        # an ephemeral ``opencode run`` subprocess in the sandbox workdir.
 
         t_start = time.perf_counter()
 

@@ -1,11 +1,10 @@
-"""Forge hardening — sandbox isolation, concurrency cap, gate proof, server auth.
+"""Forge hardening — sandbox isolation, concurrency cap, gate proof.
 
 These tests prove:
 1. SANDBOX CRED ISOLATION — worker env is scrubbed of host secrets
-2. `opencode serve` HARDENING — binds 127.0.0.1 + server password
-3. CONCURRENCY CAP — semaphore limits parallel executions
-4. GATE PROOF — gate blocks on lint/test/build failure (short-circuit)
-5. GATE PROOF — gate produces GATED result, never auto-push
+2. CONCURRENCY CAP — semaphore limits parallel executions
+3. GATE PROOF — gate blocks on lint/test/build failure (short-circuit)
+4. GATE PROOF — gate produces GATED result, never auto-push
 """
 
 from __future__ import annotations
@@ -109,73 +108,7 @@ class TestSandboxCredIsolation:
 
 
 # =========================================================================
-# 2. `opencode serve` HARDENING
-# =========================================================================
-
-
-class TestServerHardening:
-    """Prove the server binds to 127.0.0.1 and uses auth."""
-
-    def test_base_url_raises_before_start(self):
-        """base_url must raise RuntimeError before the server starts."""
-        from aegis.forge.manager import ForgeManager
-
-        mgr = ForgeManager()
-        with pytest.raises(RuntimeError, match="forge server not started"):
-            _ = mgr.base_url
-
-    @pytest.mark.asyncio
-    async def test_start_passes_hostname_and_password(self):
-        """start() must pass --hostname 127.0.0.1 and OPENCODE_SERVER_PASSWORD."""
-        from unittest.mock import AsyncMock, patch
-
-        from aegis.forge.manager import _SERVER_PASSWORD, ForgeManager
-
-        assert len(_SERVER_PASSWORD) >= 32
-
-        # Mock subprocess creation to capture args and env
-        captured_args = None
-        captured_env = None
-
-        async def fake_subprocess_exec(*args, **kwargs):
-            nonlocal captured_args, captured_env
-            captured_args = args
-            captured_env = kwargs.get("env", {})
-            mock_proc = AsyncMock()
-            mock_proc.stderr = AsyncMock()
-            # Simulate opencode printing port info to stderr
-            mock_proc.stderr.__aiter__.return_value = [b"Server listening on 127.0.0.1:12345\n"]
-            return mock_proc
-
-        with (
-            patch.object(ForgeManager, "_detect_port", return_value=12345),
-            patch("asyncio.create_subprocess_exec", side_effect=fake_subprocess_exec),
-            patch("httpx.AsyncClient") as mock_httpx_cls,
-        ):
-            mock_client = AsyncMock()
-            mock_client.get.return_value.status_code = 200
-            mock_httpx_cls.return_value = mock_client
-            mgr = ForgeManager()
-            await mgr.start()
-
-        assert captured_args is not None, "start() must call create_subprocess_exec"
-        args_list = list(captured_args)
-        assert "--hostname" in args_list, "start() must pass --hostname"
-        hostname_idx = args_list.index("--hostname")
-        assert args_list[hostname_idx + 1] == "127.0.0.1", (
-            f"start() must bind to 127.0.0.1, got {args_list[hostname_idx + 1]}"
-        )
-        assert "0.0.0.0" not in args_list, "start() must NOT bind to 0.0.0.0"
-        assert captured_env.get("OPENCODE_SERVER_PASSWORD") == _SERVER_PASSWORD, (
-            "start() must set OPENCODE_SERVER_PASSWORD in subprocess env"
-        )
-
-        # Also verify httpx client uses BasicAuth
-        await mgr.stop()
-
-
-# =========================================================================
-# 4. CONCURRENCY CAP
+# 2. CONCURRENCY CAP
 # =========================================================================
 
 
