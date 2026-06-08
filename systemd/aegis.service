@@ -8,7 +8,7 @@ Type=simple
 User=itznavpreet
 Group=itznavpreet
 WorkingDirectory=/opt/aegis
-Environment=AEGIS_SOCK=/run/aegis/aegis.sock
+Environment=AEGIS_SOCK=/tmp/aegis.sock
 Environment=PYTHONUNBUFFERED=1
 ExecStart=/opt/aegis/.venv/bin/python -m aegis.main
 RuntimeDirectory=aegis
@@ -23,7 +23,7 @@ CPUQuota=200%
 NoNewPrivileges=true
 PrivateTmp=false
 ProtectSystem=strict
-ReadWritePaths=/opt/aegis /run/aegis /home/itznavpreet/.local/share/aegis /home/itznavpreet/.config/aegis /home/itznavpreet/.cache/huggingface
+ReadWritePaths=/opt/aegis /run/aegis /var/lib/aegis /home/itznavpreet/.local/share/aegis /home/itznavpreet/.config/aegis /home/itznavpreet/.cache/huggingface
 
 [Install]
 WantedBy=multi-user.target
