@@ -79,7 +79,7 @@ ALLOWED_ORIGINS: set[str] = {
 }
 
 _PREVIEW_ORIGIN_PAT = re.compile(
-    r"^https://axis-dash-[a-z0-9]+-navpreets-projects\.vercel\.app$"
+    r"^https://axis-dash-[a-z0-9-]+-navpreets-projects\.vercel\.app$"
 )
 
 

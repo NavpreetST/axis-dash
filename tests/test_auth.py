@@ -165,3 +165,27 @@ def test_15_ws_state_disallowed_origin_rejected():
         with client.websocket_connect("/state?token=test-token-12345", headers={"Origin": origin}) as websocket:
             websocket.receive_json()
     assert e.value.code == 4401
+
+
+def test_16_cors_preflight_git_branch_alias_origin():
+    client = TestClient(app)
+    origin = "https://axis-dash-git-fix-cors-navpreets-projects.vercel.app"
+    resp = client.options("/logs", headers={
+        "Origin": origin,
+        "Access-Control-Request-Method": "GET"
+    })
+    assert resp.status_code == 204
+    assert resp.headers.get("Access-Control-Allow-Origin") == origin
+    assert resp.headers.get("Access-Control-Allow-Credentials") == "true"
+
+
+def test_17_cors_preflight_near_miss_origin_rejected():
+    client = TestClient(app)
+    origin = "https://axis-dash-x-evil-projects.vercel.app"
+    resp = client.options("/logs", headers={
+        "Origin": origin,
+        "Access-Control-Request-Method": "GET"
+    })
+    assert resp.status_code == 204
+    assert "Access-Control-Allow-Origin" not in resp.headers
+
