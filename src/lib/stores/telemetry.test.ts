@@ -604,4 +604,85 @@ describe('telemetry store', () => {
       expect(get(telemetry).pam).toBe(0.55);
     });
   });
+
+  // --- Runtime block parsing ---
+  // The bridge emits an additive `runtime` block with metadata about
+  // the daemon's runtime environment. All sub-fields are optional —
+  // the contract is the 14 top-level telemetry fields; `runtime` is
+  // informational only. The store must preserve partial updates and
+  // never fabricate missing values.
+  describe('runtime block parsing', () => {
+    beforeEach(() => {
+      telemetry.resetToUnknown();
+    });
+
+    it('stores a full runtime block from a live frame', () => {
+      const fullRuntime = {
+        commit: 'abc123def',
+        socket_path: '/var/run/helios.sock',
+        launch_method: 'systemd',
+        renderer_chain: 'aegis->orchestrator',
+        memory_backend: 'lmdb',
+        ncp: 4,
+        budget: '12h',
+        known_issues: ['issue-1', 'issue-2']
+      };
+      telemetry.applyLiveFrame({ uptime_seconds: 100, tick_rate: 1.0, runtime: fullRuntime });
+      const s = get(telemetry);
+      expect(s.runtime).toEqual(fullRuntime);
+    });
+
+    it('merges partial runtime updates without dropping prior values', () => {
+      telemetry.applyLiveFrame({
+        uptime_seconds: 100,
+        tick_rate: 1.0,
+        runtime: { commit: 'abc123', socket_path: '/run/helios.sock' }
+      });
+      telemetry.applyLiveFrame({
+        uptime_seconds: 200,
+        tick_rate: 1.0,
+        runtime: { ncp: 8, budget: '24h' }
+      });
+      const s = get(telemetry);
+      expect(s.runtime).toEqual({
+        commit: 'abc123',
+        socket_path: '/run/helios.sock',
+        ncp: 8,
+        budget: '24h'
+      });
+    });
+
+    it('preserves prior runtime when frame omits it', () => {
+      telemetry.applyLiveFrame({
+        uptime_seconds: 100,
+        tick_rate: 1.0,
+        runtime: { commit: 'abc123' }
+      });
+      telemetry.applyLiveFrame({ uptime_seconds: 200, tick_rate: 1.0 });
+      expect(get(telemetry).runtime).toEqual({ commit: 'abc123' });
+    });
+
+    it('renders -- for missing/null sub-fields in the UI', () => {
+      telemetry.applyLiveFrame({
+        uptime_seconds: 100,
+        tick_rate: 1.0,
+        runtime: { commit: 'abc123', socket_path: null, known_issues: [] }
+      });
+      const s = get(telemetry);
+      expect(s.runtime?.commit).toBe('abc123');
+      expect(s.runtime?.socket_path).toBeNull();
+      expect(s.runtime?.known_issues).toEqual([]);
+    });
+
+    it('accepts string or number for ncp/budget fields', () => {
+      telemetry.applyLiveFrame({
+        uptime_seconds: 100,
+        tick_rate: 1.0,
+        runtime: { ncp: 'auto', budget: 48 }
+      });
+      const s = get(telemetry);
+      expect(s.runtime?.ncp).toBe('auto');
+      expect(s.runtime?.budget).toBe(48);
+    });
+  });
 });
