@@ -249,17 +249,20 @@ async def run() -> None:
 
     log.info("supabase mirror sink → %s", TABLE_NAME)
 
-    # --- Startup reconciliation: backfill JSONL events missed before restart ---
-    try:
-        await _reconcile_jsonl()
-    except Exception as exc:
-        log.warning("supabase: startup reconcile failed — %s", exc)
-
+    # --- Subscribe first so we never miss BUS events during reconcile ---
     try:
         q: asyncio.Queue = BUS.subscribe("eventlog.write")
     except Exception as exc:
         log.error("supabase mirror: subscribe failed — %s", exc)
         return
+
+    # --- Startup reconciliation: backfill JSONL events missed before restart ---
+    # Safe to run after subscribe: merge-duplicates is idempotent, so any event
+    # both reconciled AND received via BUS is harmlessly deduplicated.
+    try:
+        await _reconcile_jsonl()
+    except Exception as exc:
+        log.warning("supabase: startup reconcile failed — %s", exc)
 
     batch: list[dict] = []
     offline_q: asyncio.Queue[list[dict]] = asyncio.Queue(maxsize=OFFLINE_QUEUE_MAX)

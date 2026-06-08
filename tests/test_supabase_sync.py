@@ -392,3 +392,33 @@ async def test_run_calls_reconcile_on_startup(tmp_path: Path):
             pass
 
     assert reconcile_called
+
+
+@pytest.mark.asyncio
+async def test_subscribe_before_reconcile_ordering():
+    """run() must subscribe to BUS BEFORE reconcile to avoid event gaps."""
+    from aegis.observability import supabase_sync
+
+    call_order = []
+
+    q: asyncio.Queue = asyncio.Queue()
+
+    async def _mock_reconcile():
+        call_order.append("reconcile")
+
+    with patch.object(supabase_sync, "_enabled", True), \
+         patch.object(supabase_sync, "_reconcile_jsonl", side_effect=_mock_reconcile), \
+         patch("aegis.observability.supabase_sync.BUS") as mock_bus:
+        mock_bus.subscribe.side_effect = lambda topic: (call_order.append("subscribe"), q)[1]
+
+        task = asyncio.create_task(supabase_sync.run())
+        await asyncio.sleep(0.05)
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
+    assert call_order == ["subscribe", "reconcile"], (
+        f"Expected subscribe before reconcile, got {call_order}"
+    )
