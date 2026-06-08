@@ -106,6 +106,49 @@ class TestSandboxCredIsolation:
         assert "PATH" in clean, "PATH must be in sandbox env"
         assert "HOME" in clean, "HOME must be in sandbox env"
 
+    @pytest.mark.asyncio
+    async def test_run_task_writes_sandbox_config_with_bash_denied(self):
+        """run_task() must write a per-task config with permission.bash: deny.
+
+        This proves the config-level containment that prevents
+        --dangerously-skip-permissions from re-enabling bash (the deny
+        is enforced server-side by PermissionV2.assert before any
+        permission.asked event reaches the CLI).
+        """
+        from unittest.mock import AsyncMock, patch
+
+        from aegis.forge.manager import ForgeManager
+
+        mgr = ForgeManager()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            workdir = Path(tmpdir)
+
+            # Mock the subprocess so we don't actually run opencode
+            mock_proc = AsyncMock()
+            mock_proc.stdout.readline = AsyncMock(return_value=b"")
+            mock_proc.stderr.readline = AsyncMock(return_value=b"")
+            mock_proc.communicate = AsyncMock(return_value=(b"", b""))
+            mock_proc.returncode = 0
+
+            with patch("asyncio.create_subprocess_exec", return_value=mock_proc):
+                result = await mgr.run_task(workdir, "test spec")
+
+            # The config file must exist and have bash:deny
+            config_path = workdir / "sandbox-config.json"
+            assert config_path.exists(), "run_task() must write a per-task config"
+            import json
+
+            cfg = json.loads(config_path.read_text())
+            perms = cfg.get("permission", {})
+            assert perms.get("bash") == "deny", (
+                f"sandbox config must deny bash, got: {perms}"
+            )
+
+            # The result should still be structured correctly
+            assert result["return_code"] == 0
+            assert result["tool_calls"] == 0
+            assert result["error"] is None
+
 
 # =========================================================================
 # 2. CONCURRENCY CAP
