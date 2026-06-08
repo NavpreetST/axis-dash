@@ -52,13 +52,28 @@ async def serve_unix_socket() -> None:
                 raw = await reader.readline()
                 if not raw:
                     break
-                await text_encoder.ingest_text(raw.decode(errors="replace"))
+                prompt_text = raw.decode(errors="replace")
+                await text_encoder.ingest_text(prompt_text)
                 try:
                     msg = await asyncio.wait_for(
                         reply_q.get(), timeout=REPLY_TIMEOUT
                     )
-                    writer.write((msg.payload["text"] + "\n").encode())
+                    reply_text = msg.payload["text"]
+                    writer.write((reply_text + "\n").encode())
                     await writer.drain()
+                    
+                    from aegis.eventlog import log_event
+                    await asyncio.to_thread(
+                        log_event,
+                        source="aegis",
+                        event_type="chat_turn",
+                        payload={
+                            "prompt": prompt_text.strip(),
+                            "reply": reply_text,
+                        },
+                        severity="info",
+                        sensitivity="internal",
+                    )
                 except asyncio.TimeoutError:
                     writer.write(b"(no reply within timeout)\n")
                     await writer.drain()
@@ -101,6 +116,17 @@ async def main() -> None:
         log.info("shutting down")
         for t in tasks:
             t.cancel()
+    except Exception as e:
+        from aegis.eventlog import log_event
+        await asyncio.to_thread(
+            log_event,
+            source="aegis",
+            event_type="error",
+            payload={"where": "main_loop", "err": str(e)},
+            severity="error",
+            sensitivity="internal",
+        )
+        raise
 
 
 if __name__ == "__main__":
