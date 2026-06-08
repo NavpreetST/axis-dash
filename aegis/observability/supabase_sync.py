@@ -15,13 +15,18 @@ Resilience
 * Failed batches are placed on an offline queue and retried with exponential
   back-off (1 s → 2 s → 4 s → … capped at 30 s).
 * A periodic timer flushes the batch even when the batch size is not reached.
+* On startup, existing JSONL files are reconciled (backfilled) so events that
+  were written but not mirrored before a restart are caught up.  Progress is
+  tracked in a local state file; upserts use merge-duplicates for idempotency.
 """
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 import time
+from pathlib import Path
 
 import httpx
 
@@ -47,6 +52,11 @@ BACKOFF_CAP: float = 30.0
 # Offline queue cap (prevents unbounded memory growth when Supabase is down)
 OFFLINE_QUEUE_MAX: int = 500
 
+# State dir / events dir (mirrors eventlog.py)
+STATE_DIR = Path(os.getenv("AEGIS_STATE_DIR", "/var/lib/aegis"))
+EVENTS_DIR = STATE_DIR / "events"
+RECONCILE_STATE_PATH = EVENTS_DIR / ".supabase_reconcile.json"
+
 _enabled: bool = bool(SUPABASE_URL and SUPABASE_SERVICE_KEY)
 
 _REQUIRED_FIELDS: frozenset[str] = frozenset({
@@ -67,6 +77,105 @@ def _validate_event(event: dict) -> bool:
         set(event.keys()) == _REQUIRED_FIELDS
         and isinstance(event.get("payload"), dict)
     )
+
+
+def _load_reconcile_state() -> dict[str, int]:
+    """Load reconcile state: {filename: last_synced_line}."""
+    if RECONCILE_STATE_PATH.exists():
+        try:
+            return json.loads(RECONCILE_STATE_PATH.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            pass
+    return {}
+
+
+def _save_reconcile_state(state: dict[str, int]) -> None:
+    try:
+        RECONCILE_STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
+        RECONCILE_STATE_PATH.write_text(json.dumps(state, indent=2), encoding="utf-8")
+    except OSError as e:
+        log.warning("supabase: failed to save reconcile state — %s", e)
+
+
+async def _reconcile_jsonl() -> None:
+    """Backfill existing JSONL files into Supabase on startup.
+
+    Reads each JSONL file line-by-line, starting from the last-synced
+    offset tracked in the reconcile state file.  Upserts use
+    merge-duplicates so re-runs are idempotent.
+    """
+    if not EVENTS_DIR.exists():
+        return
+
+    state = _load_reconcile_state()
+    jsonl_files = sorted(EVENTS_DIR.glob("*.jsonl"))
+
+    if not jsonl_files:
+        return
+
+    total_backfilled = 0
+
+    for fpath in jsonl_files:
+        fname = fpath.name
+        last_line = state.get(fname, 0)
+
+        # Read lines from last_line onwards
+        try:
+            lines = await asyncio.to_thread(fpath.read_text, encoding="utf-8")
+        except OSError as e:
+            log.warning("supabase: reconcile read error for %s — %s", fname, e)
+            continue
+
+        all_lines = lines.strip().split("\n")
+        new_lines = all_lines[last_line:]
+
+        if not new_lines:
+            continue
+
+        # Parse + batch upsert
+        batch: list[dict] = []
+        committed_offset = last_line
+
+        for i, raw_line in enumerate(new_lines):
+            raw_line = raw_line.strip()
+            if not raw_line:
+                continue
+            try:
+                event = json.loads(raw_line)
+            except json.JSONDecodeError:
+                continue
+
+            if _validate_event(event):
+                batch.append(event)
+
+            if len(batch) >= BATCH_SIZE:
+                try:
+                    await _upsert_batch(batch)
+                    total_backfilled += len(batch)
+                    committed_offset = last_line + i + 1
+                    state[fname] = committed_offset
+                    _save_reconcile_state(state)
+                except Exception as e:
+                    log.warning("supabase: reconcile batch error — %s", e)
+                    # Do NOT advance state — failed batch will be retried
+                    return  # stop reconcile on failure
+                batch = []
+
+        # Flush remaining
+        if batch:
+            try:
+                await _upsert_batch(batch)
+                total_backfilled += len(batch)
+                committed_offset = last_line + len(new_lines)
+                state[fname] = committed_offset
+                _save_reconcile_state(state)
+            except Exception as e:
+                log.warning("supabase: reconcile flush error — %s", e)
+                # Do NOT advance state — failed batch will be retried
+                return
+
+    if total_backfilled:
+        log.info("supabase: reconciled %d events from JSONL on startup", total_backfilled)
 
 
 async def _upsert_batch(batch: list[dict]) -> None:
@@ -140,11 +249,20 @@ async def run() -> None:
 
     log.info("supabase mirror sink → %s", TABLE_NAME)
 
+    # --- Subscribe first so we never miss BUS events during reconcile ---
     try:
         q: asyncio.Queue = BUS.subscribe("eventlog.write")
     except Exception as exc:
         log.error("supabase mirror: subscribe failed — %s", exc)
         return
+
+    # --- Startup reconciliation: backfill JSONL events missed before restart ---
+    # Safe to run after subscribe: merge-duplicates is idempotent, so any event
+    # both reconciled AND received via BUS is harmlessly deduplicated.
+    try:
+        await _reconcile_jsonl()
+    except Exception as exc:
+        log.warning("supabase: startup reconcile failed — %s", exc)
 
     batch: list[dict] = []
     offline_q: asyncio.Queue[list[dict]] = asyncio.Queue(maxsize=OFFLINE_QUEUE_MAX)

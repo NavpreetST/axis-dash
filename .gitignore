@@ -23,6 +23,10 @@ inhibitory_gate.jsonl
 *.db-wal
 *.db-shm
 
+# Sync state files (lives in STATE_DIR/events/, gitignored for safety)
+.b2_manifest.json
+.supabase_reconcile.json
+
 # Editor / sed backups
 *.bak
 *.bak-*
