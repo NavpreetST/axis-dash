@@ -11,56 +11,74 @@ Architecture (single-writer, single-path):
                                  BUS "eventlog.append"
                                        │
                                        ▼
-                                  run() ──► append_event() ──► JSONL (fsync)
-                                       │
-                                       ▼
-                                 BUS "eventlog.write"
-                                  ╱            ╲
-                          supabase_sync     b2_sync (reads JSONL files)
+                                  run() ──► write_and_mirror()
+                                              │
+                                         _append_event_sync()  ──► JSONL (fsync)
+                                              │
+                                              ▼
+                                        BUS "eventlog.write"
+                                         ╱            ╲
+                                 supabase_sync     b2_sync (reads JSONL files)
 
 Every event enters via log_event(), hits local JSONL exactly once
-(via the sole append_event() caller in run()), and is mirrored to
+(via the sole write_and_mirror() caller in run()), and is mirrored to
 Supabase via the eventlog.write BUS topic.  B2 reads JSONL files
 directly on a timer.
 
-Single-writer guarantee: only append_event() in run() touches JSONL.
-No threading.Lock() needed.
+Single-writer guarantee: _APPEND_LOCK (asyncio.Lock) serializes all
+JSONL appends.  Only _append_event_sync() touches the file.  Both
+log_event() and any future direct path are funneled through the same
+write_and_mirror() coroutine.
 """
+
 from __future__ import annotations
 
 import asyncio
 import json
 import logging
 import os
-import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from aegis.nexus.bus import BUS
 
 log = logging.getLogger(__name__)
 
+# Single-writer lock — serializes all JSONL appends so concurrent callers
+# can never interleave partial records.  Created lazily on first async use
+# (asyncio.Lock must be created inside a running event loop).
+_APPEND_LOCK: asyncio.Lock | None = None
+
+
+def _get_append_lock() -> asyncio.Lock:
+    """Return (and lazily create) the module-level append lock."""
+    global _APPEND_LOCK
+    if _APPEND_LOCK is None:
+        _APPEND_LOCK = asyncio.Lock()
+    return _APPEND_LOCK
+
+
 SCHEMA_VERSION = 1
 
 # FROZEN — do not add fields. 8 required fields only.
-REQUIRED_FIELDS = frozenset({
-    "schema_version",
-    "timestamp",
-    "source",
-    "event_type",
-    "payload",
-    "severity",
-    "provenance",
-    "sensitivity",
-})
+REQUIRED_FIELDS = frozenset(
+    {
+        "schema_version",
+        "timestamp",
+        "source",
+        "event_type",
+        "payload",
+        "severity",
+        "provenance",
+        "sensitivity",
+    }
+)
 
 # ---------------------------------------------------------------------------
 # Load enum validation sets from contracts/event.schema.json (source of truth)
 # ---------------------------------------------------------------------------
 
-_CONTRACTS_PATH = (
-    Path(__file__).resolve().parent.parent.parent / "contracts" / "event.schema.json"
-)
+_CONTRACTS_PATH = Path(__file__).resolve().parent.parent.parent / "contracts" / "event.schema.json"
 
 
 def _load_enum_from_schema(property_name: str) -> frozenset[str]:
@@ -70,14 +88,31 @@ def _load_enum_from_schema(property_name: str) -> frozenset[str]:
     (e.g. during tests that mock the path).
     """
     _DEFAULTS = {
-        "source": frozenset({
-            "notion", "antigravity", "opencode", "helios",
-            "aegis", "coderabbit", "ci",
-        }),
-        "event_type": frozenset({
-            "chat_turn", "error", "task_created", "task_updated", "task_done",
-            "pr_opened", "review_posted", "gate_result", "merge", "drift_flag",
-        }),
+        "source": frozenset(
+            {
+                "notion",
+                "antigravity",
+                "opencode",
+                "helios",
+                "aegis",
+                "coderabbit",
+                "ci",
+            }
+        ),
+        "event_type": frozenset(
+            {
+                "chat_turn",
+                "error",
+                "task_created",
+                "task_updated",
+                "task_done",
+                "pr_opened",
+                "review_posted",
+                "gate_result",
+                "merge",
+                "drift_flag",
+            }
+        ),
         "severity": frozenset({"info", "warn", "error", "critical"}),
         "sensitivity": frozenset({"public", "internal", "secret"}),
     }
@@ -137,7 +172,7 @@ def make_event(
 
     return {
         "schema_version": SCHEMA_VERSION,
-        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "timestamp": datetime.now(UTC).isoformat(),
         "source": source,
         "event_type": event_type,
         "payload": payload,
@@ -148,20 +183,21 @@ def make_event(
 
 
 def _today_path() -> Path:
-    day = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    day = datetime.now(UTC).strftime("%Y-%m-%d")
     return EVENTS_DIR / f"{day}.jsonl"
 
 
-def append_event(event: dict) -> None:
+def _append_event_sync(event: dict) -> None:
     """Append a single event to today's JSONL file with fsync (crash-safe).
 
-    This is the SOLE code path that writes to JSONL files.
-    Called only from run() via asyncio.to_thread — never from the event loop.
+    This is the SOLE code path that touches JSONL files.  Called only
+    from write_and_mirror() via asyncio.to_thread — never from the
+    event loop directly.
 
     If sensitivity == "secret", the payload is replaced with "<REDACTED>"
     before writing — secret payloads are never persisted to disk in plaintext.
 
-    Raises on write/fsync failure so run() can skip the cloud mirror.
+    Raises on write/fsync failure so write_and_mirror() can skip the cloud mirror.
     """
     actual_keys = set(event.keys())
     if actual_keys != REQUIRED_FIELDS:
@@ -176,6 +212,15 @@ def append_event(event: dict) -> None:
 
     if event["schema_version"] != SCHEMA_VERSION:
         raise ValueError(f"schema_version must be {SCHEMA_VERSION}, got {event['schema_version']}")
+
+    if event["source"] not in VALID_SOURCES:
+        raise ValueError(f"invalid source: {event['source']!r}")
+    if event["event_type"] not in VALID_EVENT_TYPES:
+        raise ValueError(f"invalid event_type: {event['event_type']!r}")
+    if event["severity"] not in VALID_SEVERITIES:
+        raise ValueError(f"invalid severity: {event['severity']!r}")
+    if event["sensitivity"] not in VALID_SENSITIVITIES:
+        raise ValueError(f"invalid sensitivity: {event['sensitivity']!r}")
 
     # Redact secret payloads before persisting to disk
     write_event = event
@@ -200,11 +245,14 @@ def _log_append_error(event: dict, error: Exception) -> None:
             redacted["payload"] = "<REDACTED>"
             detail = json.dumps(redacted, ensure_ascii=False)
         else:
-            detail = json.dumps({
-                "timestamp": event.get("timestamp"),
-                "source": event.get("source"),
-                "event_type": event.get("event_type"),
-            }, ensure_ascii=False)
+            detail = json.dumps(
+                {
+                    "timestamp": event.get("timestamp"),
+                    "source": event.get("source"),
+                    "event_type": event.get("event_type"),
+                },
+                ensure_ascii=False,
+            )
         log.warning("eventlog: append failed — %s: %s", error, detail)
     except Exception:
         log.warning("eventlog: append failed — %s (redaction error)", error)
@@ -228,6 +276,7 @@ def _warn_if_large() -> None:
 # Async helpers — for main.py to call from async context
 # ---------------------------------------------------------------------------
 
+
 async def log_event(
     *,
     source: str,
@@ -241,7 +290,7 @@ async def log_event(
 
     This does NOT call append_event() directly (no thread-pool race).
     It publishes to 'eventlog.append'; run() picks it up and is the
-    sole caller of append_event().
+    sole caller of write_and_mirror().
     """
     event = make_event(
         source=source,
@@ -258,13 +307,46 @@ async def log_event(
 
 
 # ---------------------------------------------------------------------------
+# Single-writer + mirror — the unified write routine
+# ---------------------------------------------------------------------------
+
+
+async def write_and_mirror(event: dict) -> None:
+    """Append event to JSONL under lock, then mirror to cloud.
+
+    This is the SINGLE entry point for write + mirror.  Both the
+    log_event() → run() path and any future direct path MUST funnel
+    through here to guarantee:
+      1. No interleaving (asyncio.Lock serializes appends).
+      2. Exactly-once local write (only _append_event_sync touches JSONL).
+      3. Consistent mirror (eventlog.write published only on success).
+
+    The mirror publish is inside the lock so coroutine cancellation can
+    never skip it after a successful disk write.
+    """
+    lock = _get_append_lock()
+    async with lock:
+        try:
+            await asyncio.to_thread(_append_event_sync, event)
+        except (OSError, ValueError) as e:
+            _log_append_error(event, e)
+            return  # skip cloud mirror — local append failed
+        _warn_if_large()
+        try:
+            await BUS.publish("eventlog.write", event)
+        except Exception as e:
+            log.debug("eventlog: failed to publish to eventlog.write — %s", e)
+
+
+# ---------------------------------------------------------------------------
 # Async run entry point — sole writer, single path
 # ---------------------------------------------------------------------------
+
 
 async def run() -> None:
     """Sole JSONL writer — subscribes to eventlog.append, writes, mirrors.
 
-    This is the ONLY task that calls append_event().  All events
+    This is the ONLY task that calls write_and_mirror().  All events
     (chat_turn, error, task_created, etc.) enter via log_event() which
     publishes to the 'eventlog.append' BUS topic.  After writing to
     JSONL, this task publishes to 'eventlog.write' for supabase_sync
@@ -284,15 +366,6 @@ async def run() -> None:
             event = dict(msg.payload) if msg.payload else {}
             if not event:
                 continue
-            try:
-                await asyncio.to_thread(append_event, event)
-            except (OSError, ValueError) as e:
-                _log_append_error(event, e)
-                continue  # skip cloud mirror — local append failed
-            _warn_if_large()
-            try:
-                await BUS.publish("eventlog.write", event)
-            except Exception as e:
-                log.debug("eventlog: failed to publish to eventlog.write — %s", e)
+            await write_and_mirror(event)
         except Exception as e:
             log.warning("eventlog: writer error — %s", e)
