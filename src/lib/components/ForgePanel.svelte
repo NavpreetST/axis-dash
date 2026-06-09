@@ -9,12 +9,14 @@
     forgeDiffData,
     forgeGateResult,
     forgeConnStatus,
-    forgeError
+    forgeError,
+    forgeLastPoll
   } from '$lib/stores/forge';
 
   let specInput = $state('');
   let submitting = $state(false);
   let actionBusy = $state(false);
+  let submittedTaskId = $state<string | null>(null);
 
   const STATUS_COLORS: Record<string, string> = {
     pending: 'bg-accent-amber/10 text-accent-amber',
@@ -47,14 +49,26 @@
     forge.reset();
   });
 
+  $effect(() => {
+    const detail = $forgeDetail;
+    const selectedId = $forgeSelectedId;
+    if (detail && submittedTaskId && detail.id === submittedTaskId) {
+      submittedTaskId = null;
+    } else if (selectedId && submittedTaskId && selectedId !== submittedTaskId) {
+      submittedTaskId = null;
+    }
+  });
+
   async function handleSubmit() {
     const trimmed = specInput.trim();
     if (trimmed.length < 10 || submitting) return;
     submitting = true;
+    submittedTaskId = null;
     try {
       const result = await forge.submitTask(trimmed);
       if (result !== null) {
         specInput = '';
+        submittedTaskId = result;
       }
     } finally {
       submitting = false;
@@ -112,8 +126,8 @@
       bind:value={specInput}
       onkeydown={handleKeydown}
       placeholder="Describe the task for the forge agent (min 10 chars)…"
-      rows="2"
-      class="w-full resize-none rounded-lg border border-hairline bg-bg-void px-3 py-2 font-mono text-xs text-text-primary outline-none placeholder:text-text-muted focus:border-accent-cyan"
+      rows="8"
+      class="w-full resize-y rounded-lg border border-hairline bg-bg-void px-3 py-2 font-mono text-xs text-text-primary outline-none placeholder:text-text-muted focus:border-accent-cyan"
     ></textarea>
     <div class="flex items-center justify-between">
       <span class="font-mono text-[9px] text-text-muted">⌘/Ctrl+Enter to submit</span>
@@ -127,6 +141,48 @@
       </button>
     </div>
   </div>
+
+  <!-- Submit feedback -->
+  {#if submittedTaskId}
+    {@const detail = $forgeDetail}
+    {@const ts = $forgeLastPoll}
+    <div
+      class="flex flex-col gap-1.5 rounded-lg border border-accent-cyan/20 bg-accent-cyan/5 px-3 py-2 font-mono text-[10px]"
+    >
+      <div class="flex items-center justify-between">
+        <span class="font-semibold text-accent-cyan">submitted</span>
+        <span class="text-text-muted">id: {submittedTaskId.slice(0, 12)}</span>
+      </div>
+      {#if detail}
+        <div class="flex items-center gap-2">
+          <span
+            class="rounded-sm px-1 py-px text-[9px] font-bold uppercase
+              {STATUS_COLORS[detail.status] ?? STATUS_COLORS.unknown}"
+          >
+            {detail.status}
+          </span>
+          {#if ts}
+            <span class="text-text-muted">updated {new Date(ts).toLocaleTimeString()}</span>
+          {/if}
+        </div>
+        {#if detail.error}
+          <div class="text-signal-red">error: {detail.error}</div>
+        {/if}
+        <div class="flex items-center gap-3 text-text-muted">
+          <span
+            >diff: {detail.status === 'completed' || detail.status === 'gated'
+              ? 'ready'
+              : 'pending'}</span
+          >
+          <span>gate: {detail.status === 'completed' ? 'available' : '—'}</span>
+        </div>
+      {:else if $forgeConnStatus === 'error'}
+        <div class="text-signal-red">waiting for status…</div>
+      {:else}
+        <div class="text-text-muted">waiting for status…</div>
+      {/if}
+    </div>
+  {/if}
 
   <!-- Task list + detail split -->
   <div class="flex min-h-[200px] gap-3">
