@@ -51,7 +51,10 @@
 
   $effect(() => {
     const detail = $forgeDetail;
+    const selectedId = $forgeSelectedId;
     if (detail && submittedTaskId && detail.id === submittedTaskId) {
+      submittedTaskId = null;
+    } else if (selectedId && submittedTaskId && selectedId !== submittedTaskId) {
       submittedTaskId = null;
     }
   });
