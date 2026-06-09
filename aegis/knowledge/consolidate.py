@@ -505,6 +505,8 @@ async def archaeology_scan(
     dry_run: bool = False,
     batch_size: int = ARCHAEOLOGY_BATCH_SIZE,
 ) -> list[str]:
+    if batch_size <= 0:
+        raise ValueError(f"batch_size must be > 0, got {batch_size}")
     _load_secrets()
     if not NVIDIA_API_KEY and not dry_run:
         log.error("archaeology: NVIDIA_API_KEY not set")
@@ -654,7 +656,10 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--archaeology", action="store_true", help="Run archaeology scan on Helios markdown corpus")
     parser.add_argument("--content-dir", default=None, help="Root of Helios markdown corpus (default: $HELIOS_CONTENT_DIR)")
     parser.add_argument("--batch-size", type=int, default=ARCHAEOLOGY_BATCH_SIZE, help="Files per NIM call in archaeology mode (default: 6)")
-    return parser.parse_args()
+    args = parser.parse_args()
+    if args.batch_size <= 0:
+        parser.error(f"--batch-size must be > 0, got {args.batch_size}")
+    return args
 
 
 def main() -> None:

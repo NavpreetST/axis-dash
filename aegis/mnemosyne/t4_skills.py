@@ -139,9 +139,10 @@ def delete_unused(threshold_s: float = 2592000) -> int:
     """Delete skills unused for threshold_s seconds (default 30 days)."""
     cutoff = time.time() - threshold_s
     cur = CONN.execute(
-        "DELETE FROM skills WHERE last_used IS NOT NULL AND last_used < ? "
-        "AND success_count = 0 AND failure_count = 0",
-        (cutoff,),
+        "DELETE FROM skills WHERE success_count = 0 AND failure_count = 0 "
+        "AND (last_used IS NOT NULL AND last_used < ? "
+        "      OR last_used IS NULL AND ts < ?)",
+        (cutoff, cutoff),
     )
     CONN.commit()
     if cur.rowcount:

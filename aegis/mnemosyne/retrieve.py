@@ -32,14 +32,18 @@ def _blob_to_emb(blob: bytes) -> np.ndarray:
 
 def _seed_rows() -> list[dict]:
     cur = CONN.execute(
-        "SELECT id, text, ts FROM episodes WHERE action='seed' ORDER BY id"
+        "SELECT id, text, ts FROM episodes WHERE action='seed'"
     )
     now = time.time()
-    return [
-        {"id": str(_id), "text": text, "ts": ts,
-         "score": 1.0 + RECENCY_BOOST * (2.0 ** (-(now - ts) / HALF_LIFE))}
-        for _id, text, ts in cur.fetchall()
-    ]
+    rows = []
+    for _id, text, ts in cur.fetchall():
+        age = max(0.0, now - ts)
+        rows.append({
+            "id": str(_id), "text": text, "ts": ts, "kind": "seed",
+            "score": 1.0 + RECENCY_BOOST * (2.0 ** (-age / HALF_LIFE)),
+        })
+    rows.sort(key=lambda r: r["score"], reverse=True)
+    return rows
 
 
 def _clean_fts5_query(text: str) -> str:
@@ -128,28 +132,27 @@ def retrieve(query_emb: list[float], query_text: str = "", k: int = TOP_K) -> li
         if emb.shape != q.shape:
             continue
         sim = float(np.dot(q, emb))
-        age = now - ts
+        age = max(0.0, now - ts)
         recency = 1.0 + RECENCY_BOOST * (2.0 ** (-age / HALF_LIFE))
         scored.append((sim * recency, _id, text, ts))
     scored.sort(reverse=True)
     cosine_hits = [
-        {"id": str(_id), "text": text, "ts": ts, "score": score}
+        {"id": str(_id), "text": text, "ts": ts, "kind": "cosine", "score": score}
         for score, _id, text, ts in scored[:k]
     ]
     seed = _seed_rows()
     knowledge = _search_knowledge(query_text) if query_text else []
-
-    seen = {h["id"] for h in seed}
-    out = list(seed)
     for h in knowledge:
+        h["kind"] = "kb"
+
+    candidates = seed + knowledge + cosine_hits
+    seen: set[str] = set()
+    merged = []
+    for h in sorted(candidates, key=lambda x: x.get("score", 0.0), reverse=True):
         if h["id"] not in seen:
-            out.append(h)
+            merged.append(h)
             seen.add(h["id"])
-    for h in cosine_hits:
-        if h["id"] not in seen:
-            out.append(h)
-            seen.add(h["id"])
-    return out
+    return merged
 
 
 async def run() -> None:
@@ -164,7 +167,8 @@ async def run() -> None:
             "texts":  [h["text"]  for h in hits],
             "scores": [h["score"] for h in hits],
         })
-        n_kb = sum(1 for h in hits if h["id"].startswith("kb-"))
-        n_seed = sum(1 for h in hits if not h["id"].startswith("kb-") and h.get("score", 0) == 1.0)
+        n_kb = sum(1 for h in hits if h.get("kind") == "kb")
+        n_seed = sum(1 for h in hits if h.get("kind") == "seed")
+        n_cosine = sum(1 for h in hits if h.get("kind") == "cosine")
         log.debug("retrieved %d hits (%d kb + %d seed + %d cosine)",
-                  len(hits), n_kb, n_seed, len(hits) - n_kb - n_seed)
+                  len(hits), n_kb, n_seed, n_cosine)

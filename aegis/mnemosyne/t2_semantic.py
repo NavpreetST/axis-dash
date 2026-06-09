@@ -92,8 +92,23 @@ def insert(fact: Fact) -> int:
 
 def insert_batch(facts: list[Fact]) -> list[int]:
     ids = []
-    for f in facts:
-        ids.append(insert(f))
+    try:
+        for f in facts:
+            if f.embedding is None:
+                f.embedding = _get_embedding(_triple_text(f))
+            cur = CONN.execute(
+                "INSERT INTO semantic_facts (subj, pred, obj, confidence, decay_t, source, embedding, ts) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (f.subj.lower(), f.pred.lower(), f.obj,
+                 max(0.0, min(1.0, f.confidence)),
+                 f.decay_t, f.source,
+                 _emb_blob(f.embedding), f.ts),
+            )
+            ids.append(cur.lastrowid)
+        CONN.commit()
+    except Exception:
+        CONN.rollback()
+        raise
     return ids
 
 
@@ -182,8 +197,12 @@ def extract_facts(text: str, source: str | None = None, confidence: float = 0.7)
     facts: list[Fact] = []
     for pattern, pred in _PATTERNS:
         for m in re.finditer(pattern, text_lower):
-            subj = m.group(1).strip()
-            obj = m.group(2).strip() if pred != "own" and pred != "runs" else m.group(1).strip()
+            if pred == "be":
+                subj = m.group(1).strip()
+                obj = m.group(2).strip()
+            else:
+                subj = "user"
+                obj = m.group(1).strip()
             if not subj or not obj:
                 continue
             facts.append(Fact(
