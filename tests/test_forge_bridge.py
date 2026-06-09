@@ -536,3 +536,88 @@ class TestCommandMapping:
         client = TestClient(app)
         client.post("/forge/abc123/cleanup", params=AUTH_PARAMS)
         assert "FORGE:CLEANUP:abc123" in mock_forge_socket.commands_received
+
+
+# ---- Buffer-limit regression tests ----
+#
+# _forge_socket_cmd calls open_conn(path, limit=262144) to support responses
+# larger than the default StreamReader buffer (64 KiB).  Without the larger
+# limit, the reader may stall or truncate on large FORGE:LIST payloads.
+
+
+class TestBufferLimit:
+    """Regression: _forge_socket_cmd buffer limit and large-response handling."""
+
+    async def test_open_conn_receives_limit_param(self):
+        """open_unix_connection must be called with limit=262144."""
+        from unittest.mock import AsyncMock
+
+        mock_reader = AsyncMock()
+        mock_reader.readline.return_value = b"FORGE:OK:abc123\n"
+
+        class _MockWriter:
+            async def drain(self):
+                pass
+
+            async def wait_closed(self):
+                pass
+
+            def write(self, _data: bytes) -> None:
+                pass
+
+            def close(self) -> None:
+                pass
+
+        mock_writer = _MockWriter()
+
+        with patch("asyncio.open_unix_connection", new_callable=AsyncMock) as mo:
+            mo.return_value = (mock_reader, mock_writer)
+            from aegis.web.server import _forge_socket_cmd
+            resp = await _forge_socket_cmd("FORGE:SUBMIT:test")
+
+        assert resp == "FORGE:OK:abc123"
+        mo.assert_awaited_once()
+        _args, kwargs = mo.await_args
+        assert kwargs.get("limit") == 262144, (
+            f"Expected limit=262144, got {kwargs.get('limit')}"
+        )
+
+    def test_large_list_response_handled(self):
+        """/forge/list must handle FORGE:LIST payloads larger than 64 KiB."""
+        import json as _json
+
+        client = TestClient(app)
+        # Build a task list whose JSON serialization exceeds 64 KiB
+        large_tasks = [{"id": f"task-{i}", "status": "completed"} for i in range(2000)]
+        payload = _json.dumps(large_tasks)
+        assert len(payload) > 65536, f"payload {len(payload)} bytes, need >65536"
+
+        async def large_list(_cmd: str) -> str:
+            return f"FORGE:LIST:{payload}"
+
+        with patch("aegis.web.server._forge_socket_cmd", side_effect=large_list):
+            resp = client.get("/forge/list", params=AUTH_PARAMS)
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "tasks" in data
+        assert isinstance(data["tasks"], list)
+        assert len(data["tasks"]) == 2000
+        assert data["tasks"][0]["id"] == "task-0"
+
+    def test_large_diff_response_handled(self):
+        """/forge/{id}/diff must handle FORGE:RESULT payloads larger than 64 KiB."""
+        client = TestClient(app)
+        large_payload = "x" * 70000
+        expected = f'FORGE:RESULT:{{"data": "{large_payload}"}}'
+
+        async def large_diff(_cmd: str) -> str:
+            return expected
+
+        with patch("aegis.web.server._forge_socket_cmd", side_effect=large_diff):
+            resp = client.get("/forge/abc123/diff", params=AUTH_PARAMS)
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "data" in data
+        assert len(data["data"]) == 70000
