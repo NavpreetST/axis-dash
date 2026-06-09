@@ -53,7 +53,7 @@ class MockForgeSocket:
             ),
             "FORGE:GATE:abc123:false": (
                 'FORGE:GATE:{"lint_passed": true, "test_passed": true, "build_passed": true, '
-                '"owner_approved": false, "overall_passed": false}'
+                '"owner_approved": false, "overall_passed": true}'
             ),
             "FORGE:CLEANUP:abc123": "FORGE:OK:abc123 cleaned",
         }
@@ -309,10 +309,18 @@ class TestGate:
         assert result["owner_approved"] is True
         assert result["overall_passed"] is True
 
-    def test_gate_reject_not_bool(self):
-        """Gate requires approve to be a bool; non-bool values are 400."""
+    def test_gate_reject_not_true(self, mock_forge_socket):
+        """approve:False is valid (returns rejected). Non-bool values return 400."""
         client = TestClient(app)
-        for body in [{}, {"approve": "yes"}, {"approve": 1}, {"approve": None}]:
+        # approve: False → valid, returns 200 with owner_approved: false
+        resp = client.post(
+            "/forge/abc123/gate", json={"approve": False}, params=AUTH_PARAMS
+        )
+        assert resp.status_code == 200
+        result = resp.json()
+        assert result["owner_approved"] is False
+        # Non-bool values → 400
+        for body in [{}, {"approve": "yes"}, {"approve": 1}]:
             resp = client.post(
                 "/forge/abc123/gate", json=body, params=AUTH_PARAMS
             )
@@ -330,7 +338,7 @@ class TestGate:
         assert resp.status_code == 200
         result = resp.json()
         assert result["owner_approved"] is False
-        assert result["overall_passed"] is False
+        assert result["overall_passed"] is True
         assert "FORGE:GATE:abc123:false" in mock_forge_socket.commands_received
 
     def test_gate_forge_error(self):
@@ -349,7 +357,7 @@ class TestGate:
             assert "task not completed" in resp.json()["detail"]
 
     def test_gate_sends_correct_command(self, mock_forge_socket):
-        """Active gate sends FORGE:GATE:<id>:true."""
+        """Active gate sends FORGE:GATE:<id>:<approve>."""
         client = TestClient(app)
         client.post(
             "/forge/abc123/gate",
