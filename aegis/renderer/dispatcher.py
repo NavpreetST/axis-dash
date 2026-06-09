@@ -177,7 +177,7 @@ async def _render_with_chain(intent: dict) -> dict:
                 last_error_class = type(e).__name__
                 first_failed_adapter = adapter.name
             if isinstance(e, QuotaExhausted):
-                if adapter is Gemini:
+                if adapter_cls is Gemini:
                     global _gemini_quota_exhausted
                     _gemini_quota_exhausted = True
                 log.warning("dispatcher: %s quota exhausted", adapter.name)

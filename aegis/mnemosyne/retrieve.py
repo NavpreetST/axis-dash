@@ -1,3 +1,4 @@
+import hashlib
 import logging
 import time
 import sqlite3
@@ -61,6 +62,7 @@ def _search_knowledge(query_text: str) -> list[dict]:
         kb.close()
         return []
 
+    tokens = fts_query.split(" AND ")
     tables = {
         "facts": ("name", "content", "source_page", "status", 5),
         "concepts": ("name", "summary", "source_pages", "status", 3),
@@ -69,12 +71,14 @@ def _search_knowledge(query_text: str) -> list[dict]:
 
     for table, (name_col, content_col, source_col, status_col, limit) in tables.items():
         try:
+            clauses = " OR ".join(f"{content_col} LIKE ?" for _ in tokens)
+            params = [f"%{t}%" for t in tokens]
             rows = kb.execute(
                 f"SELECT {name_col}, {content_col}, {source_col}, {status_col} "
-                f"FROM {table} WHERE {content_col} LIKE ? LIMIT ?",
-                (f"%{fts_query.split()[0] if fts_query.split() else query_text[:20]}%", limit)
+                f"FROM {table} WHERE ({clauses}) LIMIT ?",
+                (*params, limit)
             ).fetchall()
-        except:
+        except Exception:
             continue
 
         for r in rows:
@@ -86,7 +90,7 @@ def _search_knowledge(query_text: str) -> list[dict]:
             if src:
                 text += f" (src: {src})"
             results.append({
-                "id": f"kb-{table}-{hash(text) & 0x7FFFFFFF}",
+                "id": f"kb-{table}-{hashlib.md5(text.encode()).hexdigest()[:8]}",
                 "text": text,
                 "ts": time.time(),
                 "score": 1.0,
@@ -147,6 +151,6 @@ async def run() -> None:
             "scores": [h["score"] for h in hits],
         })
         n_kb = sum(1 for h in hits if h["id"].startswith("kb-"))
-        n_seed = sum(1 for h in hits if h.get("score", 0) == 1.0)
+        n_seed = sum(1 for h in hits if not h["id"].startswith("kb-") and h.get("score", 0) == 1.0)
         log.debug("retrieved %d hits (%d kb + %d seed + %d cosine)",
                   len(hits), n_kb, n_seed, len(hits) - n_kb - n_seed)
