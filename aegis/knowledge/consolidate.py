@@ -179,16 +179,19 @@ def _mark_consolidated(conn: sqlite3.Connection, ids: list[int]) -> None:
 # ── NIM client ───────────────────────────────────────────────────────────────
 
 async def _call_nim(payload: dict) -> dict | None:
-    backoff = INITIAL_BACKOFF
-    for attempt in range(MAX_RETRIES):
+    # Spin-wait on budget — does NOT count against MAX_RETRIES
+    while True:
         wait = NIM_BUDGET.wait_s()
         if wait > 0:
             log.debug("consolidate: rate-limited, sleeping %.1fs", wait)
             await asyncio.sleep(wait)
-        if not NIM_BUDGET.allow():
-            log.debug("consolidate: budget exhausted, sleeping 1s")
-            await asyncio.sleep(1.0)
-            continue
+        if NIM_BUDGET.allow():
+            break
+        log.debug("consolidate: budget exhausted, sleeping 1s")
+        await asyncio.sleep(1.0)
+
+    backoff = INITIAL_BACKOFF
+    for attempt in range(MAX_RETRIES):
         try:
             async with httpx.AsyncClient(timeout=NIM_TIMEOUT) as client:
                 r = await client.post(
@@ -210,6 +213,14 @@ async def _call_nim(payload: dict) -> dict | None:
             log.warning("consolidate: NIM network error (attempt %d): %s", attempt + 1, e)
             await asyncio.sleep(backoff)
             backoff = min(backoff * 2, BACKOFF_CAP)
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code >= 500:
+                log.warning("consolidate: NIM server error %d (attempt %d)", e.response.status_code, attempt + 1)
+                await asyncio.sleep(backoff)
+                backoff = min(backoff * 2, BACKOFF_CAP)
+            else:
+                log.error("consolidate: NIM client error %d: %s", e.response.status_code, e)
+                return None
         except Exception as e:
             log.warning("consolidate: NIM unexpected error (attempt %d): %s", attempt + 1, e)
             return None
@@ -217,11 +228,7 @@ async def _call_nim(payload: dict) -> dict | None:
     return None
 
 
-async def _synthesize_category(category: str, entries: list[dict], previous: str | None = None) -> str | None:
-    if category == "drift":
-        prompt = SYNTHESIS_PROMPTS["drift"].format(previous=previous or "(no previous baseline)", current="(see diff context)")
-        return None
-
+async def _synthesize_category(category: str, entries: list[dict]) -> str | None:
     entries_text = "\n\n".join(
         f"## {e['title']}\n\n{e['content']}\n\n*Source: {e['source'] or 'unknown'} | TS: {e['ts']}*"
         for e in entries
@@ -246,18 +253,6 @@ async def _synthesize_category(category: str, entries: list[dict], previous: str
         return None
 
 
-def _format_entries_for_diff(entries_by_category: dict[str, list[dict]]) -> dict[str, str]:
-    formatted = {}
-    for cat, items in entries_by_category.items():
-        if cat == "drift":
-            continue
-        parts = [f"# {cat}\n"]
-        for e in items:
-            parts.append(f"## {e['title']}\n\n{e['content']}\n")
-        formatted[cat] = "\n".join(parts)
-    return formatted
-
-
 async def _generate_drift_report(output_dir: Path, new_synthesis: dict[str, str]) -> str | None:
     previous: dict[str, str] = {}
     for cat, filename in OUTPUT_FILES.items():
@@ -268,10 +263,6 @@ async def _generate_drift_report(output_dir: Path, new_synthesis: dict[str, str]
             previous[cat] = path.read_text(encoding="utf-8")
         else:
             previous[cat] = "(no previous)"
-
-    sections = []
-    for cat in sorted(new_synthesis):
-        sections.append(f"=== {cat} ===\n\nPrevious:\n{previous.get(cat, '(none)')}\n\nCurrent:\n{new_synthesis[cat]}\n")
 
     drift_prompt = SYNTHESIS_PROMPTS["drift"].format(
         previous=json.dumps(previous, indent=2),
@@ -362,8 +353,8 @@ async def consolidate(
         new_synthesis[cat] = content
         results.append(ConsolidationResult(category=cat, entries_count=len(entries), output_path=output_path))
 
-    # Drift report — always runs if new synthesis happened or outputs exist
-    if not dry_run and ("drift" in categories if categories else True):
+    # Drift report — runs if any category was actually synthesized
+    if not dry_run and new_synthesis:
         drift_content = await _generate_drift_report(output_dir, new_synthesis)
         if drift_content:
             drift_path = output_dir / OUTPUT_FILES["drift"]
