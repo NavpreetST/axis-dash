@@ -24,6 +24,7 @@ _prev_prs: dict[str, set[int]] = {}
 
 
 async def _fetch_prs(repo: str) -> list[dict]:
+    proc: asyncio.subprocess.Process | None = None
     try:
         proc = await asyncio.create_subprocess_exec(
             "gh", "pr", "list", "--repo", repo, "--state", "open",
@@ -36,6 +37,12 @@ async def _fetch_prs(repo: str) -> list[dict]:
             log.warning("github_poller: gh pr list failed for %s: %s", repo, stderr.decode())
             return []
         return json.loads(stdout.decode())
+    except TimeoutError:
+        if proc is not None and proc.returncode is None:
+            proc.kill()
+            await proc.communicate()
+        log.warning("github_poller: gh pr list timed out for %s", repo)
+        return []
     except Exception as e:
         log.warning("github_poller: error fetching PRs for %s: %s", repo, e)
         return []
