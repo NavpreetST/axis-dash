@@ -122,6 +122,8 @@ def _load_secrets() -> None:
         if path.exists():
             for line in path.read_text(encoding="utf-8").splitlines():
                 line = line.strip()
+                if not line or line.startswith("#"):
+                    continue
                 if line.startswith("NVIDIA_API_KEY="):
                     NVIDIA_API_KEY = line.split("=", 1)[1].strip("\"'")
                     log.info("Loaded NVIDIA_API_KEY from %s", path)
@@ -447,9 +449,18 @@ def _build_archaeology_prompt(
 ) -> str:
     chunks: list[str] = []
     char_count = 0
-    for rel_path, content in files:
+    for i, (rel_path, content) in enumerate(files):
         entry = f"### {rel_path}\n\n{content}\n\n"
         if char_count + len(entry) > CHUNK_CHAR_LIMIT:
+            if i == 0:
+                truncated = content[:CHUNK_CHAR_LIMIT - 200]
+                entry = f"### {rel_path}\n\n{truncated}\n\n_[TRUNCATED at {CHUNK_CHAR_LIMIT} chars]_"
+                chunks.append(entry)
+                char_count += len(entry)
+                log.warning("archaeology: %s exceeds limit, truncated to %d chars", rel_path, CHUNK_CHAR_LIMIT)
+            else:
+                omitted = len(files) - i
+                log.warning("archaeology: limit reached, omitting %d file(s) starting with %s", omitted, rel_path)
             break
         chunks.append(entry)
         char_count += len(entry)
@@ -522,7 +533,7 @@ async def archaeology_scan(
         log.info("archaeology: %s done (%d chars)", chunk, len(content))
 
     report = "# NIM Archaeology Report\n\n"
-    report += f"_Generated: {time.strftime('%Y-%m-%d %H:%M:%S UTC')} | Model: {NIM_MODEL} | Files scanned: {total_files}_\n\n"
+    report += f"_Generated: {time.strftime('%Y-%m-%d %H:%M:%S', time.gmtime())} UTC | Model: {NIM_MODEL} | Files scanned: {total_files}_\n\n"
     report += "## Legend\n\n"
     report += "| Tag | Meaning |\n"
     report += "|---|---|\n"
@@ -537,10 +548,11 @@ async def archaeology_scan(
     report += "\n\n---\n\n".join(report_sections)
 
     # Write report
-    output_path = output_dir / ARCHAEOLOGY_OUTPUT
-    _write_output(output_path, report)
-    log.info("archaeology: wrote %s (%d bytes, %d files across %d chunks)",
-             output_path, len(report), total_files, len(report_sections))
+    if not dry_run:
+        output_path = output_dir / ARCHAEOLOGY_OUTPUT
+        _write_output(output_path, report)
+        log.info("archaeology: wrote %s (%d bytes, %d files across %d chunks)",
+                 output_path, len(report), total_files, len(report_sections))
 
     return report_sections
 
