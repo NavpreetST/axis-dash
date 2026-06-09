@@ -52,6 +52,11 @@ def record_provider_attempt(
                     "local_daily_used": used,
                     "quota_window": "America/Los_Angeles",
                 },
+                "nim_nano": {
+                    "enabled": True,
+                    "key_fingerprint": _key_fingerprint("NVIDIA_API_KEY"),
+                    "timeout": 10.0,
+                },
                 "groq": {
                     "enabled": True,
                     "model": "llama-3.3-70b-versatile",

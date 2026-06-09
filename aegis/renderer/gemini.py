@@ -101,6 +101,8 @@ async def render(intent: dict) -> str:
     Raises TransientError on 5xx / network / timeout / malformed.
     """
     log.info("intent fields=%s sample=%s", list(intent.keys()), {k: (str(v)[:80]) for k, v in intent.items()})
+    if _FORCE_FAIL:
+        raise TransientError("gemini force-failed by FORCE_GEMINI_FAIL env var")
     key = _api_key()
     tone = intent.get("tone") or {}
     ctx = intent.get("context_texts") or []
@@ -122,8 +124,6 @@ async def render(intent: dict) -> str:
             "thinkingConfig": {"thinkingBudget": 0},
         },
     }
-    if _FORCE_FAIL:
-        raise TransientError("gemini force-failed by FORCE_GEMINI_FAIL env var")
     try:
         _quota.reserve()  # Block 1.1: pre-flight only; record_success() after usable 200
     except QuotaExhausted:
