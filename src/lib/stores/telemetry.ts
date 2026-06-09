@@ -10,10 +10,10 @@ export interface RuntimeInfo {
   commit?: string;
   socket_path?: string | null;
   launch_method?: string;
-  renderer_chain?: string;
-  memory_backend?: string;
-  ncp?: string | number;
-  budget?: string | number;
+  renderer_chain?: string[];
+  memory_backend?: { type: string; path: string; exists: boolean };
+  ncp?: { params: number; hidden_size: number };
+  budget?: Record<string, { used: number; budget: number; window: string }>;
   known_issues?: string[];
 }
 
@@ -44,6 +44,8 @@ export interface NeurobusHistory {
  *   cannot be computed; the UI renders `--` instead of fabricating a value.
  * - `neurobusHistory` and `hidden_state` are frontend-only — the bridge
  *   does not send them.
+ * - The bridge sends the hidden state as `h`; the frontend canonical name
+ *   is `hidden_state`. `applyLiveFrame` maps `h` → `hidden_state`.
  */
 export interface TelemetryData {
   uptime_seconds: number;
@@ -57,6 +59,8 @@ export interface TelemetryData {
   neurobus: Neurobus;
   neurobusHistory: NeurobusHistory;
   hidden_state: number[];
+  /** Bridge field name for the 64-dim hidden state vector. */
+  h?: number[];
   runtime?: RuntimeInfo;
 }
 
@@ -251,7 +255,7 @@ const createTelemetryStore = () => {
         is_speaking: frame.is_speaking ?? state.is_speaking,
         neurobus: nextNeurobus,
         neurobusHistory: nextHistory,
-        hidden_state: frame.hidden_state ?? state.hidden_state,
+        hidden_state: frame.hidden_state ?? frame.h ?? state.hidden_state,
         runtime: frame.runtime ? { ...state.runtime, ...frame.runtime } : state.runtime
       };
     });

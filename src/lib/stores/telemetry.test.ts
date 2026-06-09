@@ -474,6 +474,13 @@ describe('telemetry store', () => {
       expect(s.uptime_seconds).toBe(75114);
     });
 
+    it('maps bridge "h" field to frontend "hidden_state"', () => {
+      const hValues = [0.02, -0.01, 0.09, -0.03, 0.07];
+      telemetry.applyLiveFrame({ ...liveFrame, h: hValues } as Partial<TelemetryData>);
+      const s = get(telemetry);
+      expect(s.hidden_state).toEqual(hValues);
+    });
+
     it('keeps a missing field at its previous value (no overwrite with undefined)', () => {
       telemetry.applyLiveFrame(liveFrame);
       const after = get(telemetry);
@@ -621,10 +628,10 @@ describe('telemetry store', () => {
         commit: 'abc123def',
         socket_path: '/var/run/helios.sock',
         launch_method: 'systemd',
-        renderer_chain: 'aegis->orchestrator',
-        memory_backend: 'lmdb',
-        ncp: 4,
-        budget: '12h',
+        renderer_chain: ['gemini', 'groq', 'template'],
+        memory_backend: { type: 'sqlite', path: 'mnemosyne.db', exists: true },
+        ncp: { params: 41361, hidden_size: 64 },
+        budget: { gemini: { used: 7, budget: 240, window: 'America/Los_Angeles' } },
         known_issues: ['issue-1', 'issue-2']
       };
       telemetry.applyLiveFrame({ uptime_seconds: 100, tick_rate: 1.0, runtime: fullRuntime });
@@ -641,14 +648,17 @@ describe('telemetry store', () => {
       telemetry.applyLiveFrame({
         uptime_seconds: 200,
         tick_rate: 1.0,
-        runtime: { ncp: 8, budget: '24h' }
+        runtime: {
+          ncp: { params: 8000, hidden_size: 32 },
+          budget: { gemini: { used: 3, budget: 100, window: 'UTC' } }
+        }
       });
       const s = get(telemetry);
       expect(s.runtime).toEqual({
         commit: 'abc123',
         socket_path: '/run/helios.sock',
-        ncp: 8,
-        budget: '24h'
+        ncp: { params: 8000, hidden_size: 32 },
+        budget: { gemini: { used: 3, budget: 100, window: 'UTC' } }
       });
     });
 
@@ -674,15 +684,20 @@ describe('telemetry store', () => {
       expect(s.runtime?.known_issues).toEqual([]);
     });
 
-    it('accepts string or number for ncp/budget fields', () => {
+    it('accepts object ncp/budget fields matching bridge shape', () => {
       telemetry.applyLiveFrame({
         uptime_seconds: 100,
         tick_rate: 1.0,
-        runtime: { ncp: 'auto', budget: 48 }
+        runtime: {
+          ncp: { params: 41361, hidden_size: 64 },
+          budget: { gemini: { used: 7, budget: 240, window: 'America/Los_Angeles' } }
+        }
       });
       const s = get(telemetry);
-      expect(s.runtime?.ncp).toBe('auto');
-      expect(s.runtime?.budget).toBe(48);
+      expect(s.runtime?.ncp).toEqual({ params: 41361, hidden_size: 64 });
+      expect(s.runtime?.budget).toEqual({
+        gemini: { used: 7, budget: 240, window: 'America/Los_Angeles' }
+      });
     });
   });
 });
