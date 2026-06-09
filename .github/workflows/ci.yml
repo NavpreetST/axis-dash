@@ -75,7 +75,18 @@ jobs:
       - name: Install dev deps
         run: pip install -e ".[dev]"
       - name: Pytest
-        run: pytest -v --tb=short
+        run: pytest -v --tb=short --cov --cov-report=json
+      - name: Sync coverage
+        if: always() && github.event_name == 'pull_request'
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+        run: |
+          python scripts/ci_coverage_sync.py \
+            --repo ${{ github.repository }} \
+            --pr-number ${{ github.event.pull_request.number }} \
+            --commit-sha ${{ github.sha }} \
+            --coverage-json coverage.json
       - name: Sync gate status
         if: always() && github.event_name == 'pull_request'
         env:

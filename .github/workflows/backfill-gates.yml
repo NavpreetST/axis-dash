@@ -1,0 +1,35 @@
+name: "Backfill — gate_status to Supabase"
+
+on:
+  workflow_dispatch:
+    inputs:
+      pr-range:
+        description: "PR range (e.g. 25-45 or 30,31,32)"
+        required: true
+        default: "25-45"
+
+permissions:
+  contents: read
+
+jobs:
+  backfill:
+    name: "Backfill gate_status"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5.6.0
+        with:
+          python-version: "3.12"
+      - name: Backfill gate_status
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_RANGE: ${{ github.event.inputs.pr-range }}
+          REPO: ${{ github.repository }}
+        run: |
+          python scripts/ci_gate_sync_backfill.py \
+            --repo "$REPO" \
+            --pr-range "$PR_RANGE"
