@@ -1,3 +1,4 @@
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -189,4 +190,99 @@ def test_17_cors_preflight_near_miss_origin_rejected():
     })
     assert resp.status_code == 204
     assert "Access-Control-Allow-Origin" not in resp.headers
+
+
+# ---- Coordination memory / conversation endpoints auth tests ---------------
+
+
+def test_18_api_conversations_bearer_token():
+    """Bearer token grants access to /api/conversations."""
+    client = TestClient(app)
+    # Mock an empty DB so the endpoint returns [] without hitting real SQLite
+    with patch("aegis.web.server._MEMORY_DB", Path("/nonexistent/mnemosyne.db")):
+        resp = client.get("/api/conversations",
+                          headers={"Authorization": "Bearer test-token-12345"})
+    assert resp.status_code == 200
+    assert resp.json() == []
+
+
+def test_19_api_conversations_query_token():
+    """Query-param token grants access to /api/conversations."""
+    client = TestClient(app)
+    with patch("aegis.web.server._MEMORY_DB", Path("/nonexistent/mnemosyne.db")):
+        resp = client.get("/api/conversations?token=test-token-12345")
+    assert resp.status_code == 200
+    assert resp.json() == []
+
+
+def test_20_api_conversations_bad_token():
+    """Bad token returns 401 on /api/conversations."""
+    client = TestClient(app)
+    resp = client.get("/api/conversations?token=bad-token")
+    assert resp.status_code == 401
+    assert resp.json() == {"detail": "auth_required"}
+
+
+def test_21_api_conversation_detail_missing():
+    """Missing conversation returns 404."""
+    client = TestClient(app)
+    resp = client.get("/api/conversations/999",
+                      headers={"Authorization": "Bearer test-token-12345"})
+    assert resp.status_code == 404
+    assert resp.json() == {"detail": "conversation_not_found"}
+
+
+def test_22_api_conversation_detail_bearer_token():
+    """Bearer token grants access to /api/conversations/:id."""
+    client = TestClient(app)
+    resp = client.get("/api/conversations/1",
+                      headers={"Authorization": "Bearer test-token-12345"})
+    # No real DB → 404 (no conversations exist)
+    assert resp.status_code in (200, 404)
+
+
+def test_23_api_conversation_detail_bad_token():
+    """Bad token returns 401 on /api/conversations/:id."""
+    client = TestClient(app)
+    resp = client.get("/api/conversations/1?token=bad-token")
+    assert resp.status_code == 401
+    assert resp.json() == {"detail": "auth_required"}
+
+
+def test_24_api_memory_search_bearer_token():
+    """Bearer token grants access to /api/memory/search."""
+    client = TestClient(app)
+    with patch("aegis.web.server._KNOWLEDGE_DB", Path("/nonexistent/knowledge.db")):
+        resp = client.get("/api/memory/search?q=NCP",
+                          headers={"Authorization": "Bearer test-token-12345"})
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "facts" in data
+    assert "concepts" in data
+    assert "research_questions" in data
+
+
+def test_25_api_memory_search_query_token():
+    """Query-param token grants access to /api/memory/search."""
+    client = TestClient(app)
+    with patch("aegis.web.server._KNOWLEDGE_DB", Path("/nonexistent/knowledge.db")):
+        resp = client.get("/api/memory/search?q=NCP&token=test-token-12345")
+    assert resp.status_code == 200
+
+
+def test_26_api_memory_search_bad_token():
+    """Bad token returns 401 on /api/memory/search."""
+    client = TestClient(app)
+    resp = client.get("/api/memory/search?q=NCP&token=bad-token")
+    assert resp.status_code == 401
+    assert resp.json() == {"detail": "auth_required"}
+
+
+def test_27_api_memory_search_empty_query():
+    """Empty query returns 400 on /api/memory/search."""
+    client = TestClient(app)
+    resp = client.get("/api/memory/search?q=",
+                      headers={"Authorization": "Bearer test-token-12345"})
+    assert resp.status_code == 400
+    assert resp.json() == {"detail": "missing_query"}
 

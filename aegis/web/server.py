@@ -20,6 +20,7 @@ import json
 import logging
 import os
 import re
+import sqlite3
 import time
 from datetime import UTC, datetime
 from pathlib import Path
@@ -1074,6 +1075,182 @@ async def logs_sse(request: Request) -> StreamingResponse:
             "X-Accel-Buffering": "no",
         },
     )
+
+
+# ---- Coordination memory / conversation endpoints (Phase 3, P2) ------------
+#
+# Read-only access to the Mnemosyne episode store and the Knowledge DB
+# (MiniLM embeddings + FTS5).  Both are SQLite databases on the box.
+
+_KNOWLEDGE_DB = Path(os.getenv("AEGIS_KNOWLEDGE_DB", "/opt/aegis/knowledge/helios_knowledge.db"))
+_CONVERSATION_GAP_SECONDS = 900  # 15 min gap between episodes = new conversation
+
+
+def _db_connect(db_path: Path) -> sqlite3.Connection | None:
+    """Open a read-only SQLite connection, or None on failure."""
+    try:
+        conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+        conn.row_factory = sqlite3.Row
+        return conn
+    except (sqlite3.Error, OSError):
+        return None
+
+
+def _load_conversation_groups() -> list[dict]:
+    """Group episodes into conversations by time proximity."""
+    conn = _db_connect(_MEMORY_DB)
+    if conn is None:
+        return []
+    try:
+        rows = conn.execute(
+            "SELECT id, ts, text FROM episodes ORDER BY ts"
+        ).fetchall()
+    except sqlite3.Error:
+        return []
+    finally:
+        conn.close()
+
+    groups: list[dict] = []
+    current: list[dict] | None = None
+    for row in rows:
+        ep = {"id": row["id"], "ts": row["ts"], "text": row["text"]}
+        if current is None or (ep["ts"] - current[-1]["ts"]) > _CONVERSATION_GAP_SECONDS:
+            current = []
+            groups.append({"episodes": current})
+        current.append(ep)
+
+    result = []
+    for idx, g in enumerate(groups, 1):
+        eps = g["episodes"]
+        first = eps[0]
+        last = eps[-1]
+        topic = first["text"].split("\n")[0][:120]
+        result.append({
+            "id": idx,
+            "topic": topic,
+            "message_count": len(eps),
+            "created_at": first["ts"],
+            "updated_at": last["ts"],
+        })
+    return result
+
+
+def _load_conversation_by_id(conversation_id: int) -> dict | None:
+    """Return a single conversation with its messages, or None if not found."""
+    groups = _load_conversation_groups()
+    for g in groups:
+        if g["id"] == conversation_id:
+            # Re-fetch messages for this conversation
+            conn = _db_connect(_MEMORY_DB)
+            if conn is None:
+                return None
+            try:
+                first_ts = g["created_at"]
+                last_ts = g["updated_at"]
+                rows = conn.execute(
+                    "SELECT id, ts, text, neurobus, action FROM episodes "
+                    "WHERE ts >= ? AND ts <= ? ORDER BY ts",
+                    (first_ts, last_ts),
+                ).fetchall()
+            except sqlite3.Error:
+                return None
+            finally:
+                conn.close()
+            messages = [
+                {
+                    "id": r["id"],
+                    "ts": r["ts"],
+                    "text": r["text"],
+                    "neurobus": json.loads(r["neurobus"]) if r["neurobus"] else None,
+                    "action": r["action"],
+                }
+                for r in rows
+            ]
+            return {"id": g["id"], "topic": g["topic"], "messages": messages}
+    return None
+
+
+def _search_knowledge(q: str, top_n: int = 5) -> dict:
+    """Search knowledge DB via FTS5 (text only — no embedding model)."""
+    conn = _db_connect(_KNOWLEDGE_DB)
+    if conn is None:
+        return {"facts": [], "concepts": [], "research_questions": []}
+
+    def search_table(table: str, fts_table: str, label_col: str, content_col: str, src_col: str) -> list[dict]:
+        try:
+            rows = conn.execute(
+                f"SELECT rowid, rank FROM {fts_table} "
+                f"WHERE {fts_table} MATCH ? ORDER BY rank LIMIT ?",
+                (q, top_n),
+            ).fetchall()
+            if not rows:
+                # LIKE fallback
+                pattern = f"%{q}%"
+                rows = conn.execute(
+                    f"SELECT {label_col}, {content_col}, {src_col} FROM {table} "
+                    f"WHERE {content_col} LIKE ? OR {label_col} LIKE ? LIMIT ?",
+                    (pattern, pattern, top_n),
+                ).fetchall()
+                return [
+                    {"label": r[0], "content": r[1][:300], "source": r[2]}
+                    for r in rows
+                ]
+            ids = [r[0] for r in rows]
+            placeholders = ",".join("?" * len(ids))
+            cols = conn.execute(f"PRAGMA table_info({table})").fetchall()
+            col_names = [c[1] for c in cols]
+            detail_rows = conn.execute(
+                f"SELECT * FROM {table} WHERE id IN ({placeholders})", ids
+            ).fetchall()
+            result = []
+            for r in detail_rows:
+                row_dict = dict(zip(col_names, r))
+                result.append({
+                    "label": row_dict.get(label_col, ""),
+                    "content": str(row_dict.get(content_col, ""))[:300],
+                    "source": row_dict.get(src_col, ""),
+                    "status": row_dict.get("status", ""),
+                })
+            return result
+        except sqlite3.Error:
+            return []
+
+    return {
+        "facts": search_table("facts", "facts_fts", "name", "content", "source_page"),
+        "concepts": search_table("concepts", "concepts_fts", "name", "summary", "source_pages"),
+        "research_questions": search_table(
+            "research_questions", "research_questions_fts", "question", "question", "source_page"
+        ),
+    }
+
+
+@app.get("/api/conversations")
+async def api_conversations(request: Request) -> list[dict]:
+    """List conversation groups from the episode store. Requires auth token."""
+    if not _check_token(request):
+        raise HTTPException(status_code=401, detail="auth_required")
+    return _load_conversation_groups()
+
+
+@app.get("/api/conversations/{conversation_id:int}")
+async def api_conversation_detail(conversation_id: int, request: Request) -> dict:
+    """Get a single conversation with its messages. Requires auth token."""
+    if not _check_token(request):
+        raise HTTPException(status_code=401, detail="auth_required")
+    conv = _load_conversation_by_id(conversation_id)
+    if conv is None:
+        raise HTTPException(status_code=404, detail="conversation_not_found")
+    return conv
+
+
+@app.get("/api/memory/search")
+async def api_memory_search(request: Request, q: str = "") -> dict:
+    """Semantic / text search over the knowledge base. Requires auth token."""
+    if not _check_token(request):
+        raise HTTPException(status_code=401, detail="auth_required")
+    if not q.strip():
+        raise HTTPException(status_code=400, detail="missing_query")
+    return _search_knowledge(q.strip())
 
 
 if STATIC_DIR.exists():
