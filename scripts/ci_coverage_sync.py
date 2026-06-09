@@ -142,7 +142,7 @@ def main() -> int:
 
     print(f"[coverage-sync] {summary['total_pct']}% ({summary['covered_lines']}/{summary['num_statements']} lines)")
 
-    return upsert_coverage(
+    upsert_coverage(
         repo=args.repo,
         pr_number=args.pr_number,
         commit_sha=args.commit_sha,
@@ -151,6 +151,7 @@ def main() -> int:
         missing_lines=summary["missing_lines"],
         num_statements=summary["num_statements"],
     )
+    return 0
 
 
 if __name__ == "__main__":

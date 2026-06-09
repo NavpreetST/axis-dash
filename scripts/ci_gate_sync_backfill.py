@@ -173,10 +173,12 @@ def _map_gate_name(check_run_name: str) -> str | None:
     if check_run_name in _GATE_NAME_MAP:
         return _GATE_NAME_MAP[check_run_name]
 
-    # Try case-insensitive partial match
+    # Try case-insensitive partial match (require >=5 chars to avoid false positives)
     lower = check_run_name.lower()
     for key, gate in _GATE_NAME_MAP.items():
-        if key.lower() in lower or lower in key.lower():
+        if len(key) >= 5 and key.lower() in lower:
+            return gate
+        if len(lower) >= 5 and lower in key.lower():
             return gate
 
     return None
@@ -254,15 +256,33 @@ def main() -> int:
     parser.add_argument("--pr-range", required=True, help="PR range, e.g. 25-45 or 30,31,32")
     args = parser.parse_args()
 
-    # Parse PR range
+    # Parse PR range with validation
     prs: list[int] = []
     for part in args.pr_range.split(","):
         part = part.strip()
-        if "-" in part:
-            start, end = part.split("-", 1)
-            prs.extend(range(int(start), int(end) + 1))
-        else:
-            prs.append(int(part))
+        if not part:
+            continue
+        try:
+            if "-" in part:
+                start_str, end_str = part.split("-", 1)
+                start, end = int(start_str), int(end_str)
+                if start < 1 or end < start:
+                    print(f"[backfill] invalid range: {part}", file=sys.stderr)
+                    return 1
+                prs.extend(range(start, end + 1))
+            else:
+                num = int(part)
+                if num < 1:
+                    print(f"[backfill] invalid PR number: {part}", file=sys.stderr)
+                    return 1
+                prs.append(num)
+        except ValueError:
+            print(f"[backfill] invalid PR range input: {part}", file=sys.stderr)
+            return 1
+
+    if not prs:
+        print("[backfill] no PR numbers to process", file=sys.stderr)
+        return 1
 
     print(f"Backfilling gate_status for {len(prs)} PRs ({prs[0]}–{prs[-1]})...")
     print(f"Repo: {args.repo}")
@@ -274,9 +294,13 @@ def main() -> int:
     for pr_num in prs:
         results = backfill_pr(args.repo, pr_num)
         total_gates += len(results)
-        # Small delay to avoid rate limiting (60 req/hr unauthenticated)
-        if not GITHUB_TOKEN:
-            time.sleep(1.2)
+        # Rate-limit: 60/hr unauthenticated, 5000/hr authenticated
+        if GITHUB_TOKEN:
+            time.sleep(0.5)
+        else:
+            print("  ⚠️  No GITHUB_TOKEN — sleeping 60s to stay within rate limit (60/hr)")
+            print("  💡  Set GITHUB_TOKEN env var for 5000/hr limit")
+            time.sleep(60)
         print()
 
     print(f"Done. {total_gates} gate statuses upserted across {len(prs)} PRs.")
