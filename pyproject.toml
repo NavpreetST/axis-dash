@@ -25,6 +25,7 @@ aegis = "aegis.cli:main"
 dev = [
     "pytest>=8",
     "pytest-asyncio>=0.23",
+    "pytest-cov>=5",
     "ruff>=0.4",
 ]
 
