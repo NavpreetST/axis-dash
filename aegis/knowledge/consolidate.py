@@ -13,13 +13,16 @@ Usage:
     python -m aegis.knowledge.consolidate
     python -m aegis.knowledge.consolidate --dry-run
     python -m aegis.knowledge.consolidate --category theory,roadmap
+    python -m aegis.knowledge.consolidate --archaeology
+    python -m aegis.knowledge.consolidate --archaeology --content-dir /path/to/helios-md
 
 Environment:
-    NVIDIA_API_KEY          — NIM auth (required)
+    NVIDIA_API_KEY          — NIM auth (required; falls back to secrets.env)
     AEGIS_STATE_DIR         — runtime state dir (default: /var/lib/aegis)
     AEGIS_KNOWLEDGE_DB      — path to knowledge DB (default: STATE_DIR/helios_knowledge.db)
     AEGIS_KNOWLEDGE_OUTPUT  — output dir for reports (default: STATE_DIR/consolidated)
     AEGIS_NIM_MODEL         — NIM model override (default: nvidia/nemotron-3-super-120b-a12b)
+    HELIOS_CONTENT_DIR      — root of Helios markdown corpus (for --archaeology)
 """
 from __future__ import annotations
 
@@ -47,7 +50,7 @@ NIM_MODEL = os.getenv("AEGIS_NIM_MODEL", "nvidia/nemotron-3-super-120b-a12b")
 MAX_RETRIES = 5
 INITIAL_BACKOFF = 1.0
 BACKOFF_CAP = 30.0
-NIM_TIMEOUT = 120.0  # generous for deep synthesis
+NIM_TIMEOUT = 120.0
 
 STATE_DIR = Path(os.getenv("AEGIS_STATE_DIR", "/var/lib/aegis"))
 DB_PATH = Path(os.getenv("AEGIS_KNOWLEDGE_DB", str(STATE_DIR / "helios_knowledge.db")))
@@ -62,6 +65,71 @@ OUTPUT_FILES: dict[str, str] = {
     "todos": "todos.md",
     "drift": "drift-report.md",
 }
+
+# ── Archaeology constants ────────────────────────────────────────────────────
+
+ARCHAEOLOGY_DIRS: list[str] = [
+    "core", "modules", "research", "roadmap",
+    "spec", "meta", "archive", "Antigravity",
+]
+
+ARCHAEOLOGY_DESCRIPTIONS: dict[str, str] = {
+    "core": "Core ideology, first principles, identity invariants",
+    "modules": "Component module specs and designs (NCP, Mnemosyne, Nexus, Crucible, etc.)",
+    "research": "Deep theory investigations, consolidated theory, experimental avenues, external references",
+    "roadmap": "Planning, milestones, session handoffs, project-state projections",
+    "spec": "Technical specification documents (build specs, CI/CD, dashboard, forge)",
+    "meta": "Meta-documentation, master indexes, peer review exports, integrity docs",
+    "archive": "Backlog, superseded ideas, historical workspace exports, open questions",
+    "Antigravity": "Experimental initiatives, AXIS roadmap todo items, session handoffs, drift audits",
+}
+
+ARCHAEOLOGY_GROUND_TRUTH = """
+## Ground Truth Reference (for DRIFT detection)
+
+These are the current architectural facts. Any file stating otherwise is DRIFT:
+
+- NCP brain: 41,361 params, HIDDEN=64, INPUT=388, OUTPUT=40
+- Process management: nohup (NOT systemd)
+- Location: Magdeburg, Germany (NOT Berlin)
+- Renderer API calls: 240/day, Pacific time zone reset (NOT 480/day)
+- Memory store: SQLite at ~/.local/share/aegis/mnemosyne.db (NOT /var/ai/memory/)
+- Renderer chain order: Gemini 2.5 Flash (primary) -> NIM nvidia/llama-3.1-nemotron-nano-8b-v1 (fallback 1) -> Groq Llama-3-70B (fallback 2) -> offline Jinja template (fallback 3)
+- PAM threshold: >= 0.83
+- CR-1 invariant: No fitness reward for self-preservation, reproduction, or resource accumulation
+- Identity invariants: PAM >= 0.83, inhibitory gate, rate-limited self-modification
+- Renderer NIM tier: nvidia/llama-3.1-nemotron-nano-8b-v1 (NOT nemotron-120b — that is the consolidate/archaeology model)
+- Engagement required: 50-100 hours interaction data for NCP training convergence
+- Brain: NCP CfC 41K params. Mouth: cloud renderer chain. These are NEVER conflated.
+"""
+
+CHUNK_CHAR_LIMIT = 80_000  # per chunk before splitting
+
+# ── Secrets loader ───────────────────────────────────────────────────────────
+
+SECRETS_ENV_PATHS = [
+    Path("secrets.env"),
+    Path.home() / ".config" / "aegis" / "secrets.env",
+    STATE_DIR / "secrets.env",
+]
+
+
+def _load_secrets() -> None:
+    global NVIDIA_API_KEY
+    if NVIDIA_API_KEY:
+        return
+    for path in SECRETS_ENV_PATHS:
+        if path.exists():
+            for line in path.read_text(encoding="utf-8").splitlines():
+                line = line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                if line.startswith("NVIDIA_API_KEY="):
+                    NVIDIA_API_KEY = line.split("=", 1)[1].strip("\"'")
+                    log.info("Loaded NVIDIA_API_KEY from %s", path)
+                    return
+    log.warning("NVIDIA_API_KEY not found in env or secrets.env")
+
 
 # ── Synthesis prompts ────────────────────────────────────────────────────────
 
@@ -297,6 +365,198 @@ def _write_output(path: Path, content: str) -> None:
     log.info("consolidate: wrote %s (%d bytes)", path, len(content))
 
 
+# ── Archaeology helpers ──────────────────────────────────────────────────────
+
+ARCHAEOLOGY_PROMPT = """\
+You are an archaeological analysis engine. You are analyzing a folder of Helios \
+project documentation. Read all files below and classify EACH file's dominant \
+signal(s) into these categories. Report ALL findings you discover.
+
+## Categories
+
+**UNDERPROMPTED** — A promising idea or component that appears in one or two \
+places but has never been actively built, specified, or pursued. It deserves \
+attention but has none.
+
+**GRADUATE** — Something currently parked in archive/experimental/backlog that \
+should be promoted to active roadmap or spec status. It is ready to build.
+
+**CONTRADICT** — Two or more files in this corpus make claims that cannot both \
+be true. Identify the specific contradiction.
+
+**ORPHAN** — A component, capability, or idea that requires a dependency that \
+does not exist yet. It is blocked by something missing.
+
+**DRIFT** — A factual claim that contradicts established ground truth (see \
+Ground Truth Reference below). These are stale beliefs that have been falsified.
+
+**AFFECT** — Any reference to the 7 primary affects (coherence-hunger, \
+prediction-thirst, reference-frame-itch, compositional-joy, latency-displeasure, \
+distillation-pride, heterarchy-comfort), 5 sensitivity drives, or the animal \
+instinct metaphors (tiger, bird, ant/bee, octopus, corvid). Also flag files \
+that discuss affect/emotion/motivation in non-native ways.
+
+**MISSING_SPEC** — An idea, component, or module that clearly needs a written \
+specification but does not have one. Something you would want to build but cannot \
+because the spec does not exist.
+
+## Output format
+
+For each finding, output in this exact format:
+
+### {FOLDER}/{filename}
+**Category:** CATEGORY_NAME
+**Signal:** 1-2 sentence description of the finding
+**Evidence:** 1-2 sentence justification with file content reference
+**Action:** What should be done (if applicable)
+
+If a file has multiple findings, list them as separate entries. If a file has \
+no findings, skip it entirely. Start directly with findings — no preamble.
+
+{ground_truth}
+
+## Folder: {folder_name} ({folder_description})
+
+## Files
+
+{files_content}
+"""
+
+
+def _collect_files_by_chunk(base_dir: Path, chunk: str) -> list[tuple[str, str]]:
+    chunk_dir = base_dir / chunk
+    if not chunk_dir.is_dir():
+        log.warning("archaeology: chunk dir %s not found, skipping", chunk_dir)
+        return []
+    files: list[tuple[str, str]] = []
+    for md_path in sorted(chunk_dir.rglob("*.md")):
+        if ".git" in md_path.parts or ".obsidian" in md_path.parts:
+            continue
+        try:
+            text = md_path.read_text(encoding="utf-8", errors="replace")
+        except Exception as e:
+            log.warning("archaeology: skipping %s: %s", md_path, e)
+            continue
+        rel = md_path.relative_to(base_dir).as_posix()
+        files.append((rel, text))
+    return files
+
+
+def _build_archaeology_prompt(
+    folder_name: str,
+    description: str,
+    files: list[tuple[str, str]],
+) -> str:
+    chunks: list[str] = []
+    char_count = 0
+    for i, (rel_path, content) in enumerate(files):
+        entry = f"### {rel_path}\n\n{content}\n\n"
+        if char_count + len(entry) > CHUNK_CHAR_LIMIT:
+            if i == 0:
+                truncated = content[:CHUNK_CHAR_LIMIT - 200]
+                entry = f"### {rel_path}\n\n{truncated}\n\n_[TRUNCATED at {CHUNK_CHAR_LIMIT} chars]_"
+                chunks.append(entry)
+                char_count += len(entry)
+                log.warning("archaeology: %s exceeds limit, truncated to %d chars", rel_path, CHUNK_CHAR_LIMIT)
+            else:
+                omitted = len(files) - i
+                log.warning("archaeology: limit reached, omitting %d file(s) starting with %s", omitted, rel_path)
+            break
+        chunks.append(entry)
+        char_count += len(entry)
+    files_text = "\n".join(chunks)
+    return ARCHAEOLOGY_PROMPT.format(
+        ground_truth=ARCHAEOLOGY_GROUND_TRUTH,
+        folder_name=folder_name,
+        folder_description=description,
+        files_content=files_text,
+    )
+
+
+ARCHAEOLOGY_OUTPUT = "nim-archaeology-report.md"
+
+
+async def archaeology_scan(
+    content_dir: Path,
+    output_dir: Path = OUTPUT_DIR,
+    dry_run: bool = False,
+) -> list[str]:
+    _load_secrets()
+    if not NVIDIA_API_KEY and not dry_run:
+        log.error("archaeology: NVIDIA_API_KEY not set")
+        return []
+
+    report_sections: list[str] = []
+    total_files = 0
+
+    for chunk in ARCHAEOLOGY_DIRS:
+        description = ARCHAEOLOGY_DESCRIPTIONS.get(chunk, chunk)
+        files = _collect_files_by_chunk(content_dir, chunk)
+        if not files:
+            log.info("archaeology: no files in %s, skipping", chunk)
+            continue
+        total_files += len(files)
+        log.info("archaeology: scanning %s (%d files)", chunk, len(files))
+
+        if dry_run:
+            report_sections.append(
+                f"## {chunk}\n\n_[DRY RUN — would analyze {len(files)} files]_\n"
+            )
+            continue
+
+        prompt = _build_archaeology_prompt(chunk, description, files)
+        payload = {
+            "model": NIM_MODEL,
+            "messages": [{"role": "user", "content": prompt}],
+            "max_tokens": 8192,
+            "temperature": 0.2,
+        }
+
+        response = await _call_nim(payload)
+        if not response:
+            log.error("archaeology: NIM call failed for %s", chunk)
+            report_sections.append(
+                f"## {chunk}\n\n_ERROR: NIM call failed_\n"
+            )
+            continue
+
+        try:
+            content = response["choices"][0]["message"]["content"]
+        except (KeyError, IndexError, ValueError) as e:
+            log.warning("archaeology: malformed response for %s: %s", chunk, e)
+            report_sections.append(
+                f"## {chunk}\n\n_ERROR: Malformed NIM response_\n"
+            )
+            continue
+
+        report_sections.append(content)
+        log.info("archaeology: %s done (%d chars)", chunk, len(content))
+
+    report = "# NIM Archaeology Report\n\n"
+    report += f"_Generated: {time.strftime('%Y-%m-%d %H:%M:%S', time.gmtime())} UTC | Model: {NIM_MODEL} | Files scanned: {total_files}_\n\n"
+    report += "## Legend\n\n"
+    report += "| Tag | Meaning |\n"
+    report += "|---|---|\n"
+    report += "| UNDERPROMPTED | Promising idea never actively built |\n"
+    report += "| GRADUATE | Parked idea ready for promotion |\n"
+    report += "| CONTRADICT | Conflicting claims within corpus |\n"
+    report += "| ORPHAN | Component missing a dependency |\n"
+    report += "| DRIFT | Stale fact contradicts ground truth |\n"
+    report += "| AFFECT | References affect stack or emotion |\n"
+    report += "| MISSING_SPEC | Needs a written spec |\n\n"
+    report += "---\n\n"
+    report += "\n\n---\n\n".join(report_sections)
+
+    # Write report
+    if not dry_run:
+        output_path = output_dir / ARCHAEOLOGY_OUTPUT
+        _write_output(output_path, report)
+        log.info("archaeology: wrote %s (%d bytes, %d files across %d chunks)",
+                 output_path, len(report), total_files, len(report_sections))
+
+    return report_sections
+
+
 # ── Main flow ────────────────────────────────────────────────────────────────
 
 @dataclass
@@ -372,13 +632,15 @@ async def consolidate(
 
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="NIM deep knowledge consolidation for Helios",
+        description="NIM deep knowledge consolidation and archaeology for Helios",
     )
     parser.add_argument("--db", default=None, help="Path to helios_knowledge.db (default: $AEGIS_KNOWLEDGE_DB or STATE_DIR/helios_knowledge.db)")
     parser.add_argument("--output-dir", default=None, help="Output directory for reports (default: $AEGIS_KNOWLEDGE_OUTPUT or STATE_DIR/consolidated)")
     parser.add_argument("--category", default=None, help="Comma-separated categories to process (default: all except drift; drift auto-runs after synthesis)")
     parser.add_argument("--dry-run", action="store_true", help="Show what would be done without calling NIM or writing files")
     parser.add_argument("--verbose", "-v", action="store_true", help="Enable debug logging")
+    parser.add_argument("--archaeology", action="store_true", help="Run archaeology scan on Helios markdown corpus")
+    parser.add_argument("--content-dir", default=None, help="Root of Helios markdown corpus (default: $HELIOS_CONTENT_DIR)")
     return parser.parse_args()
 
 
@@ -389,8 +651,25 @@ def main() -> None:
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     )
 
-    db = Path(args.db) if args.db else DB_PATH
     out_dir = Path(args.output_dir) if args.output_dir else OUTPUT_DIR
+
+    # ── Archaeology mode ──────────────────────────────────────────────────
+    if args.archaeology:
+        content_dir = Path(args.content_dir) if args.content_dir else Path(os.getenv("HELIOS_CONTENT_DIR", ""))
+        if not content_dir.is_dir():
+            log.error("archaeology: HELIOS_CONTENT_DIR not set or invalid: %s", content_dir)
+            log.error("  Set HELIOS_CONTENT_DIR env or pass --content-dir")
+            return
+        sections = asyncio.run(archaeology_scan(content_dir=content_dir, output_dir=out_dir, dry_run=args.dry_run))
+        if args.dry_run:
+            for s in sections:
+                log.info("[ARCHAEOLOGY DRY RUN] %s", s.split("\n")[0] if s else "")
+        else:
+            log.info("archaeology: report written to %s", out_dir / ARCHAEOLOGY_OUTPUT)
+        return
+
+    # ── Consolidation mode ────────────────────────────────────────────────
+    db = Path(args.db) if args.db else DB_PATH
 
     cats = None
     if args.category:
