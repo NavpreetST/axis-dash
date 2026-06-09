@@ -28,6 +28,10 @@ interface ImportMetaEnv {
    * at build time — do not put a high-value token here in production.
    */
   readonly PUBLIC_HELIOS_TOKEN?: string;
+  /** Supabase project URL for task board and roadmap data. */
+  readonly PUBLIC_SUPABASE_URL?: string;
+  /** Supabase anon/public key for client-side queries. */
+  readonly PUBLIC_SUPABASE_ANON_KEY?: string;
 }
 
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
