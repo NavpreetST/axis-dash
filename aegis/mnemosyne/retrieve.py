@@ -60,7 +60,7 @@ def _clean_fts5_query(text: str) -> str:
         'no','nor','so','if','then','than','too','very','just',
         'how','where','when','why','tell','more','about','explain',
     }
-    cleaned = _re.sub(r'[^\w\s]', '', text.lower())
+    cleaned = _re.sub(r'[^\w\s]', ' ', text.lower())
     words = [w for w in cleaned.split() if w not in stop_words and len(w) > 1]
     return ' AND '.join(words[:8])
 
