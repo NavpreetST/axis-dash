@@ -471,10 +471,11 @@ def _git_short_commit() -> str | None:
     return None
 
 
-def _is_systemd_active() -> bool:
+async def _is_systemd_active() -> bool:
     """Check if the aegis systemd service is actively running."""
     try:
-        r = _subprocess.run(
+        r = await asyncio.to_thread(
+            _subprocess.run,
             ["systemctl", "is-active", "aegis.service"],
             capture_output=True,
             text=True,
@@ -485,8 +486,8 @@ def _is_systemd_active() -> bool:
         return False
 
 
-def _detect_launch_method(pid: int | None) -> str:
-    """Detect daemon launch method from /proc/<pid>/cgroup.
+async def _detect_launch_method(pid: int | None) -> str:
+    """Heuristic launch method from the daemon's /proc/<pid>/cmdline.
 
     Distinguishes systemd services (/system.slice/) from user-session /
     nohup processes (/user.slice/).  Returns "nohup" as the default when
@@ -598,7 +599,7 @@ def _known_issues(
     return issues
 
 
-def _runtime_meta(orb_meta: dict, rend_meta: dict, daemon_pid: int | None) -> dict:
+async def _runtime_meta(orb_meta: dict, rend_meta: dict, daemon_pid: int | None) -> dict:
     """Build the runtime meta block for /state and /health.
 
     Cached on first call for stable fields (commit, socket_path).
@@ -614,7 +615,7 @@ def _runtime_meta(orb_meta: dict, rend_meta: dict, daemon_pid: int | None) -> di
     rend_data = rend_meta["data"]
 
     meta = dict(_RUNTIME_CACHE)  # shallow copy
-    meta["launch_method"] = _detect_launch_method(daemon_pid)
+    meta["launch_method"] = await _detect_launch_method(daemon_pid)
     meta["renderer_chain"] = _renderer_chain(rend_data)
     meta["memory_backend"] = {
         "type": "sqlite",
@@ -631,7 +632,7 @@ def _runtime_meta(orb_meta: dict, rend_meta: dict, daemon_pid: int | None) -> di
     return meta
 
 
-def _build_state() -> dict[str, Any]:
+async def _build_state() -> dict[str, Any]:
     orb_meta = _load_state_meta("orb_state.json")
     rend_meta = _load_state_meta("renderer_state.json")
     neuro_file = _load_json(STATE_DIR / "neurobus_state.json")
@@ -670,7 +671,9 @@ def _build_state() -> dict[str, Any]:
         "tick_rate": TICK_RATE_HZ,
         "pam": PAM_UNRESOLVED,
         "coherence": COHERENCE_UNRESOLVED,
-        "runtime": _runtime_meta(orb_meta, rend_meta, daemon_pid),
+        # Phase 3 (P1): runtime-truth / drift-watchdog. ADDITIVE field.
+        # Does not change any of the 14 fields above.
+        "runtime": await _runtime_meta(orb_meta, rend_meta, daemon_pid),
     }
 
 
@@ -696,7 +699,7 @@ async def state_ws(ws: WebSocket) -> None:
     log.info("orb /state connected")
     try:
         while True:
-            await ws.send_text(json.dumps(_build_state(), default=str))
+            await ws.send_text(json.dumps(await _build_state(), default=str))
             await asyncio.sleep(1.0)
     except WebSocketDisconnect:
         log.info("orb /state disconnected")
@@ -747,7 +750,7 @@ async def health(request: Request) -> dict[str, Any]:
         "coherence": COHERENCE_UNRESOLVED,
         # Phase 3 (P1): runtime-truth / drift-watchdog. Same shape as
         # the /state runtime field for consistency.
-        "runtime": _runtime_meta(orb_meta, rend_meta, daemon_pid),
+        "runtime": await _runtime_meta(orb_meta, rend_meta, daemon_pid),
     }
 
 

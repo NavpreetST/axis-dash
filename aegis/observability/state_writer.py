@@ -46,7 +46,9 @@ def _read_json(path: Path) -> dict:
 def _build_renderer_chain(rend: dict) -> list[str]:
     chain = rend.get("chain")
     if isinstance(chain, list) and chain:
-        return [_MODEL_MAP.get(p, p) for p in chain if isinstance(p, str)]
+        filtered = [_MODEL_MAP.get(p, p) for p in chain if isinstance(p, str)]
+        if filtered:
+            return filtered
     return ["gemini-2.5-flash", "groq", "template"]
 
 
@@ -74,6 +76,20 @@ def _build_neurobus(neuro: dict) -> dict:
     }
 
 
+def _detect_launch_method(pid: int | None) -> str:
+    """Detect daemon launch method from /proc/<pid>/cgroup."""
+    if pid is None:
+        return "unknown"
+    try:
+        with open(f"/proc/{pid}/cgroup") as f:
+            cgroup = f.read()
+        if "system.slice" in cgroup:
+            return "systemd"
+    except OSError:
+        pass
+    return "nohup"
+
+
 def _build_daemon_state(tick_id: int) -> dict:
     rend = _read_json(RENDERER_STATE_PATH)
     neuro = _read_json(NEUROBUS_STATE_PATH)
@@ -81,10 +97,14 @@ def _build_daemon_state(tick_id: int) -> dict:
     uptime_s = int(time.time() - _DAEMON_START)
     now = datetime.now(UTC).isoformat()
 
+    from aegis.web.server import _find_daemon_pid
+
+    daemon_pid = _find_daemon_pid()
+
     return {
         "updated_at": now,
         "daemon_status": "online",
-        "launch_method": "nohup",
+        "launch_method": _detect_launch_method(daemon_pid),
         "socket_path": os.getenv("AEGIS_SOCK", "/tmp/aegis.sock"),
         "renderer_chain": _build_renderer_chain(rend),
         "memory_backend": {"type": "sqlite", "embedding": "minilm-384"},
