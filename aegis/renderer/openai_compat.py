@@ -106,3 +106,4 @@ class OpenAICompatRenderer:
                 f"{self.name} malformed response: {e}; body={r.text[:200]}"
             ) from e
         return text
+        return text
