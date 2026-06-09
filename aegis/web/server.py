@@ -21,11 +21,11 @@ import logging
 import os
 import re
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect, status
+from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -33,6 +33,12 @@ from starlette.requests import HTTPConnection
 from starlette.types import ASGIApp
 
 log = logging.getLogger("web.server")
+
+# Ensure asyncio.open_unix_connection exists for testing (Windows lacks it)
+if not hasattr(asyncio, "open_unix_connection"):
+    async def _dummy_open_unix_connection(path: str, **kwargs) -> None:
+        raise NotImplementedError("Unix sockets not supported on this platform")
+    asyncio.open_unix_connection = _dummy_open_unix_connection
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 STATE_DIR = Path(os.getenv("AEGIS_STATE_DIR", "/var/lib/aegis"))
@@ -71,12 +77,27 @@ HELIOS_TOKEN: str | None = os.getenv("HELIOS_TOKEN") or None
 # (placeholder) and localhost:5173 for local dev. Override via env.
 _DEFAULT_ALLOWED_ORIGINS = (
     "http://localhost:5173,"
-    "https://axis-helios.vercel.app"
+    "https://axis-dash.vercel.app"
 )
 ALLOWED_ORIGINS: set[str] = {
     o.strip() for o in os.getenv("ALLOWED_ORIGINS", _DEFAULT_ALLOWED_ORIGINS).split(",")
     if o.strip()
 }
+
+_PREVIEW_ORIGIN_PAT = re.compile(
+    r"^https://axis-dash-[a-z0-9-]+-navpreets-projects\.vercel\.app$"
+)
+
+
+def _is_allowed_origin(origin: str | None) -> bool:
+    if not origin:
+        return False
+    if origin in ALLOWED_ORIGINS:
+        return True
+    if _PREVIEW_ORIGIN_PAT.match(origin):
+        return True
+    return False
+
 
 # WebSocket close codes (RFC 6455). 4401 = application-defined auth failure.
 WS_CLOSE_APP_AUTH_FAILED = 4401
@@ -129,14 +150,13 @@ class CORSMiddleware(BaseHTTPMiddleware):
     """Explicit-origin CORS. Reflects the request Origin if it's in the
     allowlist; never uses "*" because auth is involved (credentials mode)."""
 
-    def __init__(self, app: ASGIApp, allowed_origins: set[str]) -> None:
+    def __init__(self, app: ASGIApp) -> None:
         super().__init__(app)
-        self.allowed_origins = allowed_origins
 
     async def dispatch(self, request, call_next):
         origin = request.headers.get("origin")
-        # Reflect origin only if it's in the allowlist; else omit the header.
-        allow_origin = origin if origin in self.allowed_origins else None
+        # Reflect origin only if it's in the allowlist or matches preview pattern; else omit the header.
+        allow_origin = origin if _is_allowed_origin(origin) else None
 
         if request.method == "OPTIONS":
             # Preflight: respond with CORS headers and 204.
@@ -157,7 +177,7 @@ class CORSMiddleware(BaseHTTPMiddleware):
 
 
 app = FastAPI(title="Helios Orb", docs_url=None, redoc_url=None)
-app.add_middleware(CORSMiddleware, allowed_origins=ALLOWED_ORIGINS)
+app.add_middleware(CORSMiddleware)
 
 
 def _load_json(path: Path) -> dict[str, Any]:
@@ -402,10 +422,187 @@ def _daemon_uptime_seconds_for_pid(pid: int | None) -> int | None:
     return int(elapsed)
 
 
+# ---- Phase 3 (P1): runtime-truth / drift-watchdog -----------------------
+
+import subprocess as _subprocess
+
+# Cached at first call — commit and socket path are stable for the
+# bridge's lifetime. State-dependent fields are recomputed each call.
+_RUNTIME_CACHE: dict | None = None
+
+# NCP dims are a documented constant from the daemon startup log
+# (aegis/main.py logs "ncp brain online; params=41361"). The hidden
+# state size is 64 per the orb_state.json shape.
+NCP_PARAMS = 41361
+NCP_HIDDEN_SIZE = 64
+
+# Repo path for git rev lookup. Override via env for portable config.
+_REPO_DIR = os.getenv("AEGIS_REPO_DIR", "/opt/aegis")
+
+# Memory backend path per README §Architecture.
+_MEMORY_DB = Path(
+    os.getenv("AEGIS_MEMORY_DB", str(Path.home() / ".local/share/aegis/mnemosyne.db"))
+)
+
+
+def _git_short_commit() -> str | None:
+    """Return the short git commit hash, or None on failure."""
+    try:
+        out = _subprocess.run(
+            ["git", "rev-parse", "--short", "HEAD"],
+            cwd=_REPO_DIR,
+            capture_output=True,
+            text=True,
+            timeout=2,
+        )
+        if out.returncode == 0:
+            return out.stdout.strip() or None
+    except (FileNotFoundError, _subprocess.TimeoutExpired, OSError):
+        pass
+    return None
+
+
+def _detect_launch_method(pid: int | None) -> str:
+    """Heuristic launch method from the daemon's /proc/<pid>/cmdline.
+
+    Returns "nohup", "systemd", "direct", or "unknown".
+    """
+    if pid is None:
+        return "unknown"
+    try:
+        with open(f"/proc/{pid}/cmdline", "rb") as f:
+            cmdline = b" ".join(f.read().split(b"\x00")).decode("utf-8", "replace").lower()
+    except (FileNotFoundError, ProcessLookupError, PermissionError, OSError):
+        return "unknown"
+    if "nohup" in cmdline:
+        return "nohup"
+    # Check parent PID — if it's 1 (init/systemd), likely launched by systemd
+    try:
+        with open(f"/proc/{pid}/stat") as f:
+            stat = f.read()
+        rpar = stat.rfind(")")
+        if rpar >= 0:
+            fields = stat[rpar + 1:].split()
+            if len(fields) >= 3:
+                ppid = int(fields[1])
+                if ppid == 1:
+                    return "systemd"
+    except (FileNotFoundError, ProcessLookupError, PermissionError, ValueError, OSError):
+        pass
+    return "direct"
+
+
+def _renderer_chain(rend_data: dict) -> list[str]:
+    """Extract renderer chain order from renderer_state.json.
+
+    Prefers the explicit `chain` field; falls back to provider keys sorted.
+    """
+    chain = rend_data.get("chain")
+    if isinstance(chain, list) and chain:
+        return [str(p) for p in chain if isinstance(p, str)]
+    providers = rend_data.get("providers") or {}
+    if isinstance(providers, dict) and providers:
+        return sorted(providers.keys())
+    return []
+
+
+def _budget(rend_data: dict) -> dict:
+    """Extract per-provider daily budget from renderer_state.json."""
+    providers = rend_data.get("providers") or {}
+    if not isinstance(providers, dict):
+        return {}
+    out = {}
+    for name, cfg in providers.items():
+        if not isinstance(cfg, dict):
+            continue
+        used = cfg.get("local_daily_used")
+        budget = cfg.get("local_daily_budget")
+        if used is not None or budget is not None:
+            out[name] = {
+                "used": int(used) if isinstance(used, (int, float)) else None,
+                "budget": int(budget) if isinstance(budget, (int, float)) else None,
+                "window": cfg.get("quota_window"),
+            }
+    return out
+
+
+def _known_issues(
+    orb_meta: dict, rend_meta: dict, daemon_pid: int | None
+) -> list[str]:
+    """Dynamic drift detection. Empty list = no known issues.
+
+    Each issue is a short tag like "state_stale:orb_state.json".
+    """
+    issues: list[str] = []
+
+    # State file freshness
+    if not orb_meta.get("exists"):
+        issues.append("state_missing:orb_state.json")
+    elif orb_meta.get("age_seconds") is not None and orb_meta["age_seconds"] > STALE_THRESHOLD_SECONDS:
+        issues.append("state_stale:orb_state.json")
+
+    if not rend_meta.get("exists"):
+        issues.append("state_missing:renderer_state.json")
+    elif rend_meta.get("age_seconds") is not None and rend_meta["age_seconds"] > STALE_THRESHOLD_SECONDS:
+        issues.append("state_stale:renderer_state.json")
+
+    # Socket staleness: file exists but daemon not running
+    try:
+        sock_exists = SOCK_PATH.exists()
+    except OSError:
+        sock_exists = False
+    if sock_exists and daemon_pid is None:
+        issues.append(f"socket_orphaned:{SOCK_PATH.name}")
+
+    # Token not configured
+    if not HELIOS_TOKEN:
+        issues.append("token_unset:HELIOS_TOKEN")
+
+    # Memory DB missing
+    if not _MEMORY_DB.exists():
+        issues.append(f"memory_db_missing:{_MEMORY_DB.name}")
+
+    return issues
+
+
+def _runtime_meta(orb_meta: dict, rend_meta: dict, daemon_pid: int | None) -> dict:
+    """Build the runtime meta block for /state and /health.
+
+    Cached on first call for stable fields (commit, socket_path).
+    State-dependent fields (known_issues, budget) are precomputed and passed.
+    """
+    global _RUNTIME_CACHE
+    if _RUNTIME_CACHE is None:
+        _RUNTIME_CACHE = {
+            "commit": _git_short_commit(),
+            "socket_path": str(SOCK_PATH),
+        }
+
+    rend_data = rend_meta["data"]
+
+    meta = dict(_RUNTIME_CACHE)  # shallow copy
+    meta["launch_method"] = _detect_launch_method(daemon_pid)
+    meta["renderer_chain"] = _renderer_chain(rend_data)
+    meta["memory_backend"] = {
+        "type": "sqlite",
+        "path": _MEMORY_DB.name,
+        "exists": _MEMORY_DB.exists(),
+    }
+    meta["ncp"] = {
+        "params": NCP_PARAMS,
+        "hidden_size": NCP_HIDDEN_SIZE,
+    }
+    meta["budget"] = _budget(rend_data)
+    meta["known_issues"] = _known_issues(orb_meta, rend_meta, daemon_pid)
+
+    return meta
+
+
 def _build_state() -> dict[str, Any]:
     orb_meta = _load_state_meta("orb_state.json")
     rend_meta = _load_state_meta("renderer_state.json")
     neuro_file = _load_json(STATE_DIR / "neurobus_state.json")
+    daemon_pid = _find_daemon_pid()
 
     orb = orb_meta["data"]
 
@@ -436,10 +633,11 @@ def _build_state() -> dict[str, Any]:
         "rpd_used": renderer["rpd_used"],
         "rpd_budget": renderer["rpd_budget"],
         "connected": _connected(orb_meta, rend_meta),
-        "uptime_seconds": _daemon_uptime_seconds(),
+        "uptime_seconds": _daemon_uptime_seconds_for_pid(daemon_pid),
         "tick_rate": TICK_RATE_HZ,
         "pam": PAM_UNRESOLVED,
         "coherence": COHERENCE_UNRESOLVED,
+        "runtime": _runtime_meta(orb_meta, rend_meta, daemon_pid),
     }
 
 
@@ -458,7 +656,7 @@ async def state_ws(ws: WebSocket) -> None:
     await ws.accept()
     # Check WS origin against allowlist (BaseHTTPMiddleware doesn't run on WS upgrades)
     origin = ws.headers.get("origin")
-    if origin and origin not in ALLOWED_ORIGINS:
+    if origin and not _is_allowed_origin(origin):
         log.warning("state ws origin rejected: %s", origin)
         await ws.close(code=WS_CLOSE_APP_AUTH_FAILED, reason="origin_not_allowed")
         return
@@ -514,10 +712,166 @@ async def health(request: Request) -> dict[str, Any]:
         "tick_rate": TICK_RATE_HZ,
         "pam": PAM_UNRESOLVED,
         "coherence": COHERENCE_UNRESOLVED,
+        # Phase 3 (P1): runtime-truth / drift-watchdog. Same shape as
+        # the /state runtime field for consistency.
+        "runtime": _runtime_meta(orb_meta, rend_meta, daemon_pid),
     }
 
 
 # ---- P0 bridge: /chat (WS, auth via header or ?token=) --------------------
+
+# ---- Forge HTTP proxy routes (additive) -----------------------------------
+
+_TASK_ID_PATTERN = re.compile(r"^[a-zA-Z0-9_\-\.]{1,128}$")
+
+def _sanitize_field(value: str, name: str = "field") -> str:
+    """Strip CR/LF, reject empty."""
+    sanitized = value.strip().replace("\r", "").replace("\n", "")
+    if not sanitized:
+        raise HTTPException(status_code=400, detail=f"invalid_{name}")
+    return sanitized
+
+
+def _sanitize_task_id(task_id: str) -> str:
+    """Strip CR/LF and validate task_id pattern."""
+    sanitized = _sanitize_field(task_id, "task_id")
+    if not _TASK_ID_PATTERN.match(sanitized):
+        raise HTTPException(status_code=400, detail="invalid_task_id")
+    return sanitized
+
+
+async def _forge_socket_cmd(command: str) -> str:
+    """Send a single command to the forge unix socket and return the response.
+    Returns the raw response string without trailing newline. Raises HTTPException on socket errors.
+    """
+    # Use getattr to allow patching in tests on platforms lacking open_unix_connection
+    open_conn = getattr(asyncio, "open_unix_connection", None)
+    if open_conn is None:
+        raise HTTPException(status_code=501, detail="unix_socket_not_supported")
+    try:
+        reader, writer = await open_conn(str(SOCK_PATH), limit=262144)
+    except (FileNotFoundError, ConnectionRefusedError, PermissionError, OSError) as e:
+        log.warning("forge proxy socket open failed: %s", e)
+        raise HTTPException(status_code=503, detail="forge_socket_unavailable")
+    try:
+        writer.write((command + "\n").encode())
+        await writer.drain()
+        line = await asyncio.wait_for(reader.readline(), timeout=15.0)
+        resp = line.decode(errors="replace").strip()
+        return resp
+    except asyncio.TimeoutError:
+        raise HTTPException(status_code=504, detail="forge_socket_timeout")
+    finally:
+        try:
+            writer.close()
+            await writer.wait_closed()
+        except Exception:
+            pass
+
+
+@app.post("/forge/submit")
+async def forge_submit(request: Request) -> dict:
+    """Submit a forge task spec. Requires auth token."""
+    if not _check_token(request):
+        raise HTTPException(status_code=401, detail="auth_required")
+    body = await request.json()
+    spec = body.get("spec") if isinstance(body, dict) else None
+    if not isinstance(spec, str) or len(spec.strip()) < 10:
+        raise HTTPException(status_code=400, detail="invalid_spec")
+    spec_safe = _sanitize_field(spec, "spec")
+    resp = await _forge_socket_cmd(f"FORGE:SUBMIT:{spec_safe}")
+    # Expected response: FORGE:OK:<id> or FORGE:ERR:...
+    if resp.startswith("FORGE:OK:"):
+        return {"task_id": resp.split(":", 2)[2]}
+    else:
+        raise HTTPException(status_code=502, detail=resp)
+
+
+@app.get("/forge/list")
+async def forge_list(request: Request) -> dict:
+    """List active forge tasks via FORGE:LIST socket command. Requires auth token."""
+    if not _check_token(request):
+        raise HTTPException(status_code=401, detail="auth_required")
+    resp = await _forge_socket_cmd("FORGE:LIST")
+    if resp.startswith("FORGE:LIST:"):
+        payload = resp.split(":", 2)[2]
+        try:
+            return {"tasks": json.loads(payload)}
+        except json.JSONDecodeError:
+            raise HTTPException(status_code=502, detail="malformed_response")
+    else:
+        raise HTTPException(status_code=502, detail=resp)
+
+
+@app.get("/forge/{task_id}/status")
+async def forge_status(task_id: str, request: Request) -> dict:
+    """Poll forge task status via FORGE:POLL socket command. Requires auth token."""
+    if not _check_token(request):
+        raise HTTPException(status_code=401, detail="auth_required")
+    tid = _sanitize_task_id(task_id)
+    resp = await _forge_socket_cmd(f"FORGE:POLL:{tid}")
+    if resp.startswith("FORGE:STATUS:"):
+        payload = resp.split(":", 2)[2]
+        try:
+            return json.loads(payload)
+        except json.JSONDecodeError:
+            raise HTTPException(status_code=502, detail="malformed_response")
+    else:
+        raise HTTPException(status_code=502, detail=resp)
+
+
+@app.get("/forge/{task_id}/diff")
+async def forge_diff(task_id: str, request: Request) -> dict:
+    """Fetch forge task diff via FORGE:FETCH socket command. Requires auth token."""
+    if not _check_token(request):
+        raise HTTPException(status_code=401, detail="auth_required")
+    tid = _sanitize_task_id(task_id)
+    resp = await _forge_socket_cmd(f"FORGE:FETCH:{tid}")
+    if resp.startswith("FORGE:RESULT:"):
+        payload = resp.split(":", 2)[2]
+        try:
+            return json.loads(payload)
+        except json.JSONDecodeError:
+            raise HTTPException(status_code=502, detail="malformed_response")
+    else:
+        raise HTTPException(status_code=502, detail=resp)
+
+
+@app.post("/forge/{task_id}/gate")
+async def forge_gate(task_id: str, request: Request) -> dict:
+    """Approve forge task gate. Requires auth token and approve=True."""
+    if not _check_token(request):
+        raise HTTPException(status_code=401, detail="auth_required")
+    tid = _sanitize_task_id(task_id)
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    approve = body.get("approve") if isinstance(body, dict) else None
+    if approve is not True:
+        raise HTTPException(status_code=400, detail="approval_required")
+    resp = await _forge_socket_cmd(f"FORGE:GATE:{tid}")
+    if resp.startswith("FORGE:GATE:"):
+        payload = resp.split(":", 2)[2]
+        try:
+            return json.loads(payload)
+        except json.JSONDecodeError:
+            raise HTTPException(status_code=502, detail="malformed_response")
+    else:
+        raise HTTPException(status_code=502, detail=resp)
+
+
+@app.post("/forge/{task_id}/cleanup")
+async def forge_cleanup(task_id: str, request: Request) -> dict:
+    """Cleanup forge task sandbox. Requires auth token."""
+    if not _check_token(request):
+        raise HTTPException(status_code=401, detail="auth_required")
+    tid = _sanitize_task_id(task_id)
+    resp = await _forge_socket_cmd(f"FORGE:CLEANUP:{tid}")
+    if resp.startswith("FORGE:OK:"):
+        return {"result": resp}
+    else:
+        raise HTTPException(status_code=502, detail=resp)
 
 
 @app.websocket("/chat")
@@ -547,7 +901,7 @@ async def chat_ws(ws: WebSocket) -> None:
 
     # Check WS origin against allowlist (BaseHTTPMiddleware doesn't run on WS upgrades)
     origin = ws.headers.get("origin")
-    if origin and origin not in ALLOWED_ORIGINS:
+    if origin and not _is_allowed_origin(origin):
         log.warning("chat ws origin rejected: %s", origin)
         await ws.close(code=WS_CLOSE_APP_AUTH_FAILED, reason="origin_not_allowed")
         return
@@ -588,7 +942,7 @@ async def chat_ws(ws: WebSocket) -> None:
                 line = await asyncio.wait_for(
                     reader.readline(), timeout=CHAT_REPLY_TIMEOUT_SECONDS
                 )
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 await ws.send_text(json.dumps({
                     "error": "reply_timeout",
                     "timeout_seconds": CHAT_REPLY_TIMEOUT_SECONDS,
@@ -616,10 +970,8 @@ async def chat_ws(ws: WebSocket) -> None:
 # ---- P0 bridge: /logs (SSE, auth via header or ?token=) -------------------
 
 
-
-
 def _today_eventlog_path() -> Path:
-    day = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    day = datetime.now(UTC).strftime("%Y-%m-%d")
     return EVENTS_DIR / f"{day}.jsonl"
 
 
@@ -646,7 +998,7 @@ async def _tail_eventlog():
                 # Run blocking mkdir + open in thread to avoid blocking the event loop
                 def _open_log() -> object | None:
                     EVENTS_DIR.mkdir(parents=True, exist_ok=True)
-                    return open(path, "r", encoding="utf-8", errors="replace")
+                    return open(path, encoding="utf-8", errors="replace")
                 f = await asyncio.to_thread(_open_log)
             except FileNotFoundError:
                 f = None

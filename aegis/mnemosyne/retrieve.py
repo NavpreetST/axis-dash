@@ -15,14 +15,13 @@ itself on the next turn — a feedback loop. P4-short structural fix:
 facts get top-K + a guaranteed seat. Medium-term, P4 promotes facts
 to a sibling table; still queued for v1.1 week.
 """
-import array
-import asyncio
 import logging
 import time
 
 import numpy as np
 
 from aegis.nexus.bus import BUS
+
 from .db import CONN
 
 log = logging.getLogger("mnemosyne.retrieve")

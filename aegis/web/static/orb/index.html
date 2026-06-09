@@ -1,0 +1,976 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Aegis Orb — Three.js JARVIS Membrane</title>
+  <style>
+    html, body {
+      margin: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: radial-gradient(circle at 50% 50%, rgba(3, 1, 0, 0.16), #000000 78%);
+      font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    #orb {
+      width: 100vw;
+      height: 100vh;
+      display: block;
+    }
+    .hud {
+      position: fixed;
+      left: 18px;
+      bottom: 16px;
+      color: rgba(255, 203, 104, 0.72);
+      font-size: 11px;
+      letter-spacing: 0.11em;
+      text-transform: uppercase;
+      user-select: none;
+      pointer-events: none;
+      text-shadow: 0 0 18px rgba(255, 150, 28, 0.55);
+    }
+    .hud strong {
+      color: rgba(255, 234, 154, 0.88);
+      font-weight: 600;
+    }
+  </style>
+
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+    }
+  }
+  </script>
+</head>
+<body>
+  <canvas id="orb"></canvas>
+  <div class="hud"><strong>Aegis</strong> / 3D membrane / live NeuroBus</div>
+
+  <script type="module">
+    import * as THREE from "three";
+    import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+    import { EffectComposer } from "three/addons/postprocessing/EffectComposer.js";
+    import { RenderPass } from "three/addons/postprocessing/RenderPass.js";
+    import { UnrealBloomPass } from "three/addons/postprocessing/UnrealBloomPass.js";
+
+    const canvas = document.getElementById("orb");
+    const scene = new THREE.Scene();
+    scene.fog = new THREE.FogExp2(0x050302, 0.055);
+
+    const camera = new THREE.PerspectiveCamera(44, innerWidth / innerHeight, 0.01, 100);
+    camera.position.set(0.0, 0.20, 6.95);
+
+    const renderer = new THREE.WebGLRenderer({
+      canvas,
+      antialias: true,
+      alpha: true,
+      powerPreference: "high-performance"
+    });
+    renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+    renderer.setSize(innerWidth, innerHeight);
+    renderer.outputColorSpace = THREE.SRGBColorSpace;
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 0.70;
+
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+    controls.dampingFactor = 0.055;
+    controls.rotateSpeed = 0.38;
+    controls.zoomSpeed = 0.55;
+    controls.panSpeed = 0.15;
+    controls.minDistance = 3.1;
+    controls.maxDistance = 8.4;
+    controls.autoRotate = true;
+    controls.autoRotateSpeed = 0.20;
+
+    const composer = new EffectComposer(renderer);
+    composer.addPass(new RenderPass(scene, camera));
+    const bloom = new UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight), 0.18, 0.24, 0.34);
+    composer.addPass(bloom);
+
+    const root = new THREE.Group();
+    scene.add(root);
+
+    const state = {
+      neurobus: {},
+      h: [],
+      tick_id: 0,
+      is_speaking: false,
+      last_action_type: "",
+      mnemosyne_event: null
+    };
+
+    const visual = {
+      trust: 0.55,
+      attention: 0.35,
+      novelty: 0.25,
+      reward: 0.18,
+      threat: 0.0,
+      patience: 0.5,
+      speaking: 0.0,
+      memory: 0.0,
+      action: 0.0,
+      hMean: 0.0,
+      hVariance: 0.0,
+      hBands: new Array(64).fill(0.0),
+      activeRole: "core"
+    };
+
+    function clamp01(x) {
+      return Math.max(0, Math.min(1, Number.isFinite(x) ? x : 0));
+    }
+
+    function soft(x, fallback = 0) {
+      if (typeof x !== "number" || !Number.isFinite(x)) return fallback;
+      if (x < 0) return clamp01((x + 1) * 0.5);
+      return clamp01(x);
+    }
+
+    function lerp(a, b, t) {
+      return a + (b - a) * t;
+    }
+
+    function updateVisualFromState() {
+      const bus = state.neurobus || {};
+      const h = Array.isArray(state.h) ? state.h : [];
+
+      visual.trust = lerp(visual.trust, soft(bus.trust, 0.55), 0.060);
+      visual.attention = lerp(visual.attention, soft(bus.attention, 0.35), 0.080);
+      visual.novelty = lerp(visual.novelty, soft(bus.novelty, 0.25), 0.080);
+      visual.reward = lerp(visual.reward, soft(bus.reward, 0.18), 0.080);
+      visual.threat = lerp(visual.threat, soft(bus.threat, 0.0), 0.100);
+      visual.patience = lerp(visual.patience, soft(bus.patience, 0.5), 0.045);
+      visual.speaking = lerp(visual.speaking, state.is_speaking ? 1 : 0, 0.085);
+      visual.memory = lerp(visual.memory, state.mnemosyne_event ? 1 : 0, 0.060);
+
+      let sum = 0;
+      let sumSq = 0;
+      for (let i = 0; i < 64; i++) {
+        const raw = h.length ? Number(h[i % h.length]) : 0;
+        const v = soft(raw, 0.0);
+        visual.hBands[i] = lerp(visual.hBands[i] || 0, v, 0.10);
+        sum += visual.hBands[i];
+        sumSq += visual.hBands[i] * visual.hBands[i];
+      }
+      visual.hMean = sum / 64;
+      visual.hVariance = clamp01(sumSq / 64 - visual.hMean * visual.hMean);
+
+      const action = String(state.last_action_type || "").toLowerCase();
+      visual.action = action ? 1 : 0;
+
+      if (visual.threat > 0.25) visual.activeRole = "guard";
+      else if (visual.speaking > 0.35 || action.includes("speak")) visual.activeRole = "speak";
+      else if (action.includes("search") || action.includes("read")) visual.activeRole = "input";
+      else if (visual.memory > 0.25) visual.activeRole = "memory";
+      else if (visual.novelty > visual.attention + 0.12) visual.activeRole = "input";
+      else if (visual.attention > 0.42) visual.activeRole = "planning";
+      else visual.activeRole = "core";
+    }
+
+    function connectStateSocket() {
+      const protocol = location.protocol === "https:" ? "wss" : "ws";
+      const url = `${protocol}://${location.host}/state`;
+      let ws;
+
+      try {
+        ws = new WebSocket(url);
+      } catch (err) {
+        setTimeout(connectStateSocket, 2000);
+        return;
+      }
+
+      ws.onmessage = (event) => {
+        try {
+          const next = JSON.parse(event.data);
+          Object.assign(state, next || {});
+        } catch (_) {}
+      };
+
+      ws.onclose = () => setTimeout(connectStateSocket, 1600);
+      ws.onerror = () => {
+        try { ws.close(); } catch (_) {}
+      };
+    }
+
+    connectStateSocket();
+
+    const ambient = new THREE.AmbientLight(0xff8c22, 0.040);
+    scene.add(ambient);
+
+    const coreLight = new THREE.PointLight(0xffb233, 1.30, 4.4, 2.2);
+    coreLight.position.set(0, 0, 0);
+    root.add(coreLight);
+
+    const rimLight = new THREE.PointLight(0xff7b1c, 0.10, 5.4, 2.0);
+    rimLight.position.set(-2.3, 1.3, 2.2);
+    scene.add(rimLight);
+
+    const membraneUniforms = {
+      uTime: { value: 0 },
+      uTrust: { value: visual.trust },
+      uThreat: { value: visual.threat },
+      uAttention: { value: visual.attention }
+    };
+
+    const membraneMaterial = new THREE.ShaderMaterial({
+      transparent: true,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+      side: THREE.DoubleSide,
+      uniforms: membraneUniforms,
+      vertexShader: `
+        varying vec3 vWorldPos;
+        varying vec3 vWorldNormal;
+        varying vec2 vUv;
+
+        void main() {
+          vUv = uv;
+          vec4 worldPos = modelMatrix * vec4(position, 1.0);
+          vWorldPos = worldPos.xyz;
+          vWorldNormal = normalize(mat3(modelMatrix) * normal);
+          gl_Position = projectionMatrix * viewMatrix * worldPos;
+        }
+      `,
+      fragmentShader: `
+        uniform float uTime;
+        uniform float uTrust;
+        uniform float uThreat;
+        uniform float uAttention;
+        varying vec3 vWorldPos;
+        varying vec3 vWorldNormal;
+        varying vec2 vUv;
+
+        float hash(vec2 p) {
+          p = fract(p * vec2(123.34, 456.21));
+          p += dot(p, p + 45.32);
+          return fract(p.x * p.y);
+        }
+
+        void main() {
+          vec3 viewDir = normalize(cameraPosition - vWorldPos);
+          float fresnel = pow(1.0 - abs(dot(normalize(vWorldNormal), viewDir)), 2.45);
+          float shimmer = hash(vUv * 150.0 + vec2(uTime * 0.018, -uTime * 0.013));
+          float latitude = smoothstep(0.78, 1.0, abs(vWorldNormal.y));
+          float trustOpen = mix(0.0015, 0.0002, uTrust);
+          float edge = pow(fresnel, 1.85);\n          float alpha = edge * (0.060 + uAttention * 0.045 + uThreat * 0.095) + trustOpen * 0.018;
+          alpha += shimmer * 0.0006;
+          alpha *= (1.0 - latitude * 0.50);
+          alpha = min(alpha, 0.018 + uThreat * 0.025);\n          alpha = min(alpha, 0.085 + uThreat * 0.050);
+
+          vec3 amber = mix(vec3(0.38, 0.09, 0.012), vec3(1.0, 0.46, 0.075), edge);
+          vec3 alarm = vec3(1.0, 0.14, 0.05);
+          vec3 color = mix(amber, alarm, clamp(uThreat * 0.9, 0.0, 1.0));
+
+          gl_FragColor = vec4(color, alpha);
+        }
+      `
+    });
+
+    const membrane = new THREE.Mesh(new THREE.SphereGeometry(1.50, 96, 64), membraneMaterial);
+    root.add(membrane);
+
+    const hazeMaterial = new THREE.MeshBasicMaterial({
+      color: 0xff7a18,
+      transparent: true,
+      opacity: 0.0000,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+      side: THREE.BackSide
+    });
+    const haze = new THREE.Mesh(new THREE.SphereGeometry(1.40, 64, 48), hazeMaterial);
+    root.add(haze);
+
+    function makeGlowTexture() {
+      const c = document.createElement("canvas");
+      c.width = 128;
+      c.height = 128;
+      const g = c.getContext("2d");
+      const grad = g.createRadialGradient(64, 64, 0, 64, 64, 64);
+      grad.addColorStop(0.00, "rgba(255,250,180,1)");
+      grad.addColorStop(0.18, "rgba(255,200,70,0.9)");
+      grad.addColorStop(0.46, "rgba(255,120,24,0.32)");
+      grad.addColorStop(1.00, "rgba(255,90,10,0)");
+      g.fillStyle = grad;
+      g.fillRect(0, 0, 128, 128);
+      return new THREE.CanvasTexture(c);
+    }
+
+    const glowTexture = makeGlowTexture();
+
+    function makeJarvisGlyphTexture() {
+      const c = document.createElement("canvas");
+      c.width = 96;
+      c.height = 96;
+      const g = c.getContext("2d");
+      g.clearRect(0, 0, 96, 96);
+
+      // Not a round dust dot: this is a tiny holographic chip/glyph.
+      const grad = g.createRadialGradient(48, 48, 0, 48, 48, 46);
+      grad.addColorStop(0.00, "rgba(255,245,170,0.95)");
+      grad.addColorStop(0.20, "rgba(255,198,64,0.42)");
+      grad.addColorStop(0.70, "rgba(255,120,24,0.08)");
+      grad.addColorStop(1.00, "rgba(255,80,8,0)");
+      g.fillStyle = grad;
+      g.fillRect(0, 0, 96, 96);
+
+      g.save();
+      g.translate(48, 48);
+      g.strokeStyle = "rgba(255,232,132,0.95)";
+      g.lineWidth = 3.2;
+      g.lineCap = "round";
+      g.beginPath();
+      g.moveTo(-18, 0);
+      g.lineTo(18, 0);
+      g.moveTo(0, -12);
+      g.lineTo(0, 12);
+      g.stroke();
+
+      g.strokeStyle = "rgba(255,146,28,0.50)";
+      g.lineWidth = 1.5;
+      g.beginPath();
+      g.moveTo(-28, -16);
+      g.lineTo(-12, -16);
+      g.moveTo(12, 16);
+      g.lineTo(28, 16);
+      g.moveTo(-22, 18);
+      g.lineTo(-8, 10);
+      g.moveTo(8, -10);
+      g.lineTo(22, -18);
+      g.stroke();
+      g.restore();
+
+      const tex = new THREE.CanvasTexture(c);
+      tex.colorSpace = THREE.SRGBColorSpace;
+      return tex;
+    }
+
+    const glyphTexture = makeJarvisGlyphTexture();
+
+    const nodeDefs = [
+      { role: "input",    base: new THREE.Vector3(-1.14,  0.28,  0.34), color: 0xffcf66 },
+      { role: "input",    base: new THREE.Vector3(-1.20, -0.34, -0.28), color: 0xffbd4e },
+      { role: "planning", base: new THREE.Vector3(-0.42,  0.86, -0.12), color: 0xffe090 },
+      { role: "planning", base: new THREE.Vector3( 0.52,  0.76,  0.20), color: 0xffd068 },
+      { role: "memory",   base: new THREE.Vector3(-0.48, -0.92,  0.12), color: 0xffaa3a },
+      { role: "memory",   base: new THREE.Vector3( 0.48, -0.86, -0.24), color: 0xff9c2a },
+      { role: "speak",    base: new THREE.Vector3( 1.22,  0.26,  0.22), color: 0xffef95 },
+      { role: "act",      base: new THREE.Vector3( 1.12, -0.30, -0.30), color: 0xffc45a },
+      { role: "guard",    base: new THREE.Vector3( 0.88,  0.02,  0.76), color: 0xff4f2b },
+      { role: "core",     base: new THREE.Vector3( 0.00,  0.00,  0.00), color: 0xfff2a4 }
+    ];
+
+    function roleWeight(role) {
+      if (role === "core") return 0.95 + visual.reward * 0.45 + visual.attention * 0.20;
+      if (role === "input") return 0.35 + visual.novelty * 0.95;
+      if (role === "planning") return 0.35 + visual.attention * 0.95;
+      if (role === "memory") return 0.25 + visual.memory * 1.10 + visual.hVariance * 1.20;
+      if (role === "speak" || role === "act") return 0.25 + visual.speaking * 1.10 + visual.action * 0.55;
+      if (role === "guard") return 0.18 + visual.threat * 1.30;
+      return 0.35;
+    }
+
+    const nodeSprites = nodeDefs.map((n) => {
+      const mat = new THREE.SpriteMaterial({
+        map: glowTexture,
+        color: n.color,
+        transparent: true,
+        opacity: 0.82,
+        blending: THREE.AdditiveBlending,
+        depthWrite: false
+      });
+      const sprite = new THREE.Sprite(mat);
+      sprite.position.copy(n.base);
+      sprite.scale.setScalar(0.22);
+      sprite.userData = n;
+      root.add(sprite);
+      return sprite;
+    });
+
+
+    // Visible JARVIS data-shards: real tiny 3D bars/chips, not point sprites.
+    const DATA_SHARDS = 620;
+    const shardGeo = new THREE.BoxGeometry(0.020, 0.0022, 0.0022);
+    const shardMat = new THREE.MeshBasicMaterial({
+      color: 0xffc247,
+      transparent: true,
+      opacity: 0.34,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false
+    });
+    const shardMesh = new THREE.InstancedMesh(shardGeo, shardMat, DATA_SHARDS);
+    shardMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    root.add(shardMesh);
+
+    const shardSeeds = new Float32Array(DATA_SHARDS);
+    const shardRoles = new Uint8Array(DATA_SHARDS);
+    const shardScales = new Float32Array(DATA_SHARDS);
+    for (let i = 0; i < DATA_SHARDS; i++) {
+      shardSeeds[i] = Math.random() * 1000;
+      shardRoles[i] = Math.floor(Math.random() * nodeDefs.length);
+      shardScales[i] = 0.22 + Math.random() * 0.72;
+    }
+
+    const CHIP_CUBES = 160;
+    const chipGeo = new THREE.BoxGeometry(0.009, 0.009, 0.003);
+    const chipMat = new THREE.MeshBasicMaterial({
+      color: 0xffa12a,
+      transparent: true,
+      opacity: 0.20,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false
+    });
+    const chipMesh = new THREE.InstancedMesh(chipGeo, chipMat, CHIP_CUBES);
+    chipMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    root.add(chipMesh);
+
+    const chipSeeds = new Float32Array(CHIP_CUBES);
+    const chipRoles = new Uint8Array(CHIP_CUBES);
+    for (let i = 0; i < CHIP_CUBES; i++) {
+      chipSeeds[i] = Math.random() * 1000;
+      chipRoles[i] = Math.floor(Math.random() * nodeDefs.length);
+    }
+
+    const shardObj = new THREE.Object3D();
+    const chipObj = new THREE.Object3D();
+
+    const voxelGroup = new THREE.Group();
+    root.add(voxelGroup);
+
+    const voxelMats = [];
+    const voxels = [];
+    const voxelGeo = new THREE.BoxGeometry(0.032, 0.032, 0.032);
+    for (let z = 0; z < 4; z++) {
+      for (let y = 0; y < 4; y++) {
+        for (let x = 0; x < 4; x++) {
+          const mat = new THREE.MeshBasicMaterial({
+            color: 0xffb13a,
+            transparent: true,
+            opacity: 0.045,
+            blending: THREE.AdditiveBlending,
+            depthWrite: false
+          });
+          const cube = new THREE.Mesh(voxelGeo, mat);
+          cube.position.set((x - 1.5) * 0.050, (y - 1.5) * 0.050, (z - 1.5) * 0.050);
+          voxelGroup.add(cube);
+          voxels.push(cube);
+          voxelMats.push(mat);
+        }
+      }
+    }
+
+    const PARTICLES = 2600;
+    const particlePositions = new Float32Array(PARTICLES * 3);
+    const particleColors = new Float32Array(PARTICLES * 3);
+    const particleSeeds = new Float32Array(PARTICLES);
+    const particleRoles = new Uint8Array(PARTICLES);
+
+    function randomInSphere(radius) {
+      const v = new THREE.Vector3();
+      do {
+        v.set(Math.random() * 2 - 1, Math.random() * 2 - 1, Math.random() * 2 - 1);
+      } while (v.lengthSq() > 1);
+      return v.multiplyScalar(radius);
+    }
+
+    for (let i = 0; i < PARTICLES; i++) {
+      const p = randomInSphere(1.36);
+      particlePositions[i * 3 + 0] = p.x;
+      particlePositions[i * 3 + 1] = p.y;
+      particlePositions[i * 3 + 2] = p.z;
+      particleSeeds[i] = Math.random() * 1000;
+      particleRoles[i] = Math.floor(Math.random() * nodeDefs.length);
+      particleColors[i * 3 + 0] = 1.0;
+      particleColors[i * 3 + 1] = 0.62;
+      particleColors[i * 3 + 2] = 0.15;
+    }
+
+    const particleGeometry = new THREE.BufferGeometry();
+    particleGeometry.setAttribute("position", new THREE.BufferAttribute(particlePositions, 3));
+    particleGeometry.setAttribute("color", new THREE.BufferAttribute(particleColors, 3));
+
+    const particleMaterial = new THREE.PointsMaterial({
+      size: 0.022,
+      sizeAttenuation: true,
+      vertexColors: true,
+      transparent: true,
+      opacity: 0.60,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false
+    });
+
+    const particleSystem = new THREE.Points(particleGeometry, particleMaterial);
+    root.add(particleSystem);
+
+    const DUST = 1800;
+    const dustPositions = new Float32Array(DUST * 3);
+    const dustSeeds = new Float32Array(DUST);
+    for (let i = 0; i < DUST; i++) {
+      const p = randomInSphere(1.52);
+      dustPositions[i * 3 + 0] = p.x;
+      dustPositions[i * 3 + 1] = p.y;
+      dustPositions[i * 3 + 2] = p.z;
+      dustSeeds[i] = Math.random() * 1000;
+    }
+    const dustGeometry = new THREE.BufferGeometry();
+    dustGeometry.setAttribute("position", new THREE.BufferAttribute(dustPositions, 3));
+    const dustMaterial = new THREE.PointsMaterial({
+      color: 0xff9f28,
+      size: 0.010,
+      sizeAttenuation: true,
+      transparent: true,
+      opacity: 0.34,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false
+    });
+    const dustSystem = new THREE.Points(dustGeometry, dustMaterial);
+    root.add(dustSystem);
+
+    // JARVIS micro-glyph layer: short holographic chips, not normal dot particles.
+    const GLYPHS = 760;
+    const glyphPositions = new Float32Array(GLYPHS * 3);
+    const glyphColors = new Float32Array(GLYPHS * 3);
+    const glyphSeeds = new Float32Array(GLYPHS);
+    const glyphRoles = new Uint8Array(GLYPHS);
+
+    for (let i = 0; i < GLYPHS; i++) {
+      const p = randomInSphere(1.26);
+      glyphPositions[i * 3 + 0] = p.x;
+      glyphPositions[i * 3 + 1] = p.y;
+      glyphPositions[i * 3 + 2] = p.z;
+      glyphColors[i * 3 + 0] = 1.0;
+      glyphColors[i * 3 + 1] = 0.68;
+      glyphColors[i * 3 + 2] = 0.16;
+      glyphSeeds[i] = Math.random() * 1000;
+      glyphRoles[i] = Math.floor(Math.random() * nodeDefs.length);
+    }
+
+    const glyphGeometry = new THREE.BufferGeometry();
+    glyphGeometry.setAttribute("position", new THREE.BufferAttribute(glyphPositions, 3));
+    glyphGeometry.setAttribute("color", new THREE.BufferAttribute(glyphColors, 3));
+
+    const glyphMaterial = new THREE.PointsMaterial({
+      map: glyphTexture,
+      size: 0.050,
+      sizeAttenuation: true,
+      vertexColors: true,
+      transparent: true,
+      opacity: 0.92,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+      alphaTest: 0.015
+    });
+
+    const glyphSystem = new THREE.Points(glyphGeometry, glyphMaterial);
+    root.add(glyphSystem);
+
+    // Larger soft JARVIS bokeh sparks that appear near active compute areas.
+    const BOKEH = 120;
+    const bokehPositions = new Float32Array(BOKEH * 3);
+    const bokehSeeds = new Float32Array(BOKEH);
+    const bokehRoles = new Uint8Array(BOKEH);
+
+    for (let i = 0; i < BOKEH; i++) {
+      const p = randomInSphere(1.18);
+      bokehPositions[i * 3 + 0] = p.x;
+      bokehPositions[i * 3 + 1] = p.y;
+      bokehPositions[i * 3 + 2] = p.z;
+      bokehSeeds[i] = Math.random() * 1000;
+      bokehRoles[i] = Math.floor(Math.random() * nodeDefs.length);
+    }
+
+    const bokehGeometry = new THREE.BufferGeometry();
+    bokehGeometry.setAttribute("position", new THREE.BufferAttribute(bokehPositions, 3));
+
+    const bokehMaterial = new THREE.PointsMaterial({
+      map: glowTexture,
+      color: 0xffb43a,
+      size: 0.095,
+      sizeAttenuation: true,
+      transparent: true,
+      opacity: 0.26,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+      alphaTest: 0.01
+    });
+
+    const bokehSystem = new THREE.Points(bokehGeometry, bokehMaterial);
+    root.add(bokehSystem);
+
+
+    const temp = new THREE.Vector3();
+    const target = new THREE.Vector3();
+
+
+    function updateLivingMotion(t) {
+      // Whole-orb breathing. Base is roughly 0.5 Hz and later tied to patience.
+      const patience = clamp01(visual.patience);
+      const breathRate = 0.00314159 * (0.74 + (1.0 - patience) * 0.52);
+      const breathAmp = 0.020 + (1.0 - patience) * 0.018 + visual.speaking * 0.006;
+      const breath = 1.0 + Math.sin(t * breathRate) * breathAmp;
+
+      particleSystem.scale.setScalar(breath);
+      dustSystem.scale.setScalar(1.0 + (breath - 1.0) * 0.70);
+
+      if (typeof glyphSystem !== "undefined") glyphSystem.scale.setScalar(1.0 + (breath - 1.0) * 0.90);
+      if (typeof bokehSystem !== "undefined") bokehSystem.scale.setScalar(1.0 + (breath - 1.0) * 0.85);
+      if (typeof shardMesh !== "undefined") shardMesh.scale.setScalar(1.0 + (breath - 1.0) * 0.82);
+      if (typeof chipMesh !== "undefined") chipMesh.scale.setScalar(1.0 + (breath - 1.0) * 0.82);
+
+      // 2-second heartbeat. A radial wave reads outward in updateParticles.
+      const phase = (t % 2000.0) / 2000.0;
+      visual.heartbeatPhase = phase;
+      visual.heartbeat = Math.exp(-Math.pow((phase - 0.055) / 0.045, 2.0));
+    }
+
+    function updateNodes(t) {
+      for (let i = 0; i < nodeSprites.length; i++) {
+        const s = nodeSprites[i];
+        const def = s.userData;
+        const active = clamp01(roleWeight(def.role));
+        const phase = t * (0.00042 + active * 0.00020) + i * 1.73;
+        const nodeBreath = 1.0 + Math.sin(t * (0.0012 + i * 0.00009) + i * 1.91) * (0.045 + active * 0.030);
+
+        temp.copy(def.base);
+        if (def.role !== "core") {
+          temp.x += Math.sin(phase * 1.3) * (0.045 + visual.novelty * 0.045);
+          temp.y += Math.cos(phase * 1.1) * (0.040 + visual.attention * 0.035);
+          temp.z += Math.sin(phase * 1.7) * (0.070 + visual.hVariance * 0.090);
+        } else {
+          temp.x += Math.sin(phase) * 0.030;
+          temp.y += Math.cos(phase * 1.2) * 0.022;
+          temp.z += Math.sin(phase * 1.5) * 0.035;
+        }
+
+        s.position.lerp(temp, 0.070);
+        s.material.opacity = 0.38 + active * 0.45;
+        s.scale.setScalar((0.12 + active * 0.12 + (def.role === "core" ? 0.065 : 0.0)) * nodeBreath);
+      }
+    }
+
+    function updateVoxels(t) {
+      voxelGroup.rotation.x = t * 0.00026;
+      voxelGroup.rotation.y = t * 0.00034;
+      voxelGroup.rotation.z = t * 0.00019;
+
+      for (let i = 0; i < 64; i++) {
+        const v = visual.hBands[i] || 0;
+        const pulse = 0.5 + 0.5 * Math.sin(t * 0.004 + i);
+        const opacity = 0.022 + v * 0.26 + pulse * 0.012 + (visual.heartbeat || 0) * 0.10;
+        voxelMats[i].opacity = opacity;
+        voxelMats[i].color.setRGB(1.0, 0.42 + v * 0.45, 0.10 + v * 0.18);
+        voxels[i].scale.setScalar(0.30 + v * 0.72 + pulse * 0.06 + (visual.heartbeat || 0) * 0.18);
+      }
+    }
+
+
+    function updateJarvisDataShards(t) {
+      const activeRole = visual.activeRole;
+      const coreNode = nodeSprites[nodeSprites.length - 1];
+
+      for (let i = 0; i < DATA_SHARDS; i++) {
+        const seed = shardSeeds[i];
+        const roleIndex = shardRoles[i];
+        const def = nodeDefs[roleIndex];
+        const node = nodeSprites[roleIndex];
+        const active = roleWeight(def.role);
+        const isActiveRole = def.role === activeRole ? 1 : 0;
+        const time = t * (0.00022 + active * 0.00022 + visual.novelty * 0.00018) + seed;
+        let flowPulse = 0.0;
+
+        // Broken packet bars stream along node -> core routes.
+        const routeMode = (Math.abs(Math.sin(seed * 91.731) * 43758.5453) % 1) < 0.78 && def.role !== "core";
+        if (routeMode) {
+          const u = (time * (0.62 + active * 0.62 + isActiveRole * 0.32) + seed * 0.021) % 1;
+          flowPulse = Math.pow(Math.max(0.0, 0.5 + 0.5 * Math.sin(u * 18.8495559 - t * 0.0070)), 6.0);
+          target.copy(node.position).lerp(coreNode.position, u);
+
+          // Quantized jitter gives the JARVIS "digital fragment" behavior.
+          const step = Math.floor(u * 22.0) / 22.0;
+          const jitter = 0.010 + active * 0.018 + isActiveRole * 0.018;
+          target.x += Math.sin(step * 41.0 + seed + t * 0.0012) * jitter;
+          target.y += Math.cos(step * 37.0 + seed + t * 0.0010) * jitter * 0.80;
+          target.z += Math.sin(step * 29.0 + seed + t * 0.0014) * jitter * 1.20;
+        } else {
+          // Local chip-cloud around a moving role node, but not circular rings.
+          const radius = 0.055 + ((seed * 0.173) % 1) * (0.18 + active * 0.16 + isActiveRole * 0.10);
+          const a = time * (2.8 + visual.novelty * 1.8) + seed;
+          const b = time * (1.6 + visual.attention * 1.4) + seed * 0.33;
+          target.copy(node.position);
+          target.x += Math.cos(a) * Math.sin(b) * radius;
+          target.y += Math.sin(a * 1.31) * radius * 0.58;
+          target.z += Math.cos(b * 1.21) * radius;
+        }
+
+        shardObj.position.copy(target);
+
+        // Rotating chips make the fragments visually distinct from round dots.
+        const rx = time * 3.1 + seed;
+        const ry = time * 2.4 + seed * 0.7;
+        const rz = time * 5.6 + seed * 1.3;
+        shardObj.rotation.set(rx, ry, rz);
+
+        const base = shardScales[i] * (0.42 + active * 0.32 + isActiveRole * 0.28 + flowPulse * 0.58);
+        shardObj.scale.set(base * (1.2 + visual.attention * 0.25), base, base);
+        shardObj.updateMatrix();
+        shardMesh.setMatrixAt(i, shardObj.matrix);
+      }
+
+      shardMat.opacity = 0.18 + visual.attention * 0.08 + visual.novelty * 0.07 + visual.speaking * 0.05 + (visual.heartbeat || 0) * 0.08;
+      shardMesh.instanceMatrix.needsUpdate = true;
+
+      for (let i = 0; i < CHIP_CUBES; i++) {
+        const seed = chipSeeds[i];
+        const roleIndex = chipRoles[i];
+        const def = nodeDefs[roleIndex];
+        const node = nodeSprites[roleIndex];
+        const active = roleWeight(def.role);
+        const isActiveRole = def.role === activeRole ? 1 : 0;
+        const time = t * (0.00016 + active * 0.00018) + seed;
+
+        const radius = 0.050 + ((seed * 0.251) % 1) * (0.22 + active * 0.16);
+        target.copy(node.position);
+        target.x += Math.sin(time * 3.4 + seed) * radius;
+        target.y += Math.cos(time * 2.7 + seed) * radius * 0.72;
+        target.z += Math.sin(time * 2.9 + seed) * radius * 0.95;
+
+        chipObj.position.copy(target);
+        chipObj.rotation.set(time * 2.2, time * 3.6, time * 4.1);
+        const sc = 0.30 + active * 0.55 + isActiveRole * 0.45;
+        chipObj.scale.set(sc, sc, sc);
+        chipObj.updateMatrix();
+        chipMesh.setMatrixAt(i, chipObj.matrix);
+      }
+
+      chipMat.opacity = 0.10 + visual.reward * 0.08 + visual.attention * 0.05 + visual.novelty * 0.06;
+      chipMesh.instanceMatrix.needsUpdate = true;
+    }
+
+    function updateParticles(t) {
+      const pos = particleGeometry.attributes.position.array;
+      const col = particleGeometry.attributes.color.array;
+      const activeRole = visual.activeRole;
+      const coreNode = nodeSprites[nodeSprites.length - 1];
+      const heartbeatRadius = (visual.heartbeatPhase || 0) * 1.58;
+
+      for (let i = 0; i < PARTICLES; i++) {
+        const seed = particleSeeds[i];
+        const roleIndex = particleRoles[i];
+        const def = nodeDefs[roleIndex];
+        const node = nodeSprites[roleIndex];
+        const active = roleWeight(def.role);
+        const isActiveRole = def.role === activeRole ? 1 : 0;
+
+        const streamBias = 0.34 + active * 0.32 + isActiveRole * 0.20;
+        const time = t * (0.00013 + active * 0.00011 + visual.novelty * 0.00008) + seed;
+        const mode = Math.abs(Math.sin(seed * 12.9898) * 43758.5453) % 1;
+        let flowPulse = 0.0;
+
+        if (mode < streamBias && def.role !== "core") {
+          const u = (time * (0.42 + active * 0.48) + seed * 0.013) % 1;
+          flowPulse = Math.pow(Math.max(0.0, 0.5 + 0.5 * Math.sin(u * 18.8495559 - t * 0.0062)), 7.0);
+          target.copy(node.position).lerp(coreNode.position, u);
+          target.x += Math.sin(time * 7.0) * (0.035 + active * 0.030);
+          target.y += Math.cos(time * 6.0) * (0.030 + active * 0.030);
+          target.z += Math.sin(time * 5.0) * (0.045 + active * 0.050);
+        } else {
+          const radius = 0.16 + ((seed * 0.137) % 1) * 1.28;
+          const a = time * (1.4 + visual.novelty * 1.2) + seed;
+          const b = time * (0.9 + visual.attention * 0.8) + seed * 0.31;
+          target.set(
+            Math.cos(a) * Math.sin(b) * radius,
+            Math.sin(a * 1.17) * radius * 0.68,
+            Math.cos(b * 1.23) * radius
+          );
+        }
+
+        // Slow random-walk drift, like embers in wind.
+        const driftAmp = 0.016 + visual.novelty * 0.018 + (1.0 - visual.patience) * 0.012;
+        target.x += Math.sin(time * 1.73 + seed * 2.11 + t * 0.00037) * driftAmp;
+        target.y += Math.cos(time * 1.31 + seed * 1.73 + t * 0.00031) * driftAmp * 0.75;
+        target.z += Math.sin(time * 1.47 + seed * 2.37 + t * 0.00029) * driftAmp;
+
+        const idx = i * 3;
+        pos[idx + 0] = lerp(pos[idx + 0], target.x, 0.022 + active * 0.020 + isActiveRole * 0.020);
+        pos[idx + 1] = lerp(pos[idx + 1], target.y, 0.022 + active * 0.020 + isActiveRole * 0.020);
+        pos[idx + 2] = lerp(pos[idx + 2], target.z, 0.022 + active * 0.020 + isActiveRole * 0.020);
+
+        const dxp = pos[idx + 0] - coreNode.position.x;
+        const dyp = pos[idx + 1] - coreNode.position.y;
+        const dzp = pos[idx + 2] - coreNode.position.z;
+        const dist = Math.sqrt(dxp * dxp + dyp * dyp + dzp * dzp);
+        const heartbeatBoost = Math.exp(-Math.pow((dist - heartbeatRadius) / 0.085, 2.0)) * (0.55 + visual.reward * 0.35);
+        const warm = 0.48 + active * 0.42 + isActiveRole * 0.22 + heartbeatBoost * 0.65 + flowPulse * 0.55;
+        const alarm = visual.threat > 0.18 && def.role === "guard";
+        col[idx + 0] = 1.0;
+        col[idx + 1] = alarm ? 0.22 : 0.36 + warm * 0.48;
+        col[idx + 2] = alarm ? 0.05 : 0.08 + visual.reward * 0.18 + active * 0.10;
+      }
+
+      particleGeometry.attributes.position.needsUpdate = true;
+      particleGeometry.attributes.color.needsUpdate = true;
+      particleMaterial.size = 0.014 + visual.attention * 0.007 + visual.reward * 0.005;
+      particleMaterial.opacity = 0.30 + visual.attention * 0.08 + visual.novelty * 0.06;
+    }
+
+
+    function updateJarvisGlyphs(t) {
+      const pos = glyphGeometry.attributes.position.array;
+      const col = glyphGeometry.attributes.color.array;
+      const activeRole = visual.activeRole;
+      const coreNode = nodeSprites[nodeSprites.length - 1];
+
+      for (let i = 0; i < GLYPHS; i++) {
+        const idx = i * 3;
+        const seed = glyphSeeds[i];
+        const roleIndex = glyphRoles[i];
+        const def = nodeDefs[roleIndex];
+        const node = nodeSprites[roleIndex];
+        const active = roleWeight(def.role);
+        const isActiveRole = def.role === activeRole ? 1 : 0;
+        const time = t * (0.00018 + active * 0.00018 + visual.novelty * 0.00012) + seed;
+
+        // Most glyphs are short-lived packet chips flowing through node/core routes.
+        const mode = Math.abs(Math.sin(seed * 78.233) * 43758.5453) % 1;
+        if (mode < 0.70 && def.role !== "core") {
+          const u = (time * (0.55 + active * 0.52 + isActiveRole * 0.25) + seed * 0.019) % 1;
+          target.copy(node.position).lerp(coreNode.position, u);
+
+          // Broken JARVIS-like routes: stepped/wavering, not smooth star dust.
+          const step = Math.floor(u * 18.0) / 18.0;
+          const jitter = 0.030 + active * 0.040 + isActiveRole * 0.030;
+          target.x += Math.sin(step * 31.0 + seed + t * 0.0010) * jitter;
+          target.y += Math.cos(step * 27.0 + seed + t * 0.0009) * jitter * 0.75;
+          target.z += Math.sin(step * 23.0 + seed + t * 0.0011) * jitter * 1.15;
+        } else {
+          // Local holographic jitter cloud around active nodes.
+          const radius = 0.10 + ((seed * 0.217) % 1) * (0.42 + active * 0.36);
+          const a = time * (2.4 + visual.novelty * 1.6) + seed;
+          const b = time * (1.5 + visual.attention * 1.2) + seed * 0.37;
+          target.copy(node.position);
+          target.x += Math.cos(a) * Math.sin(b) * radius;
+          target.y += Math.sin(a * 1.33) * radius * 0.55;
+          target.z += Math.cos(b * 1.19) * radius;
+        }
+
+        pos[idx + 0] = lerp(pos[idx + 0], target.x, 0.060 + active * 0.035 + isActiveRole * 0.035);
+        pos[idx + 1] = lerp(pos[idx + 1], target.y, 0.060 + active * 0.035 + isActiveRole * 0.035);
+        pos[idx + 2] = lerp(pos[idx + 2], target.z, 0.060 + active * 0.035 + isActiveRole * 0.035);
+
+        const hot = 0.55 + active * 0.34 + isActiveRole * 0.30;
+        const alarm = visual.threat > 0.18 && def.role === "guard";
+        col[idx + 0] = 1.0;
+        col[idx + 1] = alarm ? 0.18 : 0.42 + hot * 0.48;
+        col[idx + 2] = alarm ? 0.04 : 0.06 + hot * 0.14 + visual.reward * 0.10;
+      }
+
+      glyphGeometry.attributes.position.needsUpdate = true;
+      glyphGeometry.attributes.color.needsUpdate = true;
+      glyphMaterial.size = 0.040 + visual.attention * 0.014 + visual.novelty * 0.010;
+      glyphMaterial.opacity = 0.62 + visual.attention * 0.18 + visual.novelty * 0.16 + visual.speaking * 0.10;
+
+      const bpos = bokehGeometry.attributes.position.array;
+      for (let i = 0; i < BOKEH; i++) {
+        const idx = i * 3;
+        const seed = bokehSeeds[i];
+        const roleIndex = bokehRoles[i];
+        const def = nodeDefs[roleIndex];
+        const node = nodeSprites[roleIndex];
+        const active = roleWeight(def.role);
+        const time = t * (0.00010 + active * 0.00008) + seed;
+        const radius = 0.05 + ((seed * 0.311) % 1) * (0.22 + active * 0.32);
+
+        target.copy(node.position);
+        target.x += Math.sin(time * 2.7) * radius;
+        target.y += Math.cos(time * 2.1) * radius * 0.75;
+        target.z += Math.sin(time * 2.3) * radius;
+
+        bpos[idx + 0] = lerp(bpos[idx + 0], target.x, 0.025 + active * 0.020);
+        bpos[idx + 1] = lerp(bpos[idx + 1], target.y, 0.025 + active * 0.020);
+        bpos[idx + 2] = lerp(bpos[idx + 2], target.z, 0.025 + active * 0.020);
+      }
+
+      bokehGeometry.attributes.position.needsUpdate = true;
+      bokehMaterial.opacity = 0.12 + visual.reward * 0.14 + visual.attention * 0.08 + visual.speaking * 0.08;
+      bokehMaterial.size = 0.070 + visual.reward * 0.045 + visual.speaking * 0.035;
+    }
+
+    function updateDust(t) {
+      const pos = dustGeometry.attributes.position.array;
+      for (let i = 0; i < DUST; i++) {
+        const idx = i * 3;
+        const seed = dustSeeds[i];
+        const x = pos[idx + 0];
+        const y = pos[idx + 1];
+        const z = pos[idx + 2];
+
+        const swirl = 0.0016 + visual.novelty * 0.0017 + visual.hVariance * 0.0018;
+        const nx = x + (-z * swirl + Math.sin(t * 0.0007 + seed) * 0.0008);
+        const nz = z + ( x * swirl + Math.cos(t * 0.0006 + seed) * 0.0008);
+        const ny = y + Math.sin(t * 0.0005 + seed) * 0.0009;
+
+        const r2 = nx * nx + ny * ny + nz * nz;
+        if (r2 > 1.55 * 1.55) {
+          const p = randomInSphere(1.20);
+          pos[idx + 0] = p.x;
+          pos[idx + 1] = p.y;
+          pos[idx + 2] = p.z;
+        } else {
+          pos[idx + 0] = nx;
+          pos[idx + 1] = ny;
+          pos[idx + 2] = nz;
+        }
+      }
+      dustGeometry.attributes.position.needsUpdate = true;
+      dustMaterial.opacity = 0.11 + visual.trust * 0.03 + visual.novelty * 0.04;
+    }
+
+    function animate(t) {
+      updateVisualFromState();
+      updateLivingMotion(t);
+
+      membraneUniforms.uTime.value = t * 0.001;
+      membraneUniforms.uTrust.value = visual.trust;
+      membraneUniforms.uThreat.value = visual.threat;
+      membraneUniforms.uAttention.value = visual.attention;
+
+      membrane.rotation.y = t * 0.00008;
+      membrane.rotation.x = Math.sin(t * 0.00022) * 0.035;
+      haze.rotation.y = -t * 0.00010;
+
+      const pulse = 0.5 + 0.5 * Math.sin(t * (0.0020 + visual.attention * 0.0010));
+      coreLight.intensity = 0.85 + visual.reward * 0.90 + visual.attention * 0.42 + visual.speaking * 0.36 + pulse * 0.20 + (visual.heartbeat || 0) * 1.15;
+      coreLight.color.setRGB(1.0, visual.threat > 0.12 ? 0.32 : 0.62 + visual.reward * 0.18, visual.threat > 0.12 ? 0.08 : 0.18);
+
+      bloom.strength = 0.12 + visual.reward * 0.10 + visual.speaking * 0.07 + visual.threat * 0.08;
+      bloom.radius = 0.14 + visual.trust * 0.05;
+
+      root.rotation.y = t * 0.000065;
+      root.rotation.x = Math.sin(t * 0.00016) * 0.020;
+
+      updateNodes(t);
+      updateVoxels(t);
+      updateJarvisDataShards(t);
+      updateParticles(t);
+      updateJarvisGlyphs(t);
+      updateDust(t);
+
+      controls.update();
+      composer.render();
+      requestAnimationFrame(animate);
+    }
+
+    requestAnimationFrame(animate);
+
+    addEventListener("resize", () => {
+      camera.aspect = innerWidth / innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(innerWidth, innerHeight);
+      composer.setSize(innerWidth, innerHeight);
+      bloom.setSize(innerWidth, innerHeight);
+    });
+  </script>
+</body>
+</html>

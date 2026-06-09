@@ -16,6 +16,7 @@ import time
 
 from aegis.nexus.bus import BUS
 from aegis.nexus.neurobus import STATE as NEURO_STATE
+
 from .db import CONN
 
 log = logging.getLogger("mnemosyne.write")

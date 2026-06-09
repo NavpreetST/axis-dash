@@ -1,8 +1,4 @@
-from aegis.renderer import (
-    QuotaExhausted,
-    RendererError,
-    TransientError,
-)
+from aegis.renderer import QuotaExhausted, RendererError, TransientError
 
 
 def test_exception_hierarchy():

@@ -16,6 +16,7 @@ Output head (40 dims):
   [39]    urgency
 """
 from __future__ import annotations
+
 import asyncio
 import logging
 import math
@@ -30,8 +31,14 @@ from ncps.wirings import AutoNCP
 
 from aegis.nexus.bus import BUS
 from aegis.nexus.neurobus import STATE as NEURO_STATE
+from aegis.observability import eventlog
 
 log = logging.getLogger("brain.ncp")
+
+# --- brain-crash rate-limiting ---
+# Don't emit >1 event per _CRASH_WINDOW_S even if forward-pass fails every tick.
+_CRASH_WINDOW_S = 30.0
+_last_crash_emit: float = 0.0
 
 INPUT_DIM = 388
 HIDDEN = 64
@@ -142,14 +149,31 @@ async def run() -> None:
             CONTEXT_TEXTS.extend(msg.payload.get("texts", [])[:3])
 
     async def consume_tick() -> None:
-        global LAST_TEXT_INPUT
+        global LAST_TEXT_INPUT, _last_crash_emit
         while True:
             await tick_q.get()
             if not LAST_TEXT_INPUT:
                 continue
-            with torch.no_grad():
-                out = BRAIN(_build_input_vec())
-            intent = _decode(out)
+            try:
+                with torch.no_grad():
+                    out = BRAIN(_build_input_vec())
+                intent = _decode(out)
+            except Exception as e:
+                now = time.monotonic()
+                if now - _last_crash_emit >= _CRASH_WINDOW_S:
+                    try:
+                        await eventlog.log_event(
+                            source="aegis",
+                            event_type="error",
+                            payload={"where": "brain.ncp.consume_tick", "err": str(e)},
+                            severity="error",
+                            sensitivity="internal",
+                        )
+                        _last_crash_emit = now
+                    except Exception:
+                        log.debug("ncp: failed to emit crash event", exc_info=True)
+                log.warning("ncp: forward-pass error — %s", e)
+                continue
             action = "speak"  # nudge: v1 brain is random-init, always speak (was: noop->speak only)
             await BUS.publish("intent.packet", {
                 "action":        action,

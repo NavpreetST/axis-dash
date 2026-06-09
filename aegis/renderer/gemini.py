@@ -23,8 +23,9 @@ import os
 import sys
 
 import httpx
-from aegis.renderer import _quota
-from aegis.renderer import QuotaExhausted, TransientError
+
+from aegis.observability import eventlog
+from aegis.renderer import QuotaExhausted, TransientError, _quota
 
 log = logging.getLogger(__name__)
 
@@ -121,7 +122,25 @@ async def render(intent: dict) -> str:
     }
     try:
         _quota.reserve()  # Block 1.1: pre-flight only; record_success() after usable 200
-        async with httpx.AsyncClient(timeout=15.0) as client:
+    except QuotaExhausted:
+        usage = _quota._load()
+        try:
+            await eventlog.log_event(
+                source="aegis",
+                event_type="error",
+                payload={
+                    "where": "quota",
+                    "count": usage["count"],
+                    "budget": _quota.DAILY_BUDGET,
+                },
+                severity="warn",
+                sensitivity="internal",
+            )
+        except Exception:
+            log.debug("gemini: failed to emit quota-exhausted event", exc_info=True)
+        raise
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        try:
             log.info("gemini req: content_len=%d preview=%r payload_keys=%s", len(content), content[:200], list(payload.keys()))
             r = await client.post(
                 _GENERATE_URL,
@@ -131,8 +150,8 @@ async def render(intent: dict) -> str:
                 },
                 json=payload,
             )
-    except (httpx.TimeoutException, httpx.NetworkError, httpx.RemoteProtocolError) as e:
-        raise TransientError(f"gemini network/timeout: {e}") from e
+        except (httpx.TimeoutException, httpx.NetworkError, httpx.ProtocolError) as e:
+            raise TransientError(f"gemini network/timeout: {e}") from e
 
     if r.status_code == 429:
         raise QuotaExhausted(f"gemini 429: {r.text[:200]}")

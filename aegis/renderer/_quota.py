@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import json
 import os
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -23,6 +23,10 @@ from aegis.renderer import QuotaExhausted
 DAILY_BUDGET = int(os.getenv("AEGIS_GEMINI_DAILY_BUDGET", "240"))
 _USAGE_PATH = Path.home() / ".local" / "share" / "aegis" / "gemini_usage.json"
 _PROVIDER_TZ = ZoneInfo("America/Los_Angeles")
+
+# Pending day-rollover notifications (event-loop-safe, not thread-safe).
+# Dispatcher drains via pop_day_rollover() on every tick.
+_DAY_ROLLOVER_PENDING: list[str] = []
 
 
 def _today_pacific(now: datetime | None = None) -> str:
@@ -34,9 +38,9 @@ def _today_pacific(now: datetime | None = None) -> str:
     - DST-back day: 2026-11-01 stays 2026-11-01 across the repeated hour.
     """
     if now is None:
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
     elif now.tzinfo is None:
-        now = now.replace(tzinfo=timezone.utc)
+        now = now.replace(tzinfo=UTC)
     return now.astimezone(_PROVIDER_TZ).strftime("%Y-%m-%d")
 
 
@@ -45,10 +49,17 @@ def _load() -> dict:
     try:
         data = json.loads(_USAGE_PATH.read_text())
         if data.get("date") != today:
+            _DAY_ROLLOVER_PENDING.append(today)
             return {"date": today, "count": 0}
         return {"date": today, "count": int(data.get("count", 0))}
     except (FileNotFoundError, json.JSONDecodeError, ValueError, OSError):
+        _DAY_ROLLOVER_PENDING.append(today)
         return {"date": today, "count": 0}
+
+
+def pop_day_rollover() -> str | None:
+    """Drain one pending day-rollover date (called by dispatcher on tick)."""
+    return _DAY_ROLLOVER_PENDING.pop(0) if _DAY_ROLLOVER_PENDING else None
 
 
 def _save(usage: dict) -> None:

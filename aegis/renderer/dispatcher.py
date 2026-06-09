@@ -23,7 +23,9 @@ import logging
 import time
 
 from aegis.nexus.bus import BUS
-from aegis.renderer import QuotaExhausted, TransientError, RendererError
+from aegis.observability import eventlog
+from aegis.renderer import QuotaExhausted, RendererError, fallback, gemini, groq
+from aegis.renderer._quota import pop_day_rollover
 
 log = logging.getLogger(__name__)
 
@@ -60,14 +62,31 @@ async def run() -> None:
     q = BUS.subscribe("intent.packet")
     while True:
         msg = await q.get()
+
+        # --- day-rollover drain (runs every tick, even if idle) ---
+        try:
+            rollover_date = pop_day_rollover()
+            if rollover_date:
+                try:
+                    await eventlog.log_event(
+                        source="aegis",
+                        event_type="task_created",
+                        payload={"where": "quota", "event": "day_rollover", "new_date": rollover_date},
+                        severity="info",
+                        sensitivity="internal",
+                    )
+                except Exception:
+                    log.debug("dispatcher: failed to emit day-rollover event", exc_info=True)
+        except Exception:
+            log.debug("dispatcher: day-rollover drain error", exc_info=True)
+
         intent = msg.payload
 
         if intent.get("action") != "speak":
             log.info("dispatcher: intent skipped: action=%s", intent.get("action"))
             continue
 
-        import aegis.renderer as _renderer
-        _renderer._is_speaking = True
+        import aegis.renderer as _renderer; _renderer._is_speaking = True
         result = await _render_with_chain(intent)
         await BUS.publish("action.speak", result)
         _renderer._is_speaking = False
@@ -108,6 +127,23 @@ async def _render_with_chain(intent: dict) -> dict:
                     fallback_to=adapter.name if fallback_fired else None,
                     error_class=last_error_class,
                 )
+                # Emit event on fallback (Gemini→Groq or Gemini/Groq→Template)
+                if fallback_fired:
+                    try:
+                        await eventlog.log_event(
+                            source="aegis",
+                            event_type="error",
+                            payload={
+                                "where": "dispatcher",
+                                "fallback_from": chain_names[0],
+                                "fallback_to": adapter.name,
+                                "error_class": last_error_class,
+                            },
+                            severity="warn",
+                            sensitivity="internal",
+                        )
+                    except Exception:
+                        log.debug("dispatcher: failed to emit fallback event", exc_info=True)
                 return result
             if not fallback_fired:
                 fallback_fired = True
@@ -130,6 +166,20 @@ async def _render_with_chain(intent: dict) -> dict:
 
     render_ms = int((time.perf_counter() - t0) * 1000)
     log.error("dispatcher: all adapters exhausted — returning empty string")
+    try:
+        await eventlog.log_event(
+            source="aegis",
+            event_type="error",
+            payload={
+                "where": "dispatcher",
+                "error": "all_adapters_exhausted",
+                "error_class": last_error_class,
+            },
+            severity="critical",
+            sensitivity="internal",
+        )
+    except Exception:
+        log.debug("dispatcher: failed to emit all-exhausted event", exc_info=True)
     result = {
         "text": "",
         "provider": "template",
