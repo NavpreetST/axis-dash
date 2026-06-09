@@ -420,6 +420,9 @@ def _collect_files_by_chunk(base_dir: Path, chunk: str) -> list[tuple[str, str]]
         files.append((rel, text))
     return files
 
+ARCHAEOLOGY_BATCH_SIZE = 6
+ARCHAEOLOGY_OUTPUT = "nim-archaeology-report.md"
+
 
 def _split_files_into_batches(
     files: list[tuple[str, str]],
@@ -463,15 +466,39 @@ def _build_archaeology_prompt(
     )
 
 
-ARCHAEOLOGY_OUTPUT = "nim-archaeology-report.md"
+async def _call_archaeology_single(
+    folder_name: str,
+    description: str,
+    batch_files: list[tuple[str, str]],
+    batch_idx: int,
+) -> str | None:
+    prompt = _build_archaeology_prompt(folder_name, description, batch_files)
+    payload = {
+        "model": NIM_MODEL,
+        "messages": [{"role": "user", "content": prompt}],
+        "max_tokens": 8192,
+        "temperature": 0.2,
+    }
+    response = await _call_nim(payload)
+    if not response:
+        return None
+    try:
+        return response["choices"][0]["message"]["content"]
+    except (KeyError, IndexError, ValueError) as e:
+        log.warning("archaeology: malformed response for %s batch %d: %s", folder_name, batch_idx, e)
+        return None
 
 
 async def archaeology_scan(
     content_dir: Path,
     output_dir: Path = OUTPUT_DIR,
     dry_run: bool = False,
+    batch_size: int = ARCHAEOLOGY_BATCH_SIZE,
     target_dirs: list[str] | None = None,
 ) -> list[str]:
+    if batch_size <= 0:
+        raise ValueError(f"batch_size must be > 0, got {batch_size}")
+    batch_size = min(batch_size, MAX_FILES_PER_BATCH)
     _load_secrets()
     if not NVIDIA_API_KEY and not dry_run:
         log.error("archaeology: NVIDIA_API_KEY not set")
@@ -509,37 +536,19 @@ async def archaeology_scan(
             )
             continue
 
-        # Split into batches if folder is large
-        batches = _split_files_into_batches(new_files)
+        batches = _split_files_into_batches(new_files, max_files=batch_size)
         if len(batches) > 1:
-            log.info("archaeology: splitting %s into %d batches (%d files, %d chars total)",
-                     chunk, len(batches), len(new_files), sum(len(t) for _, t in new_files))
+            log.info("archaeology: splitting %s into %d batches (%d files, batch_size=%d)",
+                     chunk, len(batches), len(new_files), batch_size)
 
         folder_results: list[str] = []
         for batch_idx, batch_files in enumerate(batches):
             batch_label = f"{chunk} batch {batch_idx + 1}/{len(batches)}" if len(batches) > 1 else chunk
-            log.info("archaeology: scanning %s (%d files, %d chars)",
-                     batch_label, len(batch_files), sum(len(t) for _, t in batch_files))
+            log.info("archaeology: scanning %s (%d files)", batch_label, len(batch_files))
 
-            prompt = _build_archaeology_prompt(chunk, description, batch_files)
-            payload = {
-                "model": NIM_MODEL,
-                "messages": [{"role": "user", "content": prompt}],
-                "max_tokens": 8192,
-                "temperature": 0.2,
-            }
-
-            response = await _call_nim(payload)
-            if not response:
-                log.error("archaeology: NIM call failed for %s", batch_label)
+            content = await _call_archaeology_single(chunk, description, batch_files, batch_idx + 1)
+            if content is None:
                 folder_results.append(f"_[NIM call failed for {batch_label}]_")
-                continue
-
-            try:
-                content = response["choices"][0]["message"]["content"]
-            except (KeyError, IndexError, ValueError) as e:
-                log.warning("archaeology: malformed response for %s: %s", batch_label, e)
-                folder_results.append(f"_[Malformed response for {batch_label}]_")
                 continue
 
             # Dedup entries — skip (filename, category) pairs already seen
@@ -550,7 +559,6 @@ async def archaeology_scan(
 
             for line in content.splitlines(keepends=True):
                 if line.startswith("### "):
-                    # Finalize previous entry
                     if entry_key and entry_key in _seen_entries:
                         current_entry = []
                         entry_key = None
@@ -576,7 +584,6 @@ async def archaeology_scan(
                 else:
                     deduped_lines.append(line)
 
-            # Flush last entry
             if current_entry and entry_key:
                 if entry_key not in _seen_entries:
                     _seen_entries.add(entry_key)
@@ -597,7 +604,7 @@ async def archaeology_scan(
                 wait = NIM_BUDGET.wait_s()
                 if wait > 0:
                     await asyncio.sleep(wait)
-                await asyncio.sleep(1.0)  # extra margin
+                await asyncio.sleep(1.0)
 
         report_sections.append(f"## {chunk}\n\n" + "\n\n".join(folder_results))
 
@@ -707,7 +714,12 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--verbose", "-v", action="store_true", help="Enable debug logging")
     parser.add_argument("--archaeology", action="store_true", help="Run archaeology scan on Helios markdown corpus")
     parser.add_argument("--content-dir", default=None, help="Root of Helios markdown corpus (default: $HELIOS_CONTENT_DIR)")
-    return parser.parse_args()
+    parser.add_argument("--batch-size", type=int, default=ARCHAEOLOGY_BATCH_SIZE, help="Files per NIM call in archaeology mode (default: 6)")
+    args = parser.parse_args()
+    if args.batch_size <= 0:
+        parser.error(f"--batch-size must be > 0, got {args.batch_size}")
+    args.batch_size = min(args.batch_size, MAX_FILES_PER_BATCH)
+    return args
 
 
 def main() -> None:
@@ -726,7 +738,7 @@ def main() -> None:
             log.error("archaeology: HELIOS_CONTENT_DIR not set or invalid: %s", content_dir)
             log.error("  Set HELIOS_CONTENT_DIR env or pass --content-dir")
             return
-        sections = asyncio.run(archaeology_scan(content_dir=content_dir, output_dir=out_dir, dry_run=args.dry_run))
+        sections = asyncio.run(archaeology_scan(content_dir=content_dir, output_dir=out_dir, dry_run=args.dry_run, batch_size=args.batch_size))
         if args.dry_run:
             for s in sections:
                 log.info("[ARCHAEOLOGY DRY RUN] %s", s.split("\n")[0] if s else "")
