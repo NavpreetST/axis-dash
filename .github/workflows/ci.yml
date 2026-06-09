@@ -66,6 +66,8 @@ jobs:
           PUBLIC_HELIOS_API_URL: https://localhost:8080
           PUBLIC_HELIOS_WS_URL: wss://localhost:8080
           PUBLIC_USE_LIVE_BRIDGE: 'false'
+          PUBLIC_SUPABASE_URL: https://placeholder.supabase.co
+          PUBLIC_SUPABASE_ANON_KEY: placeholder-key
         run: npx svelte-kit sync && npx svelte-check --tsconfig ./tsconfig.json --threshold error
 
   # ── Gate 3: CodeRabbit Review (ADVISORY — never blocks) ────────────────
