@@ -1080,7 +1080,9 @@ async def logs_sse(request: Request) -> StreamingResponse:
 if STATIC_DIR.exists():
     app.mount("/", StaticFiles(directory=str(STATIC_DIR), html=True), name="static")
 else:
-    log.warning("static dir missing: %s", STATIC_DIR)
+    # Dashboard is served by the separate AXIS repo at axis-dash.vercel.app.
+    # The static/ directory is not required for bridge operation.
+    log.info("static dir not present — dashboard served by external AXIS frontend")
 
 
 def run(host: str = "0.0.0.0", port: int = 8080) -> None:

@@ -61,7 +61,7 @@ def _orb_state_dir() -> Path:
     return Path(os.getenv("AEGIS_STATE_DIR", "/var/lib/aegis"))
 
 
-def _build_orb_snapshot() -> dict:
+def _build_orb_snapshot(now: str, state_dict: dict) -> dict:
     """Build the richer orb snapshot for the web server.
 
     Best-effort: if optional imports fail, fall back to safe defaults.
@@ -70,8 +70,7 @@ def _build_orb_snapshot() -> dict:
     function calls so a runtime ImportError inside the called function
     is not misclassified as a missing module.
     """
-    now = datetime.now(UTC).isoformat()
-    snap: dict = {"updated_at": now, **asdict(STATE)}
+    snap: dict = {"updated_at": now, **state_dict}
 
     # hidden_state_vec
     try:
@@ -113,20 +112,21 @@ async def run() -> None:
             for f, rate in DECAY.items():
                 setattr(STATE, f, getattr(STATE, f) * rate)
             STATE.clamp()
-            await BUS.publish("neurobus.state", asdict(STATE))
+            now = datetime.now(UTC).isoformat()
+            state_dict = asdict(STATE)
+            await BUS.publish("neurobus.state", state_dict)
             # Write the lightweight neurobus state file.
             try:
-                now = datetime.now(UTC).isoformat()
                 atomic_write_json(
                     NEUROBUS_STATE_PATH,
-                    {"updated_at": now, **asdict(STATE)},
+                    {"updated_at": now, **state_dict},
                 )
             except (OSError, ValueError, TypeError) as e:
                 log.warning("neurobus: failed to write neurobus_state — %s", e)
             # Write the richer orb snapshot for the web server.
             try:
                 orb_path = _orb_state_dir() / "orb_state.json"
-                atomic_write_json(orb_path, _build_orb_snapshot())
+                atomic_write_json(orb_path, _build_orb_snapshot(now, state_dict))
             except (OSError, ValueError, TypeError) as e:
                 log.warning("neurobus: failed to write orb_state — %s", e)
 

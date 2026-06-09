@@ -9,11 +9,15 @@ Usage:
     aegis                 # interactive
     echo "hi" | aegis     # one-shot
 """
+import json as _json
 import os
 import socket
+import sqlite3
+import subprocess as _sp
 import sys
 import threading
 import time
+from datetime import datetime as _dt, timezone as _tz
 from pathlib import Path
 
 # Fallback socket paths (checked in order: AEGIS_SOCK env -> DEFAULTS).
@@ -33,11 +37,7 @@ def _resolve_sock() -> str:
 
 
 def _print_health() -> None:
-    import json as _json
-    from pathlib import Path as _Path
-    import subprocess as _sp
-
-    sock_path = _Path(_resolve_sock())
+    sock_path = Path(_resolve_sock())
     sock_ok = sock_path.exists()
     pid_out = ""
     try:
@@ -45,7 +45,7 @@ def _print_health() -> None:
     except Exception:
         pass
 
-    state_dir = _Path(os.getenv("AEGIS_STATE_DIR", "/var/lib/aegis"))
+    state_dir = Path(os.getenv("AEGIS_STATE_DIR", "/var/lib/aegis"))
     print("aegis health:", "ok" if sock_ok else "degraded")
     print(f"daemon: {'pid ' + pid_out if pid_out else 'not found'}, socket {'present' if sock_ok else 'MISSING'}")
 
@@ -66,10 +66,9 @@ def _print_health() -> None:
     else:
         print("renderer: unknown")
 
-    db_path = _Path.home() / ".local" / "share" / "aegis" / "mnemosyne.db"
+    db_path = Path.home() / ".local" / "share" / "aegis" / "mnemosyne.db"
     if db_path.exists():
         try:
-            import sqlite3
             conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
             total = conn.execute("SELECT COUNT(*) FROM episodes").fetchone()[0]
             seeds = conn.execute("SELECT COUNT(*) FROM episodes WHERE action='seed'").fetchone()[0]
@@ -106,9 +105,7 @@ def _print_health() -> None:
 
 
 def _print_neurobus() -> None:
-    import json as _json
-    from pathlib import Path as _Path
-    nb_path = _Path(os.getenv("AEGIS_STATE_DIR", "/var/lib/aegis")) / "neurobus_state.json"
+    nb_path = Path(os.getenv("AEGIS_STATE_DIR", "/var/lib/aegis")) / "neurobus_state.json"
     if not nb_path.exists():
         print("neurobus: unknown (state file missing)")
         return
@@ -122,10 +119,7 @@ def _print_neurobus() -> None:
 
 
 def _print_mem(n: int) -> None:
-    from pathlib import Path as _Path
-    from datetime import datetime as _dt, timezone as _tz
-    import sqlite3
-    db_path = _Path.home() / ".local" / "share" / "aegis" / "mnemosyne.db"
+    db_path = Path.home() / ".local" / "share" / "aegis" / "mnemosyne.db"
     if not db_path.exists():
         print("memory: unknown (db missing)")
         return
@@ -139,27 +133,26 @@ def _print_mem(n: int) -> None:
 
 
 # B2 observability flags — parse before socket connection.
-import sys as _sys
-_args = [a for a in _sys.argv[1:] if not a.startswith("-")]
-_flags = [a for a in _sys.argv[1:] if a.startswith("-")]
+_args = [a for a in sys.argv[1:] if not a.startswith("-")]
+_flags = [a for a in sys.argv[1:] if a.startswith("-")]
 
 if "--health" in _flags:
     _print_health()
-    _sys.exit(0)
+    sys.exit(0)
 if "--neurobus" in _flags:
     _print_neurobus()
-    _sys.exit(0)
+    sys.exit(0)
 if any(f.startswith("--mem") for f in _flags):
     _mem_flag = next((f for f in _flags if f.startswith("--mem")), None)
     _n = 10
     if _mem_flag and "=" in _mem_flag:
         _n = int(_mem_flag.split("=", 1)[1])
     elif _mem_flag:
-        idx = _sys.argv.index(_mem_flag)
-        if idx + 1 < len(_sys.argv):
-            _n = int(_sys.argv[idx + 1])
+        idx = sys.argv.index(_mem_flag)
+        if idx + 1 < len(sys.argv):
+            _n = int(sys.argv[idx + 1])
     _print_mem(_n)
-    _sys.exit(0)
+    sys.exit(0)
 
 SOCK = _resolve_sock()
 
