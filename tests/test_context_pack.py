@@ -95,7 +95,7 @@ class TestSearch:
         from knowledge.context_pack import search
 
         conn = sqlite3.connect(str(tmp_db))
-        results = _search(conn, "forge", "facts", 5)
+        results = search(conn, "forge", "facts", 5)
         conn.close()
         assert len(results) > 0
         assert results[0][0][0] == "forge submit contract"
@@ -104,7 +104,7 @@ class TestSearch:
         from knowledge.context_pack import search
 
         conn = sqlite3.connect(str(tmp_db))
-        results = _search(conn, "GateLadder", "concepts", 5)
+        results = search(conn, "GateLadder", "concepts", 5)
         conn.close()
         assert len(results) > 0
         assert results[0][0][0] == "GateLadder"
@@ -114,7 +114,7 @@ class TestSearch:
         from knowledge.context_pack import search_text
 
         conn = sqlite3.connect(str(tmp_db))
-        results = _search_text(conn, "forge", "facts", 5)
+        results = search_text(conn, "forge", "facts", 5)
         conn.close()
         assert len(results) > 0
 
@@ -122,7 +122,7 @@ class TestSearch:
         from knowledge.context_pack import search
 
         conn = sqlite3.connect(str(tmp_db))
-        results = _search(conn, "nonexistent_xyz_abc", "facts", 5)
+        results = search(conn, "nonexistent_xyz_abc", "facts", 5)
         conn.close()
         assert len(results) == 0
 
@@ -134,9 +134,9 @@ class TestFormatRaw:
         from knowledge.context_pack import search, _raw_format
 
         conn = sqlite3.connect(str(tmp_db))
-        facts = _search(conn, "forge", "facts", 5)
-        concepts = _search(conn, "GateLadder", "concepts", 5)
-        research = _search(conn, "concurrent", "research_questions", 5)
+        facts = search(conn, "forge", "facts", 5)
+        concepts = search(conn, "GateLadder", "concepts", 5)
+        research = search(conn, "concurrent", "research_questions", 5)
         conn.close()
 
         output = _raw_format("forge submit", facts, concepts, research)
@@ -162,9 +162,9 @@ class TestNimPrompt:
         from knowledge.context_pack import search
 
         conn = sqlite3.connect(str(tmp_db))
-        facts = _search(conn, "forge", "facts", 5)
-        concepts = _search(conn, "GateLadder", "concepts", 5)
-        research = _search(conn, "concurrent", "research_questions", 5)
+        facts = search(conn, "forge", "facts", 5)
+        concepts = search(conn, "GateLadder", "concepts", 5)
+        research = search(conn, "concurrent", "research_questions", 5)
         conn.close()
 
         ctx = search("forge submit", facts, concepts, research)
@@ -182,9 +182,9 @@ class TestFormatNim:
         from knowledge.context_pack import search
 
         conn = sqlite3.connect(str(tmp_db))
-        facts = _search(conn, "forge", "facts", 5)
-        concepts = _search(conn, "GateLadder", "concepts", 5)
-        research = _search(conn, "concurrent", "research_questions", 5)
+        facts = search(conn, "forge", "facts", 5)
+        concepts = search(conn, "GateLadder", "concepts", 5)
+        research = search(conn, "concurrent", "research_questions", 5)
         conn.close()
 
         fake_nim = "## Task Summary\nForge submit is important.\n\n## Priority-Ranked Facts\n- fact 1"
@@ -273,7 +273,7 @@ class TestNimCall:
             assert result is None
 
 
-@pytest.mark.skip(reason="generate() API changed — rewrite tests")
+@pytest.mark.skip(reason="generate() API changed  -  rewrite tests")
 class TestGenerate:
     """Test the main generate() function."""
 
