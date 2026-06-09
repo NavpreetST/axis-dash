@@ -498,6 +498,7 @@ async def archaeology_scan(
 ) -> list[str]:
     if batch_size <= 0:
         raise ValueError(f"batch_size must be > 0, got {batch_size}")
+    batch_size = min(batch_size, MAX_FILES_PER_BATCH)
     _load_secrets()
     if not NVIDIA_API_KEY and not dry_run:
         log.error("archaeology: NVIDIA_API_KEY not set")
@@ -717,6 +718,7 @@ def _parse_args() -> argparse.Namespace:
     args = parser.parse_args()
     if args.batch_size <= 0:
         parser.error(f"--batch-size must be > 0, got {args.batch_size}")
+    args.batch_size = min(args.batch_size, MAX_FILES_PER_BATCH)
     return args
 
 
