@@ -446,7 +446,15 @@ _MEMORY_DB = Path(
 
 
 def _git_short_commit() -> str | None:
-    """Return the short git commit hash, or None on failure."""
+    """Return the short git commit hash, or None on failure.
+
+    Resolution order:
+      1. AEGIS_COMMIT env var  (set by deploy script / CI)
+      2. git rev-parse --short HEAD  (development boxes)
+    """
+    env_commit = os.getenv("AEGIS_COMMIT")
+    if env_commit:
+        return env_commit.strip()[:40] or None
     try:
         out = _subprocess.run(
             ["git", "rev-parse", "--short", "HEAD"],
@@ -463,33 +471,26 @@ def _git_short_commit() -> str | None:
 
 
 def _detect_launch_method(pid: int | None) -> str:
-    """Heuristic launch method from the daemon's /proc/<pid>/cmdline.
+    """Detect daemon launch method from /proc/<pid>/cgroup.
 
-    Returns "nohup", "systemd", "direct", or "unknown".
+    Distinguishes systemd services (/system.slice/) from user-session /
+    nohup processes (/user.slice/).  Returns "nohup" as the default when
+    the daemon is alive but not under systemd — the expected Phase 0/1
+    deployment pattern.
+
+    PPID-based heuristics are unreliable because nohup orphans are
+    reparented to init (PID 1), producing false-positive "systemd" labels.
     """
     if pid is None:
         return "unknown"
     try:
-        with open(f"/proc/{pid}/cmdline", "rb") as f:
-            cmdline = b" ".join(f.read().split(b"\x00")).decode("utf-8", "replace").lower()
-    except (FileNotFoundError, ProcessLookupError, PermissionError, OSError):
-        return "unknown"
-    if "nohup" in cmdline:
-        return "nohup"
-    # Check parent PID — if it's 1 (init/systemd), likely launched by systemd
-    try:
-        with open(f"/proc/{pid}/stat") as f:
-            stat = f.read()
-        rpar = stat.rfind(")")
-        if rpar >= 0:
-            fields = stat[rpar + 1:].split()
-            if len(fields) >= 3:
-                ppid = int(fields[1])
-                if ppid == 1:
-                    return "systemd"
-    except (FileNotFoundError, ProcessLookupError, PermissionError, ValueError, OSError):
+        with open(f"/proc/{pid}/cgroup") as f:
+            cgroup = f.read()
+        if "system.slice" in cgroup:
+            return "systemd"
+    except OSError:
         pass
-    return "direct"
+    return "nohup"
 
 
 def _renderer_chain(rend_data: dict) -> list[str]:
