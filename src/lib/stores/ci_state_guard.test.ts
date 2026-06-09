@@ -32,7 +32,7 @@ const applyLiveFrame = (frame: Partial<TelemetryData>) => {
       is_speaking: frame.is_speaking ?? state.is_speaking,
       neurobus: frame.neurobus ?? state.neurobus,
       neurobusHistory: frame.neurobusHistory ?? state.neurobusHistory,
-      hidden_state: frame.hidden_state ?? state.hidden_state,
+      hidden_state: frame.hidden_state ?? frame.h ?? state.hidden_state,
       runtime: frame.runtime ? { ...state.runtime, ...frame.runtime } : state.runtime
     };
   });
