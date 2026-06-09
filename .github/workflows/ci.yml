@@ -47,7 +47,7 @@ jobs:
             echo "No changed Python files — skipping format check."
           fi
       - name: Sync gate status
-        if: always()
+        if: always() && github.event_name == 'pull_request'
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
@@ -77,7 +77,7 @@ jobs:
       - name: Pytest
         run: pytest -v --tb=short
       - name: Sync gate status
-        if: always()
+        if: always() && github.event_name == 'pull_request'
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
@@ -123,7 +123,7 @@ jobs:
       - name: Drift / arch guard
         run: bash scripts/drift_arch_guard.sh
       - name: Sync gate status
-        if: always()
+        if: always() && github.event_name == 'pull_request'
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
@@ -155,10 +155,10 @@ jobs:
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          HEAD_COMMIT_MESSAGE: ${{ github.event.head_commit.message }}
         run: |
-          # Extract PR number from commit message (e.g., "Merge pull request #39")
-          PR_NUM=$(echo "${{ github.event.head_commit.message }}" | grep -oP '#\K\d+' | head -1)
+          PR_NUM=$(echo "$HEAD_COMMIT_MESSAGE" | grep -oP '#\K\d+' | head -1)
           python scripts/ci_gate_sync.py merge \
             --pr-number "${PR_NUM:-0}" \
             --repo ${{ github.repository }} \
-            --detail "Merged ${{ github.event.head_commit.message }}"
+            --detail "$HEAD_COMMIT_MESSAGE"

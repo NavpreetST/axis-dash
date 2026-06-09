@@ -219,7 +219,7 @@ def main() -> int:
     args = parser.parse_args()
 
     if args.command == "gate":
-        return upsert_gate_status(
+        upsert_gate_status(
             repo=args.repo,
             pr_number=args.pr_number,
             gate_name=args.gate_name,
@@ -230,7 +230,7 @@ def main() -> int:
             run_url=args.run_url,
         )
     elif args.command == "merge":
-        return post_task_activity(
+        post_task_activity(
             repo=args.repo,
             pr_number=args.pr_number,
             action="merged",
@@ -245,9 +245,8 @@ def main() -> int:
             drift_guard=args.drift_guard,
             run_url=args.run_url,
         )
-        return 0
 
-    return 1
+    return 0
 
 
 if __name__ == "__main__":
