@@ -47,9 +47,13 @@ class MockForgeSocket:
             "FORGE:FETCH:abc123": (
                 'FORGE:RESULT:{"id": "abc123", "status": "completed", "diffs": [], "logs": "[]"}'
             ),
-            "FORGE:GATE:abc123": (
+            "FORGE:GATE:abc123:true": (
                 'FORGE:GATE:{"lint_passed": true, "test_passed": true, "build_passed": true, '
                 '"owner_approved": true, "overall_passed": true}'
+            ),
+            "FORGE:GATE:abc123:false": (
+                'FORGE:GATE:{"lint_passed": true, "test_passed": true, "build_passed": true, '
+                '"owner_approved": false, "overall_passed": false}'
             ),
             "FORGE:CLEANUP:abc123": "FORGE:OK:abc123 cleaned",
         }
@@ -305,15 +309,29 @@ class TestGate:
         assert result["owner_approved"] is True
         assert result["overall_passed"] is True
 
-    def test_gate_reject_not_true(self):
-        """Active gate requires approve=True; anything else is 400."""
+    def test_gate_reject_not_bool(self):
+        """Gate requires approve to be a bool; non-bool values are 400."""
         client = TestClient(app)
-        for body in [{"approve": False}, {}, {"approve": "yes"}, {"approve": 1}]:
+        for body in [{}, {"approve": "yes"}, {"approve": 1}, {"approve": None}]:
             resp = client.post(
                 "/forge/abc123/gate", json=body, params=AUTH_PARAMS
             )
             assert resp.status_code == 400
             assert resp.json()["detail"] == "approval_required"
+
+    def test_gate_reject_explicit(self, mock_forge_socket):
+        """Explicit approve=False passes flag through and returns owner_approved=false."""
+        client = TestClient(app)
+        resp = client.post(
+            "/forge/abc123/gate",
+            json={"approve": False},
+            params=AUTH_PARAMS,
+        )
+        assert resp.status_code == 200
+        result = resp.json()
+        assert result["owner_approved"] is False
+        assert result["overall_passed"] is False
+        assert "FORGE:GATE:abc123:false" in mock_forge_socket.commands_received
 
     def test_gate_forge_error(self):
         client = TestClient(app)
@@ -331,14 +349,14 @@ class TestGate:
             assert "task not completed" in resp.json()["detail"]
 
     def test_gate_sends_correct_command(self, mock_forge_socket):
-        """Active gate sends FORGE:GATE:<id> (no approval flag)."""
+        """Active gate sends FORGE:GATE:<id>:true."""
         client = TestClient(app)
         client.post(
             "/forge/abc123/gate",
             json={"approve": True},
             params=AUTH_PARAMS,
         )
-        assert "FORGE:GATE:abc123" in mock_forge_socket.commands_received
+        assert "FORGE:GATE:abc123:true" in mock_forge_socket.commands_received
 
 
 # ---- Cleanup tests ----
@@ -530,7 +548,7 @@ class TestCommandMapping:
             json={"approve": True},
             params=AUTH_PARAMS,
         )
-        assert "FORGE:GATE:abc123" in mock_forge_socket.commands_received
+        assert "FORGE:GATE:abc123:true" in mock_forge_socket.commands_received
 
     def test_cleanup_maps_to_forge_cleanup(self, mock_forge_socket):
         client = TestClient(app)
