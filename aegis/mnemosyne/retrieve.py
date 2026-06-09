@@ -1,16 +1,27 @@
+"""Mnemosyne T1 — top-k cosine retrieval with recency bias + FTS5 knowledge search.
+
+v2 fix (2026-06-09):
+  - TOP_K 3→8, SCAN_LIMIT 500→1000, recency bias (30% max, 30 min half-life)
+"""
 import hashlib
 import logging
-import time
+import re
 import sqlite3
+import time
 from pathlib import Path
+
 import numpy as np
+
 from aegis.nexus.bus import BUS
+
 from .db import CONN
 
 log = logging.getLogger("mnemosyne.retrieve")
 TOP_K = 8
-SCAN_LIMIT = 500
+SCAN_LIMIT = 1000
 SELF_HIT_GUARD_S = 2
+RECENCY_BOOST = 0.3
+HALF_LIFE = 1800.0
 
 KB_PATH = Path("/opt/aegis/knowledge/helios_knowledge.db")
 
@@ -23,15 +34,16 @@ def _seed_rows() -> list[dict]:
     cur = CONN.execute(
         "SELECT id, text, ts FROM episodes WHERE action='seed' ORDER BY id"
     )
+    now = time.time()
     return [
-        {"id": str(_id), "text": text, "ts": ts, "score": 1.0}
+        {"id": str(_id), "text": text, "ts": ts,
+         "score": 1.0 + RECENCY_BOOST * (2.0 ** (-(now - ts) / HALF_LIFE))}
         for _id, text, ts in cur.fetchall()
     ]
 
 
 def _clean_fts5_query(text: str) -> str:
-    """Strip punctuation and stop-words for FTS5 MATCH."""
-    import re
+    import re as _re
     stop_words = {
         'a','an','the','is','are','was','were','be','been','being',
         'have','has','had','do','does','did','will','would','shall',
@@ -44,13 +56,12 @@ def _clean_fts5_query(text: str) -> str:
         'no','nor','so','if','then','than','too','very','just',
         'how','where','when','why','tell','more','about','explain',
     }
-    cleaned = re.sub(r'[^\w\s]', '', text.lower())
+    cleaned = _re.sub(r'[^\w\s]', '', text.lower())
     words = [w for w in cleaned.split() if w not in stop_words and len(w) > 1]
     return ' AND '.join(words[:8])
 
 
 def _search_knowledge(query_text: str) -> list[dict]:
-    """FTS5 search on facts, concepts, research_questions."""
     if not KB_PATH.exists():
         log.warning("knowledge DB not found at %s", KB_PATH)
         return []
@@ -102,8 +113,9 @@ def _search_knowledge(query_text: str) -> list[dict]:
 
 
 def retrieve(query_emb: list[float], query_text: str = "", k: int = TOP_K) -> list[dict]:
+    now = time.time()
     q = np.asarray(query_emb, dtype=np.float32)
-    cutoff = time.time() - SELF_HIT_GUARD_S
+    cutoff = now - SELF_HIT_GUARD_S
     cur = CONN.execute(
         "SELECT id, text, embedding, ts FROM episodes "
         "WHERE ts < ? AND (action IS NULL OR action != 'seed') "
@@ -116,11 +128,13 @@ def retrieve(query_emb: list[float], query_text: str = "", k: int = TOP_K) -> li
         if emb.shape != q.shape:
             continue
         sim = float(np.dot(q, emb))
-        scored.append((sim, _id, text, ts))
+        age = now - ts
+        recency = 1.0 + RECENCY_BOOST * (2.0 ** (-age / HALF_LIFE))
+        scored.append((sim * recency, _id, text, ts))
     scored.sort(reverse=True)
     cosine_hits = [
-        {"id": str(_id), "text": text, "ts": ts, "score": sim}
-        for sim, _id, text, ts in scored[:k]
+        {"id": str(_id), "text": text, "ts": ts, "score": score}
+        for score, _id, text, ts in scored[:k]
     ]
     seed = _seed_rows()
     knowledge = _search_knowledge(query_text) if query_text else []
