@@ -17,6 +17,7 @@
   let submitting = $state(false);
   let actionBusy = $state(false);
   let submittedTaskId = $state<string | null>(null);
+  let submitError = $state<string | null>(null);
 
   const STATUS_COLORS: Record<string, string> = {
     pending: 'bg-accent-amber/10 text-accent-amber',
@@ -50,11 +51,8 @@
   });
 
   $effect(() => {
-    const detail = $forgeDetail;
     const selectedId = $forgeSelectedId;
-    if (detail && submittedTaskId && detail.id === submittedTaskId) {
-      submittedTaskId = null;
-    } else if (selectedId && submittedTaskId && selectedId !== submittedTaskId) {
+    if (selectedId && submittedTaskId && selectedId !== submittedTaskId) {
       submittedTaskId = null;
     }
   });
@@ -64,12 +62,17 @@
     if (trimmed.length < 10 || submitting) return;
     submitting = true;
     submittedTaskId = null;
+    submitError = null;
     try {
       const result = await forge.submitTask(trimmed);
       if (result !== null) {
         specInput = '';
         submittedTaskId = result;
+      } else {
+        submitError = 'submit failed — check the error banner above';
       }
+    } catch (e) {
+      submitError = e instanceof Error ? e.message : String(e);
     } finally {
       submitting = false;
     }
@@ -141,6 +144,14 @@
       </button>
     </div>
   </div>
+
+  {#if submitError}
+    <div
+      class="rounded-lg border border-signal-red/20 bg-signal-red/5 px-3 py-2 font-mono text-[10px] text-signal-red"
+    >
+      {submitError}
+    </div>
+  {/if}
 
   <!-- Submit feedback -->
   {#if submittedTaskId}
