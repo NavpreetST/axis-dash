@@ -26,6 +26,7 @@ export interface ForgeState {
   gateResult: GateResult | null;
   status: ForgeConnectionStatus;
   error: string | null;
+  lastPollAt: number | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -39,7 +40,8 @@ const INITIAL_STATE: ForgeState = {
   diff: null,
   gateResult: null,
   status: 'idle',
-  error: null
+  error: null,
+  lastPollAt: null
 };
 
 function createForgeStore() {
@@ -101,7 +103,8 @@ function createForgeStore() {
       selectedTaskId: taskId,
       detail: null,
       diff: null,
-      gateResult: null
+      gateResult: null,
+      lastPollAt: null
     }));
     // Start polling
     await refreshStatus(taskId);
@@ -119,6 +122,7 @@ function createForgeStore() {
       ...s,
       detail: res.data,
       error: null,
+      lastPollAt: Date.now(),
       // Also update the summary in the list
       tasks: s.tasks.map((t) => (t.id === taskId ? { ...t, status: res.data.status } : t))
     }));
@@ -184,7 +188,8 @@ function createForgeStore() {
       detail: null,
       diff: null,
       gateResult: null,
-      error: null
+      error: null,
+      lastPollAt: null
     }));
     if (taskId) {
       await refreshStatus(taskId);
@@ -227,3 +232,4 @@ export const forgeDiffData = derived(forge, ($f) => $f.diff);
 export const forgeGateResult = derived(forge, ($f) => $f.gateResult);
 export const forgeConnStatus = derived(forge, ($f) => $f.status);
 export const forgeError = derived(forge, ($f) => $f.error);
+export const forgeLastPoll = derived(forge, ($f) => $f.lastPollAt);
