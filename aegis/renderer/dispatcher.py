@@ -64,6 +64,7 @@ class Template:
 
 
 CHAIN = [Gemini, NimNano, Groq, Template]
+_gemini_quota_exhausted = False
 
 
 async def run() -> None:
@@ -74,8 +75,10 @@ async def run() -> None:
 
         # --- day-rollover drain (runs every tick, even if idle) ---
         try:
+            global _gemini_quota_exhausted
             rollover_date = pop_day_rollover()
             if rollover_date:
+                _gemini_quota_exhausted = False
                 try:
                     await eventlog.log_event(
                         source="aegis",
@@ -115,7 +118,8 @@ async def _render_with_chain(intent: dict) -> dict:
     last_error_class = None
     first_failed_adapter: str | None = None
     chain_names = [a.name for a in [cls() for cls in CHAIN]]
-    for adapter_cls in CHAIN:
+    effective_chain = [a for a in CHAIN if not (a is Gemini and _gemini_quota_exhausted)]
+    for adapter_cls in effective_chain:
         adapter = adapter_cls()
         try:
             text = await adapter.render(intent)
@@ -173,6 +177,9 @@ async def _render_with_chain(intent: dict) -> dict:
                 last_error_class = type(e).__name__
                 first_failed_adapter = adapter.name
             if isinstance(e, QuotaExhausted):
+                if adapter is Gemini:
+                    global _gemini_quota_exhausted
+                    _gemini_quota_exhausted = True
                 log.warning("dispatcher: %s quota exhausted", adapter.name)
             else:
                 log.warning("dispatcher: %s renderer error — %s", adapter.name, e)

@@ -146,7 +146,7 @@ async def run() -> None:
         while True:
             msg = await mem_q.get()
             CONTEXT_TEXTS.clear()
-            CONTEXT_TEXTS.extend(msg.payload.get("texts", [])[:3])
+            CONTEXT_TEXTS.extend(msg.payload.get("texts", [])[:10])
 
     async def consume_tick() -> None:
         global LAST_TEXT_INPUT, _last_crash_emit

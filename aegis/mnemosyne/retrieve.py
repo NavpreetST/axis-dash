@@ -1,33 +1,17 @@
-"""Mnemosyne T1 — top-k cosine retrieval over recent episodes.
-
-v1 keeps it simple: scan the last 500 episodes; ~100 ms on CPU at that
-size. When the DB grows past ~10k rows we'll switch to sqlite-vss.
-
-Both query and stored embeddings are L2-normalised, so dot product ==
-cosine similarity. No division needed.
-
-Block 1.5-FIX (2026-05-23 17:44 UTC): always-union action='seed' rows.
-The 14:33 smoke confabulated 'aegis-core' because seed row 102 (the
-helios1 FACT) lost the cosine race against question-rows + prior
-AEGIS replies that shared verbatim tokens with the query. The
-confabulated reply then re-entered the episode store and reinforced
-itself on the next turn — a feedback loop. P4-short structural fix:
-facts get top-K + a guaranteed seat. Medium-term, P4 promotes facts
-to a sibling table; still queued for v1.1 week.
-"""
 import logging
 import time
-
+import sqlite3
+from pathlib import Path
 import numpy as np
-
 from aegis.nexus.bus import BUS
-
 from .db import CONN
 
 log = logging.getLogger("mnemosyne.retrieve")
-TOP_K = 3
+TOP_K = 8
 SCAN_LIMIT = 500
-SELF_HIT_GUARD_S = 2  # skip rows newer than this many seconds (block 1.2)
+SELF_HIT_GUARD_S = 2
+
+KB_PATH = Path("/opt/aegis/knowledge/helios_knowledge.db")
 
 
 def _blob_to_emb(blob: bytes) -> np.ndarray:
@@ -35,9 +19,6 @@ def _blob_to_emb(blob: bytes) -> np.ndarray:
 
 
 def _seed_rows() -> list[dict]:
-    """Always-include FACT rows. Static across process lifetime; we score
-    them sim=1.0 (forced-top) and let cosine handle the rest. Cheap: 3-5
-    rows on v1."""
     cur = CONN.execute(
         "SELECT id, text, ts FROM episodes WHERE action='seed' ORDER BY id"
     )
@@ -47,10 +28,78 @@ def _seed_rows() -> list[dict]:
     ]
 
 
-def retrieve(query_emb: list[float], k: int = TOP_K) -> list[dict]:
+def _clean_fts5_query(text: str) -> str:
+    """Strip punctuation and stop-words for FTS5 MATCH."""
+    import re
+    stop_words = {
+        'a','an','the','is','are','was','were','be','been','being',
+        'have','has','had','do','does','did','will','would','shall',
+        'should','may','might','must','can','could','i','me','my',
+        'we','our','you','your','he','she','it','they','them',
+        'what','which','who','whom','this','that','these','those',
+        'am','in','on','at','to','for','of','from','by','with',
+        'about','as','into','through','during','before','after',
+        'above','below','between','under','and','but','or','not',
+        'no','nor','so','if','then','than','too','very','just',
+        'how','where','when','why','tell','more','about','explain',
+    }
+    cleaned = re.sub(r'[^\w\s]', '', text.lower())
+    words = [w for w in cleaned.split() if w not in stop_words and len(w) > 1]
+    return ' AND '.join(words[:8])
+
+
+def _search_knowledge(query_text: str) -> list[dict]:
+    """FTS5 search on facts, concepts, research_questions."""
+    if not KB_PATH.exists():
+        log.warning("knowledge DB not found at %s", KB_PATH)
+        return []
+
+    kb = sqlite3.connect(str(KB_PATH))
+    results = []
+    fts_query = _clean_fts5_query(query_text)
+    if not fts_query:
+        kb.close()
+        return []
+
+    tables = {
+        "facts": ("name", "content", "source_page", "status", 5),
+        "concepts": ("name", "summary", "source_pages", "status", 3),
+        "research_questions": ("question", "question", "source_page", "status", 2),
+    }
+
+    for table, (name_col, content_col, source_col, status_col, limit) in tables.items():
+        try:
+            rows = kb.execute(
+                f"SELECT {name_col}, {content_col}, {source_col}, {status_col} "
+                f"FROM {table} WHERE {content_col} LIKE ? LIMIT ?",
+                (f"%{fts_query.split()[0] if fts_query.split() else query_text[:20]}%", limit)
+            ).fetchall()
+        except:
+            continue
+
+        for r in rows:
+            name = str(r[0] or '')
+            content = str(r[1] or '')
+            src = str(r[2] or '')
+            status = str(r[3] or '')
+            text = f"[{status.upper()}] {name}: {content[:300]}"
+            if src:
+                text += f" (src: {src})"
+            results.append({
+                "id": f"kb-{table}-{hash(text) & 0x7FFFFFFF}",
+                "text": text,
+                "ts": time.time(),
+                "score": 1.0,
+            })
+
+    kb.close()
+    log.debug("knowledge search: %d hits from query '%s'", len(results), query_text[:40])
+    return results
+
+
+def retrieve(query_emb: list[float], query_text: str = "", k: int = TOP_K) -> list[dict]:
     q = np.asarray(query_emb, dtype=np.float32)
     cutoff = time.time() - SELF_HIT_GUARD_S
-    # Exclude seeds from cosine scan — they get unioned in unconditionally.
     cur = CONN.execute(
         "SELECT id, text, embedding, ts FROM episodes "
         "WHERE ts < ? AND (action IS NULL OR action != 'seed') "
@@ -62,18 +111,22 @@ def retrieve(query_emb: list[float], k: int = TOP_K) -> list[dict]:
         emb = _blob_to_emb(blob)
         if emb.shape != q.shape:
             continue
-        sim = float(np.dot(q, emb))  # both L2-normalised
+        sim = float(np.dot(q, emb))
         scored.append((sim, _id, text, ts))
     scored.sort(reverse=True)
     cosine_hits = [
         {"id": str(_id), "text": text, "ts": ts, "score": sim}
         for sim, _id, text, ts in scored[:k]
     ]
-    # Union: seeds first (so Gemini's "most relevant first" prompt phrasing
-    # treats them as primary), then cosine hits, deduped by id.
     seed = _seed_rows()
+    knowledge = _search_knowledge(query_text) if query_text else []
+
     seen = {h["id"] for h in seed}
     out = list(seed)
+    for h in knowledge:
+        if h["id"] not in seen:
+            out.append(h)
+            seen.add(h["id"])
     for h in cosine_hits:
         if h["id"] not in seen:
             out.append(h)
@@ -82,16 +135,18 @@ def retrieve(query_emb: list[float], k: int = TOP_K) -> list[dict]:
 
 
 async def run() -> None:
-    log.info("mnemosyne retriever running")
+    log.info("mnemosyne retriever running (with knowledge DB FTS5)")
     q = BUS.subscribe("sensor.text")
     while True:
         msg = await q.get()
-        hits = retrieve(msg.payload["embedding"])
+        query_text = msg.payload.get("text", "")
+        hits = retrieve(msg.payload["embedding"], query_text=query_text)
         await BUS.publish("memory.retrieved", {
             "ids":    [h["id"]    for h in hits],
             "texts":  [h["text"]  for h in hits],
             "scores": [h["score"] for h in hits],
         })
-        n_seed = sum(1 for h in hits if h["score"] == 1.0)
-        log.debug("retrieved %d hits (%d seed + %d cosine)",
-                  len(hits), n_seed, len(hits) - n_seed)
+        n_kb = sum(1 for h in hits if h["id"].startswith("kb-"))
+        n_seed = sum(1 for h in hits if h.get("score", 0) == 1.0)
+        log.debug("retrieved %d hits (%d kb + %d seed + %d cosine)",
+                  len(hits), n_kb, n_seed, len(hits) - n_kb - n_seed)
