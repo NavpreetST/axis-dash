@@ -133,27 +133,26 @@ def _print_mem(n: int) -> None:
 
 
 # B2 observability flags — parse before socket connection.
-import sys as _sys
-_args = [a for a in _sys.argv[1:] if not a.startswith("-")]
-_flags = [a for a in _sys.argv[1:] if a.startswith("-")]
+_args = [a for a in sys.argv[1:] if not a.startswith("-")]
+_flags = [a for a in sys.argv[1:] if a.startswith("-")]
 
 if "--health" in _flags:
     _print_health()
-    _sys.exit(0)
+    sys.exit(0)
 if "--neurobus" in _flags:
     _print_neurobus()
-    _sys.exit(0)
+    sys.exit(0)
 if any(f.startswith("--mem") for f in _flags):
     _mem_flag = next((f for f in _flags if f.startswith("--mem")), None)
     _n = 10
     if _mem_flag and "=" in _mem_flag:
         _n = int(_mem_flag.split("=", 1)[1])
     elif _mem_flag:
-        idx = _sys.argv.index(_mem_flag)
-        if idx + 1 < len(_sys.argv):
-            _n = int(_sys.argv[idx + 1])
+        idx = sys.argv.index(_mem_flag)
+        if idx + 1 < len(sys.argv):
+            _n = int(sys.argv[idx + 1])
     _print_mem(_n)
-    _sys.exit(0)
+    sys.exit(0)
 
 SOCK = _resolve_sock()
 
