@@ -37,6 +37,17 @@ class Bus:
         log.debug("subscribed to %s", topic)
         return q
 
+    def unsubscribe(self, topic: str, q: asyncio.Queue) -> None:
+        qs = self._subs.get(topic)
+        if qs:
+            try:
+                qs.remove(q)
+            except ValueError:
+                pass
+            if not qs:
+                del self._subs[topic]
+        log.debug("unsubscribed from %s", topic)
+
     async def publish(self, topic: str, payload: Any) -> None:
         msg = Message(topic=topic, payload=payload)
         for t, qs in list(self._subs.items()):

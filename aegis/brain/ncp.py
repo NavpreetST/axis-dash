@@ -136,7 +136,7 @@ async def run() -> None:
             msg = await text_q.get()
             LAST_TEXT_INPUT = msg.payload["text"]
             emb = msg.payload["embedding"]
-            chunk = len(emb) // WM_DIM
+            chunk = max(1, len(emb) // WM_DIM)
             WM.append([
                 sum(emb[i*chunk:(i+1)*chunk]) / chunk
                 for i in range(WM_DIM)

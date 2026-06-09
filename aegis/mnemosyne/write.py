@@ -66,7 +66,7 @@ async def run() -> None:
             score = (NEURO_STATE.novelty
                      + abs(NEURO_STATE.reward)
                      + NEURO_STATE.threat)
-            if score < WRITE_THRESHOLD and last_emb is None:
+            if score < WRITE_THRESHOLD or last_emb is None:
                 continue
             emb = last_emb or [0.0] * 384
             CONN.execute(
