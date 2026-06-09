@@ -1085,6 +1085,19 @@ async def logs_sse(request: Request) -> StreamingResponse:
 _KNOWLEDGE_DB = Path(os.getenv("AEGIS_KNOWLEDGE_DB", "/opt/aegis/knowledge/helios_knowledge.db"))
 _CONVERSATION_GAP_SECONDS = 900  # 15 min gap between episodes = new conversation
 
+# Whitelist of table/column identifiers allowed in SQL interpolation.
+# Any name not in these sets will be rejected (defence-in-depth against
+# accidental injection through the _search_knowledge helper).
+_KNOWLEDGE_TABLES: frozenset[str] = frozenset({
+    "facts", "concepts", "research_questions",
+    "facts_fts", "concepts_fts", "research_questions_fts",
+})
+_KNOWLEDGE_COLUMNS: frozenset[str] = frozenset({
+    "id", "name", "category", "content", "source_page", "status",
+    "type", "summary", "source_pages", "dependencies", "embedding",
+    "question", "avenue", "priority",
+})
+
 
 def _db_connect(db_path: Path) -> sqlite3.Connection | None:
     """Open a read-only SQLite connection, or None on failure."""
@@ -1120,19 +1133,30 @@ def _load_conversation_groups() -> list[dict]:
         current.append(ep)
 
     result = []
-    for idx, g in enumerate(groups, 1):
+    for g in groups:
         eps = g["episodes"]
         first = eps[0]
         last = eps[-1]
         topic = first["text"].split("\n")[0][:120]
         result.append({
-            "id": idx,
+            "id": first["id"],
             "topic": topic,
             "message_count": len(eps),
             "created_at": first["ts"],
             "updated_at": last["ts"],
         })
     return result
+
+
+def _safe_json_decode(value: str | None) -> dict | None:
+    """Parse a JSON string, returning None on any failure."""
+    if not value:
+        return None
+    try:
+        return json.loads(value)
+    except (json.JSONDecodeError, TypeError):
+        log.warning("memory: malformed JSON in episode neurobus field (%.40r)", value)
+        return None
 
 
 def _load_conversation_by_id(conversation_id: int) -> dict | None:
@@ -1161,7 +1185,7 @@ def _load_conversation_by_id(conversation_id: int) -> dict | None:
                     "id": r["id"],
                     "ts": r["ts"],
                     "text": r["text"],
-                    "neurobus": json.loads(r["neurobus"]) if r["neurobus"] else None,
+                    "neurobus": _safe_json_decode(r["neurobus"]),
                     "action": r["action"],
                 }
                 for r in rows
@@ -1177,6 +1201,11 @@ def _search_knowledge(q: str, top_n: int = 5) -> dict:
         return {"facts": [], "concepts": [], "research_questions": []}
 
     def search_table(table: str, fts_table: str, label_col: str, content_col: str, src_col: str) -> list[dict]:
+        # Validate identifiers against whitelist before any SQL interpolation
+        for ident in (table, fts_table, label_col, content_col, src_col):
+            if ident not in _KNOWLEDGE_TABLES and ident not in _KNOWLEDGE_COLUMNS:
+                log.warning("memory: unknown SQL identifier rejected: %r", ident)
+                return []
         try:
             rows = conn.execute(
                 f"SELECT rowid, rank FROM {fts_table} "
@@ -1215,13 +1244,16 @@ def _search_knowledge(q: str, top_n: int = 5) -> dict:
         except sqlite3.Error:
             return []
 
-    return {
-        "facts": search_table("facts", "facts_fts", "name", "content", "source_page"),
-        "concepts": search_table("concepts", "concepts_fts", "name", "summary", "source_pages"),
-        "research_questions": search_table(
-            "research_questions", "research_questions_fts", "question", "question", "source_page"
-        ),
-    }
+    try:
+        return {
+            "facts": search_table("facts", "facts_fts", "name", "content", "source_page"),
+            "concepts": search_table("concepts", "concepts_fts", "name", "summary", "source_pages"),
+            "research_questions": search_table(
+                "research_questions", "research_questions_fts", "question", "question", "source_page"
+            ),
+        }
+    finally:
+        conn.close()
 
 
 @app.get("/api/conversations")

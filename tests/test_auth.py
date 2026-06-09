@@ -226,8 +226,9 @@ def test_20_api_conversations_bad_token():
 def test_21_api_conversation_detail_missing():
     """Missing conversation returns 404."""
     client = TestClient(app)
-    resp = client.get("/api/conversations/999",
-                      headers={"Authorization": "Bearer test-token-12345"})
+    with patch("aegis.web.server._MEMORY_DB", Path("/nonexistent/mnemosyne.db")):
+        resp = client.get("/api/conversations/999",
+                          headers={"Authorization": "Bearer test-token-12345"})
     assert resp.status_code == 404
     assert resp.json() == {"detail": "conversation_not_found"}
 
@@ -235,10 +236,15 @@ def test_21_api_conversation_detail_missing():
 def test_22_api_conversation_detail_bearer_token():
     """Bearer token grants access to /api/conversations/:id."""
     client = TestClient(app)
-    resp = client.get("/api/conversations/1",
-                      headers={"Authorization": "Bearer test-token-12345"})
-    # No real DB → 404 (no conversations exist)
-    assert resp.status_code in (200, 404)
+    mock_conv = {
+        "id": 42, "topic": "test topic",
+        "messages": [{"id": 1, "ts": 1000.0, "text": "hello", "neurobus": None, "action": None}],
+    }
+    with patch("aegis.web.server._load_conversation_by_id", return_value=mock_conv):
+        resp = client.get("/api/conversations/42",
+                          headers={"Authorization": "Bearer test-token-12345"})
+    assert resp.status_code == 200
+    assert resp.json() == mock_conv
 
 
 def test_23_api_conversation_detail_bad_token():
