@@ -1,6 +1,6 @@
 """NIM deep knowledge consolidation — batch synthesis of helios_knowledge.db.
 
-Groups unconsolidated entries by category, feeds each group to Nemotron-120B
+Groups unconsolidated entries by category, feeds each group to mistralai/mistral-nemotron
 for deep synthesis, and writes five markdown reports:
 
     consolidated/theory.md
@@ -98,7 +98,7 @@ These are the current architectural facts. Any file stating otherwise is DRIFT:
 - PAM threshold: >= 0.83
 - CR-1 invariant: No fitness reward for self-preservation, reproduction, or resource accumulation
 - Identity invariants: PAM >= 0.83, inhibitory gate, rate-limited self-modification
-- Renderer NIM tier: nvidia/llama-3.1-nemotron-nano-8b-v1 (NOT nemotron-120b — that is the consolidate/archaeology model)
+- Renderer NIM tier: nvidia/llama-3.1-nemotron-nano-8b-v1 (NOT mistralai/mistral-nemotron — that is the consolidate/archaeology model)
 - Engagement required: 50-100 hours interaction data for NCP training convergence
 - Brain: NCP CfC 41K params. Mouth: cloud renderer chain. These are NEVER conflated.
 """
@@ -440,6 +440,12 @@ def _split_files_into_batches(
             batches.append(current)
             current = []
             current_chars = 0
+        # Truncate oversized single file to avoid NIM context-limit errors
+        if entry_chars > max_chars:
+            ratio = (max_chars - 200) / entry_chars
+            trim = int(len(content) * ratio)
+            content = content[:trim] + f"\n\n_[TRUNCATED from {len(content)} to {trim} chars]_"
+            entry_chars = len(content) + len(rel_path) + 50
         current.append((rel_path, content))
         current_chars += entry_chars
 
@@ -508,7 +514,7 @@ async def archaeology_scan(
     report_sections: list[str] = []
     total_files = 0
     _seen_files: set[str] = set()
-    _seen_entries: set[tuple[str, str]] = set()
+    _seen_entries: set[str] = set()
 
     for chunk in dirs:
         description = ARCHAEOLOGY_DESCRIPTIONS.get(chunk, chunk)
@@ -551,45 +557,32 @@ async def archaeology_scan(
                 folder_results.append(f"_[NIM call failed for {batch_label}]_")
                 continue
 
-            # Dedup entries — skip (filename, category) pairs already seen
+            # Dedup entries — full fingerprint
             deduped_lines: list[str] = []
-            current_entry: list[str] = []
-            entry_key: tuple[str, str] | None = None
+            current_entry: list[str] | None = None
             fname: str = ""
 
             for line in content.splitlines(keepends=True):
                 if line.startswith("### "):
-                    if entry_key and entry_key in _seen_entries:
-                        current_entry = []
-                        entry_key = None
-                        fname = ""
-                        continue
-                    if current_entry and entry_key:
-                        _seen_entries.add(entry_key)
-                        deduped_lines.extend(current_entry)
+                    if current_entry is not None:
+                        fingerprint = "".join(current_entry).strip()
+                        if fingerprint not in _seen_entries:
+                            _seen_entries.add(fingerprint)
+                            deduped_lines.extend(current_entry)
                     current_entry = [line]
                     fname = line[4:].strip().rstrip()
-                    entry_key = None
                 elif line.startswith("**Category:**") and current_entry is not None:
-                    cat = line.split(":", 1)[1].strip()
-                    entry_key = (fname, cat) if fname else None
-                    if entry_key and entry_key in _seen_entries:
-                        current_entry = []
-                        entry_key = None
-                        fname = ""
-                        continue
                     current_entry.append(line)
                 elif current_entry is not None:
                     current_entry.append(line)
                 else:
                     deduped_lines.append(line)
 
-            if current_entry and entry_key:
-                if entry_key not in _seen_entries:
-                    _seen_entries.add(entry_key)
+            if current_entry is not None:
+                fingerprint = "".join(current_entry).strip()
+                if fingerprint not in _seen_entries:
+                    _seen_entries.add(fingerprint)
                     deduped_lines.extend(current_entry)
-            elif current_entry:
-                deduped_lines.extend(current_entry)
 
             deduped_content = "".join(deduped_lines)
             if len(deduped_content) < len(content):
