@@ -23,3 +23,5 @@ const read = (key: string): string | undefined => {
 export const PUBLIC_HELIOS_API_URL: string = read('PUBLIC_HELIOS_API_URL') ?? '';
 export const PUBLIC_HELIOS_WS_URL: string = read('PUBLIC_HELIOS_WS_URL') ?? '';
 export const PUBLIC_USE_LIVE_BRIDGE: string = read('PUBLIC_USE_LIVE_BRIDGE') ?? 'false';
+export const PUBLIC_SUPABASE_URL: string = read('PUBLIC_SUPABASE_URL') ?? '';
+export const PUBLIC_SUPABASE_ANON_KEY: string = read('PUBLIC_SUPABASE_ANON_KEY') ?? '';
