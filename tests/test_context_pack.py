@@ -369,7 +369,7 @@ class TestGenerate:
 class TestHelpers:
     """Test helper functions."""
 
-    def testslug(self):
+    def test_slug(self):
         from knowledge.context_pack import slug
 
         assert slug("Hello World!") == "hello-world"
@@ -377,7 +377,7 @@ class TestHelpers:
         assert slug("special!@#$chars") == "special-chars"
         assert slug("a" * 100)[:50] == "a" * 50
 
-    def testclean(self):
+    def test_clean(self):
         from knowledge.context_pack import clean
 
         assert clean(None) == ""
