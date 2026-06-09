@@ -19,7 +19,7 @@ sys.stdout.reconfigure(encoding='utf-8', errors='replace')
 log = logging.getLogger("context_pack")
 
 HELIX = Path(__file__).resolve().parent
-DB_PATH = HELIX / "helios_knowledge.db"
+DB_PATH = Path(os.getenv("AEGIS_KNOWLEDGE_DB", str(HELIX / "helios_knowledge.db"))).resolve()
 NVIDIA_API_KEY: str | None = os.getenv("NVIDIA_API_KEY") or None
 NIM_URL = "https://integrate.api.nvidia.com/v1/chat/completions"
 
@@ -149,11 +149,12 @@ def _nim_synthesis(query: str, facts: list, concepts: list, research: list) -> s
         "Be concise. Use bullet points. Do NOT repeat the raw rows verbatim — "
         "synthesise."
     )
+    raw_text = "\n".join(raw)
     payload = {
         "model": "nvidia/llama-3.1-nemotron-nano-8b-v1",
         "messages": [
             {"role": "system", "content": system_prompt},
-            {"role": "user", "content": f"Query: {query}\n\nRaw knowledge:\n{''.join(raw)}"},
+            {"role": "user", "content": f"Query: {query}\n\nRaw knowledge:\n{raw_text}"},
         ],
         "max_tokens": 1024,
         "temperature": 0.7,
@@ -173,7 +174,15 @@ def _nim_synthesis(query: str, facts: list, concepts: list, research: list) -> s
             log.warning("NIM synthesis returned %d: %.200r", r.status_code, r.text)
             return None
         data = r.json()
-        return data["choices"][0]["message"]["content"]
+        choices = data.get("choices", [])
+        if not choices or not isinstance(choices, list):
+            log.warning("NIM synthesis: missing or invalid 'choices' field")
+            return None
+        msg = choices[0].get("message", {})
+        if not isinstance(msg, dict) or "content" not in msg:
+            log.warning("NIM synthesis: missing 'message.content' in choice")
+            return None
+        return msg["content"]
     except Exception as exc:
         log.warning("NIM synthesis failed: %s", exc)
         return None
@@ -228,11 +237,12 @@ def _raw_format(query: str, facts: list, concepts: list, research: list) -> str:
     lines.append("")
     seen = set()
     for results in [facts, concepts, research]:
+        src_idx = 5 if results is concepts else 4 if results is research else 3
         for (row, _) in results:
-            src = row[3] if len(row) > 3 else row[4] if len(row) > 4 else ""
+            src = str(row[src_idx]) if len(row) > src_idx else ""
             if src and src not in seen:
                 seen.add(src)
-                lines.append(f"- `{clean(str(src))}`")
+                lines.append(f"- `{clean(src)}`")
     lines.append("")
 
     return "\n".join(lines)

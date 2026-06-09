@@ -1310,6 +1310,9 @@ def _search_knowledge_supabase(q: str, top_n: int = 5) -> dict | None:
             return row.get("source_pages", "")
         return row.get("source_page", "")
 
+    if not facts and not concepts and not research:
+        return None
+
     def wrap(table_name: str, rows: list[dict]) -> list[dict]:
         return [
             {
