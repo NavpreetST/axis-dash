@@ -9,8 +9,6 @@
 
   onMount(async () => {
     if (!supabase) {
-      error =
-        'Supabase credentials not configured — set PUBLIC_SUPABASE_URL and PUBLIC_SUPABASE_ANON_KEY.';
       loading = false;
       return;
     }
