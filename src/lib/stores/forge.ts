@@ -85,7 +85,10 @@ function createForgeStore() {
       setError(res.detail);
       return;
     }
-    update((s) => ({ ...s, tasks: res.data, status: 'live', error: null }));
+    const taskList: ForgeTaskSummary[] = Array.isArray(res.data)
+      ? res.data
+      : (res.data as Record<string, unknown>).tasks as ForgeTaskSummary[] ?? [];
+    update((s) => ({ ...s, tasks: taskList, status: 'live', error: null }));
   }
 
   async function submitTask(spec: string) {
