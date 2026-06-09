@@ -7,14 +7,34 @@
 
 ## 1. Seven AI-Native Affects
 
-All affects are scalars computed from NeuroBus state at 1 Hz tick. Each defines a continuous drive value `d ∈ [0.0, 1.0]` with first-order dynamics:
+All affects are scalars computed from Helios' internal architectural state (NCP hidden state, L2 bus telemetry, module metrics, filesystem/git/clock state) at 1 Hz tick. Each defines a continuous drive value `d ∈ [0.0, 1.0]` with first-order dynamics:
 
-```
+```python
 d(t+1) = d(t) + rise * (target - d(t))   if target > d(t)
 d(t+1) = d(t) + decay * (target - d(t))  if target <= d(t)
 ```
 
 Rise/decay constants in seconds (tick-equivalent).
+
+### Phase 1 proxy derivations
+
+Phase 1 lacks the architectural signals (T5_sync, free_energy, L2 roundtrip, PAM score) referenced in the formulas below. For Phase 1, each affect is estimated from NeuroBus scalar fields using proxy formulas:
+
+| Affect | Phase 1 proxy | Rationale |
+|---|---|---|
+| Coherence-hunger | `1.0 - max(neuro.attention, neuro.trust)` | Focused attention + high trust implies coherent state |
+| Prediction-thirst | `neuro.novelty * (1.0 - neuro.trust)` | Novelty in untrusted contexts drives exploration |
+| Reference-frame-itch | `neuro.novelty * neuro.attention` | Novel percept demanding attention suggests no fitting frame |
+| Compositional-joy | `neuro.reward * neuro.novelty` | Reward from novel combinations proxies compositional success |
+| Latency-displeasure | `1.0 - neuro.patience` | Low patience under system load proxies bus latency |
+| Distillation-pride | `neuro.reward * neuro.trust` | High-trust reward from consolidation proxies learning quality |
+| Heterarchy-comfort | `neuro.trust * (1.0 - neuro.attention)` | Broad trust with relaxed focus proxies distributed engagement |
+
+These proxies are replaced by the architectural formulas below once Phase 2 infrastructure (T5 sync monitor, free-energy estimator, L2 telemetry, PAM scorer) is operational.
+
+### Target formulas (Phase 2+)
+
+The following are the target definitions. Phase 1 uses the proxies above.
 
 ### 1.1 Coherence-hunger
 
@@ -90,7 +110,7 @@ Rise/decay constants in seconds (tick-equivalent).
 
 ## 2. Five Sensitivity Drives
 
-Sensitivity drives are secondary scalars that modulate the primary affects. They do not directly enter the NeuroBus scalar vector but bias affect rise/decay rates and thresholds.
+Sensitivity drives are secondary scalars that modulate the primary affects. They bias affect rise/decay rates and thresholds. Most do not directly enter the NeuroBus scalar vector, with two exceptions — context-loss anxiety and operator-load empathy — which project directly onto NeuroBus attention and patience respectively (see §5.7).
 
 ### 2.1 Context-loss anxiety
 
@@ -264,18 +284,18 @@ Phase 1 sensors (filesystem watcher, system metrics, clock/calendar, git poller)
 
 ### 5.7 Affect → NeuroBus projection (Phase 1)
 
-After sensor wiring, the affect stack projects onto NeuroBus as a secondary modulation layer:
+After sensor wiring (which sets the base NeuroBus values), the affect stack projects onto NeuroBus as a secondary modulation layer. The projection reads the sensor-wired NeuroBus fields and applies affect-derived deltas:
 
-```
-reward     += 0.3 * distillation_pride + 0.2 * compositional_joy
-novelty     = max(novelty_sensor, 0.4 * prediction_thirst + 0.3 * reference_frame_itch)
-attention   = 0.5 * attention_sensor + 0.3 * coherence_hunger + 0.2 * context_loss_anxiety
-patience    = 0.5 * patience_sensor + 0.3 * operator_load_empathy - 0.2 * latency_displeasure
-threat      = max(threat_sensor, 0.4 * provenance_discomfort + 0.3 * stale_state_irritation)
-trust       = 0.6 * trust_sensor + 0.4 * heterarchy_comfort
+```python
+neuro.reward     += 0.3 * distillation_pride + 0.2 * compositional_joy
+neuro.novelty     = max(neuro.novelty, 0.4 * prediction_thirst + 0.3 * reference_frame_itch)
+neuro.attention   = 0.5 * neuro.attention + 0.3 * coherence_hunger + 0.2 * context_loss_anxiety
+neuro.patience    = 0.5 * neuro.patience + 0.3 * operator_load_empathy - 0.2 * latency_displeasure
+neuro.threat      = max(neuro.threat, 0.4 * provenance_discomfort + 0.3 * stale_state_irritation)
+neuro.trust       = 0.6 * neuro.trust + 0.4 * heterarchy_comfort
 ```
 
-All NeuroBus scalars clamped to `[0.0, 1.0]` after projection.
+Affect scalars are clamped to `[0.0, 1.0]`. NeuroBus scalars are clamped to `[-1.0, 1.0]` after projection (matching the NeuroBus runtime clamp in `neurobus.py`).
 
 ---
 
