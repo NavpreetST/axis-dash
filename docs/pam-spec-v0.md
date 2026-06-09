@@ -48,7 +48,9 @@ Where:
 
 ### Output Resolution
 
-Two decimal places (e.g., `0.87`), rounded to nearest hundredth.
+Two decimal places (e.g., `0.87`), round-half-up to two places (0.005 → 0.01).
+
+**Threshold comparison rule**: All gating decisions (CI pass/fail, self-mod allow/block, dashboard bucket, forge mutation policy) MUST use the **raw (un-rounded) PAM value**. The rounded value is for display only. This prevents edge cases where a value of 0.8349 rounds to 0.83 (amber) but the raw value is above threshold and should not gate.
 
 ## 4. Calibration
 
@@ -81,6 +83,15 @@ The 0.83 threshold matches the existing `pamThreshold()` function in the dashboa
 ### Initialization
 
 Until PAM is implemented in the NCP layer, the bridge **MUST** continue to emit `null`. This preserves the existing contract test (`test_pam_and_coherence_always_none`) and prevents the dashboard from displaying a fabricated score. Implementors flip the switch by replacing `PAM_UNRESOLVED` with a live PAM engine.
+
+**Null behavior**: When PAM is `null` (unresolved):
+
+| Gate Category | Gates | Behavior |
+|---------------|-------|----------|
+| **Mutation gates** (fail-closed) | CI/PR, Self-Modification Guardrail, Forge Mutation | **Hard fail** — treat as score < 0.83. PRs blocked, self-mod blocked, forge mutations rejected. Safety-first: if PAM cannot be measured, assume the worst |
+| **Observability gates** (pass-with-warning) | Dashboard Display, Memory Flagging | **Pass with warning** — dashboard shows `--` (amber), memory writes proceed without `pam_suspect` tag. Eventlog entry `pam_null_gate { gate: "<name>", disposition: "pass_with_warning" }` |
+
+Rationale: mutation gates affect system state and require affirmative alignment proof. Observability gates are read-only or additive; blocking them during the pre-implementation window would create a degraded experience for no safety benefit. This split is hardcoded for the pre-implementation period and reverts to pure threshold-based behavior once PAM is live.
 
 ## 5. Failure Cases
 
