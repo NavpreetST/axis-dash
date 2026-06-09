@@ -37,7 +37,13 @@ from aegis.mnemosyne.db import CONN as _MNEMO_CONN
 from aegis.mnemosyne.db import seed_if_empty as _seed_if_empty
 from aegis.nexus import clock, neurobus
 from aegis.nexus.bus import BUS
-from aegis.observability import b2_sync, eventlog, supabase_sync, turns
+from aegis.observability import (
+    b2_sync,
+    eventlog,
+    state_writer,
+    supabase_sync,
+    turns,
+)
 from aegis.renderer import dispatcher
 from aegis.renderer.gemini import validate_sku as _validate_sku
 
@@ -268,6 +274,7 @@ async def main() -> None:
         asyncio.create_task(ncp.run()),
         asyncio.create_task(dispatcher.run()),
         asyncio.create_task(turns.run()),
+        asyncio.create_task(state_writer.run()),
         asyncio.create_task(eventlog.run()),
         asyncio.create_task(supabase_sync.run()),
         asyncio.create_task(b2_sync.run()),

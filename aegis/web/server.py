@@ -471,6 +471,20 @@ def _git_short_commit() -> str | None:
     return None
 
 
+def _is_systemd_active() -> bool:
+    """Check if the aegis systemd service is actively running."""
+    try:
+        r = _subprocess.run(
+            ["systemctl", "is-active", "aegis.service"],
+            capture_output=True,
+            text=True,
+            timeout=2,
+        )
+        return r.returncode == 0 and r.stdout.strip() == "active"
+    except (FileNotFoundError, _subprocess.TimeoutExpired, OSError):
+        return False
+
+
 def _detect_launch_method(pid: int | None) -> str:
     """Detect daemon launch method from /proc/<pid>/cgroup.
 
@@ -485,11 +499,28 @@ def _detect_launch_method(pid: int | None) -> str:
     if pid is None:
         return "unknown"
     try:
-        with open(f"/proc/{pid}/cgroup") as f:
-            cgroup = f.read()
-        if "system.slice" in cgroup:
-            return "systemd"
-    except OSError:
+        with open(f"/proc/{pid}/cmdline", "rb") as f:
+            cmdline = b" ".join(f.read().split(b"\x00")).decode("utf-8", "replace").lower()
+    except (FileNotFoundError, ProcessLookupError, PermissionError, OSError):
+        return "unknown"
+    if "nohup" in cmdline:
+        return "nohup"
+    # Check parent PID — if it's 1 (init/systemd), it might be systemd OR
+    # nohup-reparented (parent shell exited). Verify systemd is actually
+    # running before claiming systemd launch.
+    try:
+        with open(f"/proc/{pid}/stat") as f:
+            stat = f.read()
+        rpar = stat.rfind(")")
+        if rpar >= 0:
+            fields = stat[rpar + 1:].split()
+            if len(fields) >= 3:
+                ppid = int(fields[1])
+                if ppid == 1:
+                    if await _is_systemd_active():
+                        return "systemd"
+                    return "nohup"
+    except (FileNotFoundError, ProcessLookupError, PermissionError, ValueError, OSError):
         pass
     return "nohup"
 
