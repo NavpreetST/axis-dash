@@ -53,7 +53,10 @@ export interface GateStatus {
 
 export async function fetchTasks(): Promise<Task[]> {
   if (!supabase) return [];
-  const { data, error } = await supabase.from('tasks').select('*').order('id', { ascending: false });
+  const { data, error } = await supabase
+    .from('tasks')
+    .select('*')
+    .order('id', { ascending: false });
   if (error) {
     console.error('[supabase] fetchTasks error:', error);
     return [];
