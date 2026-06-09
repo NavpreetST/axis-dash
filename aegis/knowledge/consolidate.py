@@ -440,6 +440,12 @@ def _split_files_into_batches(
             batches.append(current)
             current = []
             current_chars = 0
+        # Truncate oversized single file to avoid NIM context-limit errors
+        if entry_chars > max_chars:
+            ratio = (max_chars - 200) / entry_chars
+            trim = int(len(content) * ratio)
+            content = content[:trim] + f"\n\n_[TRUNCATED from {len(content)} to {trim} chars]_"
+            entry_chars = len(content) + len(rel_path) + 50
         current.append((rel_path, content))
         current_chars += entry_chars
 
@@ -551,14 +557,14 @@ async def archaeology_scan(
                 folder_results.append(f"_[NIM call failed for {batch_label}]_")
                 continue
 
-            # Dedup entries — full fingerprint (not just file+category)
+            # Dedup entries — full fingerprint
             deduped_lines: list[str] = []
-            current_entry: list[str] = []
+            current_entry: list[str] | None = None
             fname: str = ""
 
             for line in content.splitlines(keepends=True):
                 if line.startswith("### "):
-                    if current_entry:
+                    if current_entry is not None:
                         fingerprint = "".join(current_entry).strip()
                         if fingerprint not in _seen_entries:
                             _seen_entries.add(fingerprint)
@@ -572,7 +578,7 @@ async def archaeology_scan(
                 else:
                     deduped_lines.append(line)
 
-            if current_entry:
+            if current_entry is not None:
                 fingerprint = "".join(current_entry).strip()
                 if fingerprint not in _seen_entries:
                     _seen_entries.add(fingerprint)
