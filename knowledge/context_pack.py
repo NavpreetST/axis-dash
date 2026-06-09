@@ -73,7 +73,7 @@ def _slug(text: str) -> str:
     return s[:50].rstrip("-")
 
 
-def _clean(text: str) -> str:
+def _clean(text: str | None) -> str:
     if not text:
         return ""
     return (
@@ -87,7 +87,12 @@ def _clean(text: str) -> str:
 # ---------------------------------------------------------------------------
 # DB search (semantic + text fallback)
 # ---------------------------------------------------------------------------
+_ALLOWED_TABLES = frozenset({"facts", "concepts", "research_questions"})
+
+
 def _search_semantic(conn, query: str, table: str, limit: int = 5):
+    if table not in _ALLOWED_TABLES:
+        return []
     cols_map = {
         "facts": ("name", "category", "content", "source_page", "status", "embedding"),
         "concepts": (
@@ -124,6 +129,8 @@ def _search_semantic(conn, query: str, table: str, limit: int = 5):
 
 
 def _search_text(conn, query: str, table: str, limit: int = 5):
+    if table not in _ALLOWED_TABLES:
+        return []
     cols_map = {
         "facts": ("name", "category", "content", "source_page", "status"),
         "concepts": ("name", "type", "summary", "status", "dependencies", "source_pages"),
@@ -403,15 +410,17 @@ def generate(
     """
     db = Path(db_path) if db_path else DB_PATH
     conn = sqlite3.connect(str(db))
-    s = _slug(query)
-    pack_dir = KNOWLEDGE_DIR / "packs"
-    pack_dir.mkdir(exist_ok=True)
+    try:
+        s = _slug(query)
+        pack_dir = KNOWLEDGE_DIR / "packs"
+        pack_dir.mkdir(exist_ok=True)
 
-    # DB search — top-15 across all tables (5 per table)
-    facts = _search(conn, query, "facts", top_n)
-    concepts = _search(conn, query, "concepts", top_n)
-    research = _search(conn, query, "research_questions", top_n)
-    conn.close()
+        # DB search — top-15 across all tables (5 per table)
+        facts = _search(conn, query, "facts", top_n)
+        concepts = _search(conn, query, "concepts", top_n)
+        research = _search(conn, query, "research_questions", top_n)
+    finally:
+        conn.close()
 
     # Try NIM synthesis
     output = None
