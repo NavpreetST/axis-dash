@@ -120,7 +120,8 @@ async def _handle_forge_command(line: str) -> str:
         approved = False
         if len(parts) > 3:
             approved = parts[3].strip().lower() == "true"
-        
+        result.owner_approved = approved
+
         # Only approve if automated checks pass AND explicit approval given
         task = await _forge_dispatcher.complete_gate(task_id, result, approved and result.overall_passed)
         return f"FORGE:GATE:{json.dumps(result.to_dict())}"

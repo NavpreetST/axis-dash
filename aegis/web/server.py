@@ -875,7 +875,7 @@ async def forge_diff(task_id: str, request: Request) -> dict:
 
 @app.post("/forge/{task_id}/gate")
 async def forge_gate(task_id: str, request: Request) -> dict:
-    """Approve forge task gate. Requires auth token and approve=True."""
+    """Approve forge task gate. Requires auth token and approve bool."""
     if not _check_token(request):
         raise HTTPException(status_code=401, detail="auth_required")
     tid = _sanitize_task_id(task_id)
@@ -884,9 +884,10 @@ async def forge_gate(task_id: str, request: Request) -> dict:
     except Exception:
         body = {}
     approve = body.get("approve") if isinstance(body, dict) else None
-    if approve is not True:
+    if not isinstance(approve, bool):
         raise HTTPException(status_code=400, detail="approval_required")
-    resp = await _forge_socket_cmd(f"FORGE:GATE:{tid}")
+    flag = "true" if approve else "false"
+    resp = await _forge_socket_cmd(f"FORGE:GATE:{tid}:{flag}")
     if resp.startswith("FORGE:GATE:"):
         payload = resp.split(":", 2)[2]
         try:
