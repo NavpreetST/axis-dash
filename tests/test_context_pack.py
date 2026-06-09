@@ -155,7 +155,7 @@ class TestFormatRaw:
 
 
 @pytest.mark.skip(reason="_build_nim_context replaced by _nim_synthesis")
-class TestNimPrompt
+class TestNimPrompt:
     """Test NIM prompt building."""
 
     def test_build_context_includes_all_sections(self, tmp_db: Path):
@@ -175,7 +175,7 @@ class TestNimPrompt
 
 
 @pytest.mark.skip(reason="_format_nim replaced by _nim_synthesis + _raw_format")
-class TestFormatNim
+class TestFormatNim:
     """Test NIM synthesis formatting."""
 
     def test_nim_output_structure(self, tmp_db: Path):
@@ -225,7 +225,7 @@ class TestFormatNim
 
 
 @pytest.mark.skip(reason="_call_nim replaced by httpx-based _nim_synthesis")
-class TestNimCall
+class TestNimCall:
     """Test NIM API call (mocked)."""
 
     def test_call_nim_success(self):
@@ -274,7 +274,7 @@ class TestNimCall
 
 
 @pytest.mark.skip(reason="generate() API changed — rewrite tests")
-class TestGenerate
+class TestGenerate:
     """Test the main generate() function."""
 
     def test_generate_raw_fallback(self, tmp_db: Path):
@@ -366,7 +366,7 @@ class TestGenerate
 
 
 @pytest.mark.skip(reason="_slug/_clean renamed to slug/clean")
-class TestHelpers
+class TestHelpers:
     """Test helper functions."""
 
     def testslug(self):
