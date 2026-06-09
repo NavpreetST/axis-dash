@@ -1250,12 +1250,15 @@ def _search_knowledge_supabase(q: str, top_n: int = 5) -> dict | None:
     }
     term = f"*{q}*"  # PostgREST wildcard (equivalent to SQL %)
 
+    any_failed = False
+
     def query_table(
         table: str,
         search_cols: list[str],
         select: str,
     ) -> list[dict]:
         """Execute a single Supabase REST query with OR'd ILIKE conditions."""
+        nonlocal any_failed
         or_clause = ",".join(f"{col}.ilike.{term}" for col in search_cols)
         params = {
             "or": f"({or_clause})",
@@ -1271,10 +1274,12 @@ def _search_knowledge_supabase(q: str, top_n: int = 5) -> dict | None:
                 )
             if r.status_code != 200:
                 log.warning("supabase %s returned %d: %.120r", table, r.status_code, r.text)
+                any_failed = True
                 return []
             return r.json()
         except (httpx.TimeoutException, httpx.NetworkError, httpx.RemoteProtocolError) as e:
             log.warning("supabase %s request failed: %s", table, e)
+            any_failed = True
             return []
 
     facts = query_table(
@@ -1310,7 +1315,7 @@ def _search_knowledge_supabase(q: str, top_n: int = 5) -> dict | None:
             return row.get("source_pages", "")
         return row.get("source_page", "")
 
-    if not facts and not concepts and not research:
+    if any_failed or not facts and not concepts and not research:
         return None
 
     def wrap(table_name: str, rows: list[dict]) -> list[dict]:
