@@ -87,7 +87,7 @@ function createForgeStore() {
     }
     const taskList: ForgeTaskSummary[] = Array.isArray(res.data)
       ? res.data
-      : (res.data as Record<string, unknown>).tasks as ForgeTaskSummary[] ?? [];
+      : (((res.data as Record<string, unknown>).tasks as ForgeTaskSummary[]) ?? []);
     update((s) => ({ ...s, tasks: taskList, status: 'live', error: null }));
   }
 
