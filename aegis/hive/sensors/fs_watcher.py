@@ -1,7 +1,8 @@
-"""Filesystem watcher sensor — watchfiles-based .md change detector.
+"""Filesystem watcher sensor — polling-based .md change detector.
 
-Monitors Helios/ for .md file changes and publishes (file_path, change_type)
-to NeuroBus channel "sensor.fs".  Runs as a long-lived asyncio task.
+Monitors Helios/ for .md file changes using Path.rglob polling and
+publishes (file_path, change_type) to NeuroBus channel "sensor.fs".
+Runs as a long-lived asyncio task.
 
 Usage:
     from aegis.hive.sensors.fs_watcher import run
@@ -24,8 +25,13 @@ async def run(watch_dir: Path = WATCH_DIR, poll_interval: float = 1.0) -> None:
     known: dict[Path, float] = {}
     while True:
         if watch_dir.is_dir():
+            seen: set[Path] = set()
             for p in watch_dir.rglob("*.md"):
-                mtime = p.stat().st_mtime
+                seen.add(p)
+                try:
+                    mtime = p.stat().st_mtime
+                except (FileNotFoundError, OSError):
+                    continue
                 prev = known.get(p)
                 if prev is None:
                     known[p] = mtime
@@ -33,7 +39,7 @@ async def run(watch_dir: Path = WATCH_DIR, poll_interval: float = 1.0) -> None:
                 elif mtime > prev:
                     known[p] = mtime
                     await BUS.publish("sensor.fs", {"file_path": str(p), "change_type": "modified"})
-            gone = [p for p in known if not p.exists()]
+            gone = set(known.keys()) - seen
             for p in gone:
                 del known[p]
                 await BUS.publish("sensor.fs", {"file_path": str(p), "change_type": "deleted"})

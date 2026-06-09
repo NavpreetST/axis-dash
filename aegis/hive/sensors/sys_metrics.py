@@ -19,7 +19,7 @@ from aegis.nexus.bus import BUS
 log = logging.getLogger("hive.sensors.sys_metrics")
 
 _INTERVAL = 1.0
-_prev_net: tuple[int, int] | None = None
+_prev_net: int | None = None
 
 
 async def run() -> None:
@@ -28,16 +28,20 @@ async def run() -> None:
     while True:
         cpu_pct = psutil.cpu_percent(interval=0)
         mem_pct = psutil.virtual_memory().percent
-        disk_pct = psutil.disk_usage("/").percent
+        try:
+            disk_pct = psutil.disk_usage("/").percent
+        except (OSError, psutil.Error) as e:
+            log.warning("sys_metrics: disk_usage failed — %s", e)
+            disk_pct = 0.0
 
         net = psutil.net_io_counters()
         if _prev_net is not None:
             dt = _INTERVAL
-            net_speed = (net.bytes_recv - _prev_net[0]) * 8 / (dt * 1000)
+            net_speed = (net.bytes_recv - _prev_net) * 8 / (dt * 1000)
             net_speed_kbps = round(net_speed, 2)
         else:
             net_speed_kbps = 0.0
-        _prev_net = (net.bytes_recv, net.bytes_sent)
+        _prev_net = net.bytes_recv
 
         await BUS.publish("sensor.sys", {
             "cpu_pct": cpu_pct,

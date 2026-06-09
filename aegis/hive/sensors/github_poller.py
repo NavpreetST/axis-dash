@@ -19,7 +19,7 @@ from aegis.nexus.bus import BUS
 log = logging.getLogger("hive.sensors.github_poller")
 
 POLL_INTERVAL_S = 60
-REPOS = ["NavpreetST/helios", "axis-dash"]
+REPOS = ["NavpreetST/helios"]
 _prev_prs: dict[str, set[int]] = {}
 
 
@@ -48,19 +48,29 @@ async def run() -> None:
     while True:
         for repo in REPOS:
             prs = await _fetch_prs(repo)
-            current_ids: set[int] = {p["number"] for p in prs}
+            current_ids: set[int] = set()
+            for pr in prs:
+                num = pr.get("number")
+                if not isinstance(num, int):
+                    continue
+                current_ids.add(num)
             new_ids = current_ids - _prev_prs[repo]
             for pr in prs:
-                if pr["number"] in new_ids:
-                    await BUS.publish("sensor.github", {
-                        "event": "pr_opened",
-                        "repo": repo,
-                        "pr": pr["number"],
-                        "title": pr["title"],
-                        "author": pr["author"]["login"],
-                        "url": pr["url"],
-                        "ts": datetime.now(UTC).isoformat(),
-                    })
-                    log.info("github_poller: new PR #%d in %s", pr["number"], repo)
+                num = pr.get("number")
+                if not isinstance(num, int) or num not in new_ids:
+                    continue
+                author = ""
+                if isinstance(pr.get("author"), dict):
+                    author = pr["author"].get("login", "")
+                await BUS.publish("sensor.github", {
+                    "event": "pr_opened",
+                    "repo": repo,
+                    "pr": num,
+                    "title": pr.get("title", ""),
+                    "author": author,
+                    "url": pr.get("url", ""),
+                    "ts": datetime.now(UTC).isoformat(),
+                })
+                log.info("github_poller: new PR #%d in %s", num, repo)
             _prev_prs[repo] = current_ids
         await asyncio.sleep(POLL_INTERVAL_S)

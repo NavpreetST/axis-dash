@@ -1,4 +1,4 @@
-"""Safe subprocess executor — cgroups-sandboxed with 30s timeout.
+"""Safe subprocess executor — subprocess_exec with sanctioned-command whitelist.
 
 Only sanctioned commands from the inhibitory gate pass through.  Output is
 published to NeuroBus channel "action.exec_result".
@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import shlex
 from typing import Any
 
 from aegis.nexus.bus import BUS
@@ -35,7 +36,7 @@ class SafeExecutor:
         self._sem = asyncio.Semaphore(4)
 
     def _sanctioned(self, command: str) -> bool:
-        cmd = command.strip().split(maxsplit=1)[0] if command.strip() else ""
+        cmd = shlex.split(command)[0] if command.strip() else ""
         return cmd in SANCTIONED_CMDS
 
     async def run(self, command: str, **kwargs: Any) -> dict[str, Any]:
@@ -46,9 +47,10 @@ class SafeExecutor:
             return {"ok": False, "error": msg}
 
         async with self._sem:
+            argv = shlex.split(command)
             try:
-                proc = await asyncio.create_subprocess_shell(
-                    command,
+                proc = await asyncio.create_subprocess_exec(
+                    *argv,
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE,
                     env={**os.environ, "PATH": os.environ.get("PATH", "/usr/bin")},
@@ -66,14 +68,16 @@ class SafeExecutor:
                 await BUS.publish("action.exec_result", result)
                 return result
             except TimeoutError:
+                proc.kill()
+                await proc.wait()
                 msg = f"timeout ({TIMEOUT_S}s): {command[:80]}"
                 log.warning("safe_exec: %s", msg)
                 result = {"ok": False, "error": msg}
                 await BUS.publish("action.exec_result", result)
                 return result
             except Exception as e:
-                msg = str(e)
-                log.warning("safe_exec: %s", msg)
+                msg = f"{type(e).__name__}: {e}"
+                log.warning("safe_exec: %s", msg, exc_info=True)
                 result = {"ok": False, "error": msg}
                 await BUS.publish("action.exec_result", result)
                 return result

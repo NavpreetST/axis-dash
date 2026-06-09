@@ -54,6 +54,7 @@ def _calibrate(neuro: dict[str, float], interaction_count: int = 0) -> dict[str,
 async def run() -> None:
     log.info("drive_calibrator running")
     interaction_count = 0
+    lock = asyncio.Lock()
     tick_q = BUS.subscribe("tick")
     neuro_q = BUS.subscribe("neurobus.state")
     sense_q = BUS.subscribe("sensor.*")
@@ -61,16 +62,18 @@ async def run() -> None:
     async def on_tick() -> None:
         while True:
             await tick_q.get()
-            for k in _drives:
-                _drives[k] *= _DECAY[k]
-            await BUS.publish("affect.drive", dict(_drives))
+            async with lock:
+                for k in _drives:
+                    _drives[k] *= _DECAY[k]
+                await BUS.publish("affect.drive", dict(_drives))
 
     async def on_neuro() -> None:
         while True:
             msg = await neuro_q.get()
             raw = _calibrate(msg.payload, interaction_count)
-            for k, v in raw.items():
-                _drives[k] = min(1.0, _drives[k] + v * 0.1)
+            async with lock:
+                for k, v in raw.items():
+                    _drives[k] = min(1.0, _drives[k] + v * 0.1)
 
     async def on_sense() -> None:
         nonlocal interaction_count

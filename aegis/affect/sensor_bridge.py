@@ -47,19 +47,20 @@ _RISE: dict[str, float] = {
 _state: dict[str, float] = {k: 0.5 for k in _DECAY}
 
 
-def _map_neurobus_to_affect(neuro: dict[str, Any]) -> dict[str, float]:
+def _map_neurobus_to_affect(neuro: dict[str, Any], distillation_pride: float = 0.5) -> dict[str, float]:
     return {
         "coherence_hunger": max(0.0, 1.0 - neuro.get("reward", 0.0)),
         "prediction_thirst": neuro.get("novelty", 0.0),
         "reference_frame_itch": neuro.get("attention", 0.5),
         "compositional_joy": neuro.get("trust", 0.5),
         "latency_displeasure": max(0.0, 1.0 - neuro.get("patience", 0.5)),
-        "distillation_pride": _state["distillation_pride"],
+        "distillation_pride": distillation_pride,
     }
 
 
 async def run() -> None:
     log.info("sensor_bridge running")
+    lock = asyncio.Lock()
     tick_q = BUS.subscribe("tick")
     sense_q = BUS.subscribe("sensor.*")
     neuro_q = BUS.subscribe("neurobus.state")
@@ -67,20 +68,23 @@ async def run() -> None:
     async def on_tick() -> None:
         while True:
             await tick_q.get()
-            for k in _state:
-                _state[k] *= _DECAY[k]
-            await BUS.publish("affect.state", dict(_state))
+            async with lock:
+                for k in _state:
+                    _state[k] *= _DECAY[k]
+                await BUS.publish("affect.state", dict(_state))
 
     async def on_sense() -> None:
         while True:
             _ = await sense_q.get()
-            for k in _state:
-                _state[k] = min(1.0, _state[k] + _RISE[k])
+            async with lock:
+                for k in _state:
+                    _state[k] = min(1.0, _state[k] + _RISE[k])
 
     async def on_neuro() -> None:
         while True:
             msg = await neuro_q.get()
-            affect = _map_neurobus_to_affect(msg.payload)
-            _state.update(affect)
+            async with lock:
+                affect = _map_neurobus_to_affect(msg.payload, _state["distillation_pride"])
+                _state.update(affect)
 
     await asyncio.gather(on_tick(), on_sense(), on_neuro())

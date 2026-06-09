@@ -1,8 +1,8 @@
 """Basal-ganglia action selector — epsilon-greedy over 6 action types.
 
 Reads NeuroBus state, computes a score for each action type, then selects
-one via epsilon-greedy.  Publishes the selected action to a local Queue
-for the executor to pick up.
+one via epsilon-greedy.  Publishes the selected action to NeuroBus
+channel "action.selected".
 
 Action types:
   shell_cmd          — run a shell command
@@ -19,7 +19,6 @@ Usage:
 """
 from __future__ import annotations
 
-import asyncio
 import logging
 import random
 from dataclasses import dataclass, field
@@ -50,7 +49,6 @@ class ActionSelector:
     def __init__(self, epsilon: float = 0.1, decay: float = 0.999) -> None:
         self.epsilon = epsilon
         self.decay = decay
-        self._q: asyncio.Queue[Action] = asyncio.Queue(maxsize=16)
 
     def score(self, action_type: str, state: dict[str, float]) -> float:
         nu = state.get("novelty", 0.0)
@@ -71,17 +69,23 @@ class ActionSelector:
     async def select(self, state: dict[str, float]) -> Action:
         if random.random() < self.epsilon:
             chosen = random.choice(ACTION_TYPES)
-            log.debug("basal_ganglia: epsilon-explore -> %s", chosen)
-            await self._emit_action(chosen)
-            return Action(action_type=chosen)
+            confidence = self.score(chosen, state)
+            log.debug("basal_ganglia: epsilon-explore -> %s (score=%.3f)", chosen, confidence)
+            await self._emit_action(chosen, params={}, confidence=confidence)
+            return Action(action_type=chosen, params={}, confidence=confidence)
 
         scored = [(at, self.score(at, state)) for at in ACTION_TYPES]
         scored.sort(key=lambda x: x[1], reverse=True)
         chosen = scored[0][0]
-        log.debug("basal_ganglia: greedy -> %s (score=%.3f)", chosen, scored[0][1])
-        await self._emit_action(chosen)
+        confidence = scored[0][1]
+        log.debug("basal_ganglia: greedy -> %s (score=%.3f)", chosen, confidence)
+        await self._emit_action(chosen, params={}, confidence=confidence)
         self.epsilon = max(0.01, self.epsilon * self.decay)
-        return Action(action_type=chosen, confidence=scored[0][1])
+        return Action(action_type=chosen, params={}, confidence=confidence)
 
-    async def _emit_action(self, action_type: str) -> None:
-        await BUS.publish("action.selected", {"action_type": action_type})
+    async def _emit_action(self, action_type: str, params: dict[str, Any] | None = None, confidence: float = 0.0) -> None:
+        await BUS.publish("action.selected", {
+            "action_type": action_type,
+            "params": params or {},
+            "confidence": confidence,
+        })
