@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import asyncio
 import hmac
+import httpx
 import json
 import logging
 import os
@@ -1120,6 +1121,10 @@ async def logs_sse(request: Request) -> StreamingResponse:
 _KNOWLEDGE_DB = Path(os.getenv("AEGIS_KNOWLEDGE_DB", "/opt/aegis/knowledge/helios_knowledge.db"))
 _CONVERSATION_GAP_SECONDS = 900  # 15 min gap between episodes = new conversation
 
+# Supabase knowledge bridge (P2 override for _search_knowledge)
+_SUPABASE_URL: str | None = os.getenv("SUPABASE_URL") or None
+_SUPABASE_ANON_KEY: str | None = os.getenv("SUPABASE_ANON_KEY") or None
+
 # Whitelist of table/column identifiers allowed in SQL interpolation.
 # Any name not in these sets will be rejected (defence-in-depth against
 # accidental injection through the _search_knowledge helper).
@@ -1229,14 +1234,115 @@ def _load_conversation_by_id(conversation_id: int) -> dict | None:
     return None
 
 
-def _search_knowledge(q: str, top_n: int = 5) -> dict:
-    """Search knowledge DB via FTS5 (text only — no embedding model)."""
+def _search_knowledge_supabase(q: str, top_n: int = 5) -> dict | None:
+    """Query Supabase knowledge tables via PostgREST REST API.
+
+    Returns None if Supabase env vars are not set or any request fails
+    (triggers SQLite fallback).
+    """
+    if not _SUPABASE_URL or not _SUPABASE_ANON_KEY:
+        return None
+
+    headers = {
+        "apikey": _SUPABASE_ANON_KEY,
+        "Authorization": f"Bearer {_SUPABASE_ANON_KEY}",
+        "Accept": "application/json",
+    }
+    term = f"*{q}*"  # PostgREST wildcard (equivalent to SQL %)
+
+    any_failed = False
+
+    def query_table(
+        table: str,
+        search_cols: list[str],
+        select: str,
+    ) -> list[dict]:
+        """Execute a single Supabase REST query with OR'd ILIKE conditions."""
+        nonlocal any_failed
+        or_clause = ",".join(f"{col}.ilike.{term}" for col in search_cols)
+        params = {
+            "or": f"({or_clause})",
+            "select": select,
+            "limit": str(top_n),
+        }
+        try:
+            with httpx.Client(timeout=5.0) as client:
+                r = client.get(
+                    f"{_SUPABASE_URL}/rest/v1/{table}",
+                    headers=headers,
+                    params=params,
+                )
+            if r.status_code != 200:
+                log.warning("supabase %s returned %d: %.120r", table, r.status_code, r.text)
+                any_failed = True
+                return []
+            return r.json()
+        except (httpx.TimeoutException, httpx.NetworkError, httpx.RemoteProtocolError) as e:
+            log.warning("supabase %s request failed: %s", table, e)
+            any_failed = True
+            return []
+
+    facts = query_table(
+        "facts",
+        ["name", "content"],
+        "name,category,content,source_page,status",
+    )
+    concepts = query_table(
+        "concepts",
+        ["name", "summary"],
+        "name,type,summary,status,dependencies,source_pages",
+    )
+    research = query_table(
+        "research_questions",
+        ["question"],
+        "question,avenue,priority,status,source_page",
+    )
+
+    def fmt_label(table_name: str, row: dict) -> str:
+        if table_name == "research_questions":
+            return row.get("question", "")
+        return row.get("name", "")
+
+    def fmt_content(table_name: str, row: dict) -> str:
+        if table_name == "research_questions":
+            return row.get("question", "")
+        if table_name == "concepts":
+            return row.get("summary", "")
+        return row.get("content", "")
+
+    def fmt_source(table_name: str, row: dict) -> str:
+        if table_name == "concepts":
+            return row.get("source_pages", "")
+        return row.get("source_page", "")
+
+    if any_failed or not facts and not concepts and not research:
+        return None
+
+    def wrap(table_name: str, rows: list[dict]) -> list[dict]:
+        return [
+            {
+                "label": fmt_label(table_name, r),
+                "content": str(fmt_content(table_name, r))[:300],
+                "source": fmt_source(table_name, r),
+                "status": r.get("status", ""),
+            }
+            for r in rows
+        ]
+
+    return {
+        "facts": wrap("facts", facts),
+        "concepts": wrap("concepts", concepts),
+        "research_questions": wrap("research_questions", research),
+    }
+
+
+def _search_knowledge_local(q: str, top_n: int = 5) -> dict:
+    """Local SQLite fallback — FTS5 with LIKE fallback."""
     conn = _db_connect(_KNOWLEDGE_DB)
     if conn is None:
         return {"facts": [], "concepts": [], "research_questions": []}
 
     def search_table(table: str, fts_table: str, label_col: str, content_col: str, src_col: str) -> list[dict]:
-        # Validate identifiers against whitelist before any SQL interpolation
         for ident in (table, fts_table, label_col, content_col, src_col):
             if ident not in _KNOWLEDGE_TABLES and ident not in _KNOWLEDGE_COLUMNS:
                 log.warning("memory: unknown SQL identifier rejected: %r", ident)
@@ -1248,7 +1354,6 @@ def _search_knowledge(q: str, top_n: int = 5) -> dict:
                 (q, top_n),
             ).fetchall()
             if not rows:
-                # LIKE fallback
                 pattern = f"%{q}%"
                 rows = conn.execute(
                     f"SELECT {label_col}, {content_col}, {src_col} FROM {table} "
@@ -1256,7 +1361,7 @@ def _search_knowledge(q: str, top_n: int = 5) -> dict:
                     (pattern, pattern, top_n),
                 ).fetchall()
                 return [
-                    {"label": r[0], "content": r[1][:300], "source": r[2]}
+                    {"label": r[0], "content": r[1][:300], "source": r[2], "status": ""}
                     for r in rows
                 ]
             ids = [r[0] for r in rows]
@@ -1289,6 +1394,14 @@ def _search_knowledge(q: str, top_n: int = 5) -> dict:
         }
     finally:
         conn.close()
+
+
+def _search_knowledge(q: str, top_n: int = 5) -> dict:
+    """Search knowledge DB — Supabase REST API first, SQLite fallback."""
+    supabase = _search_knowledge_supabase(q, top_n)
+    if supabase is not None:
+        return supabase
+    return _search_knowledge_local(q, top_n)
 
 
 @app.get("/api/conversations")
