@@ -23,6 +23,8 @@ import os
 import re
 import sqlite3
 import time
+import urllib.request
+import urllib.error
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -1431,6 +1433,81 @@ async def api_memory_search(request: Request, q: str = "") -> dict:
     if not q.strip():
         raise HTTPException(status_code=400, detail="missing_query")
     return _search_knowledge(q.strip())
+
+
+@app.get("/api/coverage")
+async def api_coverage(request: Request, pr_number: int = 0) -> dict:
+    """Get latest coverage data. Requires auth token.
+
+    Returns {total_pct, covered_lines, missing_lines, num_statements, ...}
+    from the coverage table. If pr_number is provided, returns that PR's data;
+    otherwise returns the most recent row.
+    """
+    if not _check_token(request):
+        raise HTTPException(status_code=401, detail="auth_required")
+
+    supabase_url = os.getenv("SUPABASE_URL", "")
+    supabase_key = os.getenv("SUPABASE_SERVICE_KEY", "")
+    if not supabase_url or not supabase_key:
+        return {"total_pct": 0, "error": "supabase_not_configured"}
+
+    try:
+        if pr_number:
+            url = (
+                f"{supabase_url}/rest/v1/coverage"
+                f"?pr_number=eq.{pr_number}&order=created_at.desc&limit=1"
+            )
+        else:
+            url = f"{supabase_url}/rest/v1/coverage?order=created_at.desc&limit=1"
+
+        req = urllib.request.Request(url, headers={
+            "apikey": supabase_key,
+            "Authorization": f"Bearer {supabase_key}",
+            "Accept": "application/json",
+        })
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            rows = json.loads(resp.read().decode())
+            if rows:
+                return rows[0]
+            return {"total_pct": 0, "error": "no_data"}
+    except Exception as e:
+        log.warning("coverage query failed: %s", e)
+        return {"total_pct": 0, "error": str(e)}
+
+
+@app.get("/api/gates")
+async def api_gates(request: Request, pr_number: int = 0) -> list[dict]:
+    """Get gate status for a PR or all recent PRs. Requires auth token."""
+    if not _check_token(request):
+        raise HTTPException(status_code=401, detail="auth_required")
+
+    supabase_url = os.getenv("SUPABASE_URL", "")
+    supabase_key = os.getenv("SUPABASE_SERVICE_KEY", "")
+    if not supabase_url or not supabase_key:
+        return []
+
+    try:
+        if pr_number:
+            url = (
+                f"{supabase_url}/rest/v1/gate_status"
+                f"?pr_number=eq.{pr_number}&order=gate_name.asc"
+            )
+        else:
+            url = (
+                f"{supabase_url}/rest/v1/gate_status"
+                f"?order=pr_number.desc,gate_name.asc&limit=50"
+            )
+
+        req = urllib.request.Request(url, headers={
+            "apikey": supabase_key,
+            "Authorization": f"Bearer {supabase_key}",
+            "Accept": "application/json",
+        })
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            return json.loads(resp.read().decode())
+    except Exception as e:
+        log.warning("gate_status query failed: %s", e)
+        return []
 
 
 if STATIC_DIR.exists():
