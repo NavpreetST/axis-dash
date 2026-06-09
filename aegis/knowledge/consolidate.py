@@ -46,7 +46,7 @@ log = logging.getLogger(__name__)
 
 NVIDIA_API_KEY = os.getenv("NVIDIA_API_KEY", "")
 NIM_ENDPOINT = "https://integrate.api.nvidia.com/v1/chat/completions"
-NIM_MODEL = os.getenv("AEGIS_NIM_MODEL", "nvidia/nemotron-3-super-120b-a12b")
+NIM_MODEL = os.getenv("AEGIS_NIM_MODEL", "mistralai/mistral-nemotron")
 MAX_RETRIES = 5
 INITIAL_BACKOFF = 1.0
 BACKOFF_CAP = 30.0
@@ -367,51 +367,29 @@ def _write_output(path: Path, content: str) -> None:
 
 # ── Archaeology helpers ──────────────────────────────────────────────────────
 
-ARCHAEOLOGY_PROMPT = """\
-You are an archaeological analysis engine. You are analyzing a folder of Helios \
-project documentation. Read all files below and classify EACH file's dominant \
-signal(s) into these categories. Report ALL findings you discover.
+ARCHAEOLOGY_PROMPT = """\nYou are an archaeological analysis engine. Analyze each file below and classify its dominant signal(s). Report findings only — no preamble.
 
 ## Categories
 
-**UNDERPROMPTED** — A promising idea or component that appears in one or two \
-places but has never been actively built, specified, or pursued. It deserves \
-attention but has none.
-
-**GRADUATE** — Something currently parked in archive/experimental/backlog that \
-should be promoted to active roadmap or spec status. It is ready to build.
-
-**CONTRADICT** — Two or more files in this corpus make claims that cannot both \
-be true. Identify the specific contradiction.
-
-**ORPHAN** — A component, capability, or idea that requires a dependency that \
-does not exist yet. It is blocked by something missing.
-
-**DRIFT** — A factual claim that contradicts established ground truth (see \
-Ground Truth Reference below). These are stale beliefs that have been falsified.
-
-**AFFECT** — Any reference to the 7 primary affects (coherence-hunger, \
-prediction-thirst, reference-frame-itch, compositional-joy, latency-displeasure, \
-distillation-pride, heterarchy-comfort), 5 sensitivity drives, or the animal \
-instinct metaphors (tiger, bird, ant/bee, octopus, corvid). Also flag files \
-that discuss affect/emotion/motivation in non-native ways.
-
-**MISSING_SPEC** — An idea, component, or module that clearly needs a written \
-specification but does not have one. Something you would want to build but cannot \
-because the spec does not exist.
+**UNDERPROMPTED** — Promising idea with minimal execution. Deserves attention.
+**GRADUATE** — Parked idea ready for active status.
+**CONTRADICT** — Conflicting claims within corpus. Identify specifics.
+**ORPHAN** — Component blocked by a missing dependency.
+**DRIFT** — Stale fact contradicting ground truth below.
+**AFFECT** — References affect stack: coherence-hunger, prediction-thirst, reference-frame-itch, compositional-joy, latency-displeasure, distillation-pride, heterarchy-comfort; sensitivity drives; animal instinct metaphors (tiger, bird, ant/bee, octopus, corvid); or non-native affect discussion.
+**MISSING_SPEC** — Needs a written spec that does not exist.
 
 ## Output format
 
-For each finding, output in this exact format:
+For each finding:
 
-### {FOLDER}/{filename}
+### {{FOLDER}}/{{filename}}
 **Category:** CATEGORY_NAME
-**Signal:** 1-2 sentence description of the finding
+**Signal:** 1-2 sentence description
 **Evidence:** 1-2 sentence justification with file content reference
-**Action:** What should be done (if applicable)
+**Action:** What should be done
 
-If a file has multiple findings, list them as separate entries. If a file has \
-no findings, skip it entirely. Start directly with findings — no preamble.
+Multiple findings per file = multiple entries. Skip files with no findings.
 
 {ground_truth}
 
@@ -480,31 +458,47 @@ async def archaeology_scan(
     content_dir: Path,
     output_dir: Path = OUTPUT_DIR,
     dry_run: bool = False,
+    target_dirs: list[str] | None = None,
 ) -> list[str]:
     _load_secrets()
     if not NVIDIA_API_KEY and not dry_run:
         log.error("archaeology: NVIDIA_API_KEY not set")
         return []
 
+    dirs = target_dirs if target_dirs is not None else ARCHAEOLOGY_DIRS
     report_sections: list[str] = []
     total_files = 0
+    _seen_files: set[str] = set()
+    _seen_entries: set[tuple[str, str]] = set()
 
-    for chunk in ARCHAEOLOGY_DIRS:
+    for chunk in dirs:
         description = ARCHAEOLOGY_DESCRIPTIONS.get(chunk, chunk)
         files = _collect_files_by_chunk(content_dir, chunk)
         if not files:
             log.info("archaeology: no files in %s, skipping", chunk)
             continue
-        total_files += len(files)
-        log.info("archaeology: scanning %s (%d files)", chunk, len(files))
+
+        # Filter out already-analyzed files
+        new_files = [(p, t) for p, t in files if p not in _seen_files]
+        skipped = len(files) - len(new_files)
+        if skipped:
+            log.info("archaeology: %s: %d new / %d already seen, skipping", chunk, len(new_files), skipped)
+        if not new_files:
+            log.info("archaeology: %s: all %d files already analyzed, skipping", chunk, len(files))
+            continue
+        for p, _ in new_files:
+            _seen_files.add(p)
+
+        total_files += len(new_files)
+        log.info("archaeology: scanning %s (%d files)", chunk, len(new_files))
 
         if dry_run:
             report_sections.append(
-                f"## {chunk}\n\n_[DRY RUN — would analyze {len(files)} files]_\n"
+                f"## {chunk}\n\n_[DRY RUN — would analyze {len(new_files)} files]_\n"
             )
             continue
 
-        prompt = _build_archaeology_prompt(chunk, description, files)
+        prompt = _build_archaeology_prompt(chunk, description, new_files)
         payload = {
             "model": NIM_MODEL,
             "messages": [{"role": "user", "content": prompt}],
@@ -529,8 +523,54 @@ async def archaeology_scan(
             )
             continue
 
-        report_sections.append(content)
-        log.info("archaeology: %s done (%d chars)", chunk, len(content))
+        # ----- Fix 3: dedup entries within response -----
+        deduped_lines: list[str] = []
+        current_entry: list[str] = []
+        entry_key: tuple[str, str] | None = None
+        fname: str = ""
+
+        for line in content.splitlines(keepends=True):
+            if line.startswith("### "):
+                # Finalize previous entry
+                if entry_key and entry_key in _seen_entries:
+                    current_entry = []
+                    entry_key = None
+                    fname = ""
+                    continue
+                if current_entry and entry_key:
+                    _seen_entries.add(entry_key)
+                    deduped_lines.extend(current_entry)
+                current_entry = [line]
+                fname = line[4:].strip().rstrip()
+                entry_key = None
+            elif line.startswith("**Category:**") and current_entry is not None:
+                cat = line.split(":", 1)[1].strip()
+                entry_key = (fname, cat) if fname else None
+                if entry_key and entry_key in _seen_entries:
+                    current_entry = []
+                    entry_key = None
+                    fname = ""
+                    continue
+                current_entry.append(line)
+            elif current_entry is not None:
+                current_entry.append(line)
+            else:
+                deduped_lines.append(line)
+
+        # Flush last entry
+        if current_entry and entry_key:
+            if entry_key not in _seen_entries:
+                _seen_entries.add(entry_key)
+                deduped_lines.extend(current_entry)
+        elif current_entry:
+            deduped_lines.extend(current_entry)
+
+        deduped_content = "".join(deduped_lines)
+        if len(deduped_content) < len(content):
+            log.info("archaeology: %s deduplicated %d -> %d chars", chunk, len(content), len(deduped_content))
+
+        report_sections.append(deduped_content)
+        log.info("archaeology: %s done (%d chars)", chunk, len(deduped_content))
 
     report = "# NIM Archaeology Report\n\n"
     report += f"_Generated: {time.strftime('%Y-%m-%d %H:%M:%S', time.gmtime())} UTC | Model: {NIM_MODEL} | Files scanned: {total_files}_\n\n"
@@ -555,17 +595,6 @@ async def archaeology_scan(
                  output_path, len(report), total_files, len(report_sections))
 
     return report_sections
-
-
-# ── Main flow ────────────────────────────────────────────────────────────────
-
-@dataclass
-class ConsolidationResult:
-    category: str
-    entries_count: int
-    output_path: Path | None
-    error: str | None = None
-
 
 async def consolidate(
     db_path: Path = DB_PATH,
