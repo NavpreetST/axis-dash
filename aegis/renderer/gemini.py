@@ -30,6 +30,8 @@ from aegis.renderer import QuotaExhausted, TransientError, _quota
 log = logging.getLogger(__name__)
 
 _MODEL = "gemini-2.5-flash"
+
+_FORCE_FAIL = os.getenv("FORCE_GEMINI_FAIL", "").lower() in ("1", "true", "yes")
 _GENERATE_URL = (
     f"https://generativelanguage.googleapis.com/v1beta/models/{_MODEL}:generateContent"
 )
@@ -120,6 +122,8 @@ async def render(intent: dict) -> str:
             "thinkingConfig": {"thinkingBudget": 0},
         },
     }
+    if _FORCE_FAIL:
+        raise TransientError("gemini force-failed by FORCE_GEMINI_FAIL env var")
     try:
         _quota.reserve()  # Block 1.1: pre-flight only; record_success() after usable 200
     except QuotaExhausted:
