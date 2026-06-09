@@ -27,11 +27,20 @@ if _env.exists():
             os.environ.setdefault(k.strip(), v.strip())
 
 from aegis import consolidation
+from aegis.action.basal_ganglia import ActionSelector as _ActionSelector
+from aegis.action.inhibitory_gate import InhibitoryGate as _InhibitoryGate
+from aegis.action.safe_exec import SafeExecutor as _SafeExecutor
+from aegis.affect import drive_calibrator as _drive_calibrator
+from aegis.affect import sensor_bridge as _sensor_bridge
 from aegis.brain import ncp
 from aegis.forge.dispatcher import ForgeDispatcher
 from aegis.forge.gate import GateStage
 from aegis.forge.manager import ForgeManager
 from aegis.hive import text_encoder
+from aegis.hive.sensors import clock as _clock_sensor
+from aegis.hive.sensors import fs_watcher as _fs_watcher
+from aegis.hive.sensors import github_poller as _github_poller
+from aegis.hive.sensors import sys_metrics as _sys_metrics
 from aegis.mnemosyne import retrieve, write
 from aegis.mnemosyne.db import CONN as _MNEMO_CONN
 from aegis.mnemosyne.db import seed_if_empty as _seed_if_empty
@@ -52,6 +61,11 @@ logging.basicConfig(
     format="%(asctime)s [%(name)s] %(levelname)s %(message)s",
 )
 log = logging.getLogger("aegis")
+
+# Phase 1 feature flags — OFF by default
+_HIVE_ENABLED = os.getenv("AEGIS_HIVE_ENABLED", "false").lower() in ("true", "1", "yes")
+_ACTION_ENABLED = os.getenv("AEGIS_ACTION_ENABLED", "false").lower() in ("true", "1", "yes")
+_AFFECT_ENABLED = os.getenv("AEGIS_AFFECT_ENABLED", "false").lower() in ("true", "1", "yes")
 
 SOCK_PATH = Path(os.getenv("AEGIS_SOCK", "/tmp/aegis.sock"))
 REPLY_TIMEOUT = float(os.getenv("AEGIS_REPLY_TIMEOUT", "15.0"))
@@ -253,13 +267,7 @@ async def main() -> None:
                     log.error("forge: reap error: %s", e)
 
     async def _supervised_consolidation() -> None:
-        """Supervised wrapper for consolidation.run().
-
-        Crash isolation: catches any exception from consolidation.run()
-        and logs it, but NEVER lets it propagate into the daemon's
-        asyncio.gather().  This ensures consolidation crashes never
-        cancel sibling tasks or take down the 1 Hz Nexus.
-        """
+        """Supervised wrapper for consolidation.run()."""
         while True:
             try:
                 await consolidation.run()
@@ -267,7 +275,60 @@ async def main() -> None:
                 raise
             except Exception as e:
                 log.error("consolidation: supervised crash — %s", e, exc_info=True)
-                await asyncio.sleep(60)  # backoff before retry
+                await asyncio.sleep(60)
+
+    async def _supervised_hive() -> None:
+        while True:
+            try:
+                await asyncio.gather(
+                    _clock_sensor.run(hz=1.0),
+                    _fs_watcher.run(),
+                    _sys_metrics.run(),
+                    _github_poller.run(),
+                )
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                log.error("hive: supervised crash — %s", e, exc_info=True)
+                await asyncio.sleep(60)
+
+    async def _supervised_action() -> None:
+        selector = _ActionSelector()
+        gate = _InhibitoryGate()
+        executor = _SafeExecutor()
+        while True:
+            try:
+                neuro_q = BUS.subscribe("neurobus.state")
+                while True:
+                    msg = await neuro_q.get()
+                    state: dict[str, float] = msg.payload
+                    action = await selector.select(state)
+                    if action.action_type in ("shell_cmd", "file_write"):
+                        cmd = action.params.get("command", "")
+                        if cmd:
+                            ok, reason = gate.check(cmd)
+                            if ok:
+                                await executor.run(cmd)
+                            else:
+                                log.info("action: gated %s — %s", action.action_type, reason)
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                log.error("action: supervised crash — %s", e, exc_info=True)
+                await asyncio.sleep(60)
+
+    async def _supervised_affect() -> None:
+        while True:
+            try:
+                await asyncio.gather(
+                    _sensor_bridge.run(),
+                    _drive_calibrator.run(),
+                )
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                log.error("affect: supervised crash — %s", e, exc_info=True)
+                await asyncio.sleep(60)
 
     tasks = [
         asyncio.create_task(clock.run(hz=1.0)),
@@ -285,6 +346,12 @@ async def main() -> None:
         asyncio.create_task(_forge_reap_loop()),
         asyncio.create_task(_supervised_consolidation()),
     ]
+    if _HIVE_ENABLED:
+        tasks.append(asyncio.create_task(_supervised_hive()))
+    if _ACTION_ENABLED:
+        tasks.append(asyncio.create_task(_supervised_action()))
+    if _AFFECT_ENABLED:
+        tasks.append(asyncio.create_task(_supervised_affect()))
     log.info("aegis online — connect via the aegis CLI")
     try:
         # Emit startup event — best-effort, never block boot
