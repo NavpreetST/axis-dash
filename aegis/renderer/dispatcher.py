@@ -25,6 +25,7 @@ import time
 from aegis.nexus.bus import BUS
 from aegis.observability import eventlog
 from aegis.renderer import QuotaExhausted, RendererError, fallback, gemini, groq
+from aegis.renderer import nim_nano
 from aegis.renderer._quota import pop_day_rollover
 
 log = logging.getLogger(__name__)
@@ -46,6 +47,14 @@ class Groq:
         return await groq.render(intent)
 
 
+class NimNano:
+    """Thin wrapper around nim_nano.render()."""
+    name = "nim_nano"
+
+    async def render(self, intent: dict) -> str:
+        return await nim_nano.render(intent)
+
+
 class Template:
     """Thin wrapper around fallback.render(). Never raises — chain terminator."""
     name = "template"
@@ -54,7 +63,7 @@ class Template:
         return await fallback.render(intent)
 
 
-CHAIN = [Gemini, Groq, Template]
+CHAIN = [Gemini, NimNano, Groq, Template]
 
 
 async def run() -> None:
@@ -104,6 +113,7 @@ async def _render_with_chain(intent: dict) -> dict:
     t0 = time.perf_counter()
     fallback_fired = False
     last_error_class = None
+    first_failed_adapter: str | None = None
     chain_names = [a.name for a in [cls() for cls in CHAIN]]
     for adapter_cls in CHAIN:
         adapter = adapter_cls()
@@ -112,6 +122,14 @@ async def _render_with_chain(intent: dict) -> dict:
             if text:
                 render_ms = int((time.perf_counter() - t0) * 1000)
                 log.info("dispatcher: rendered via %s", adapter.name)
+                if fallback_fired:
+                    log.warning(
+                        "dispatcher: fallback latency %d ms — %s → %s (error=%s)",
+                        render_ms,
+                        first_failed_adapter or chain_names[0],
+                        adapter.name,
+                        last_error_class,
+                    )
                 result = {
                     "text": text,
                     "provider": adapter.name,
@@ -123,11 +141,10 @@ async def _render_with_chain(intent: dict) -> dict:
                     chain_order=chain_names,
                     rendered_by=adapter.name,
                     fallback_fired=fallback_fired,
-                    fallback_from=chain_names[0] if fallback_fired else None,
+                    fallback_from=first_failed_adapter if fallback_fired else None,
                     fallback_to=adapter.name if fallback_fired else None,
                     error_class=last_error_class,
                 )
-                # Emit event on fallback (Gemini→Groq or Gemini/Groq→Template)
                 if fallback_fired:
                     try:
                         await eventlog.log_event(
@@ -135,9 +152,10 @@ async def _render_with_chain(intent: dict) -> dict:
                             event_type="error",
                             payload={
                                 "where": "dispatcher",
-                                "fallback_from": chain_names[0],
+                                "fallback_from": first_failed_adapter or chain_names[0],
                                 "fallback_to": adapter.name,
                                 "error_class": last_error_class,
+                                "fallback_latency_ms": render_ms,
                             },
                             severity="warn",
                             sensitivity="internal",
@@ -147,11 +165,13 @@ async def _render_with_chain(intent: dict) -> dict:
                 return result
             if not fallback_fired:
                 fallback_fired = True
+                first_failed_adapter = adapter.name
             log.warning("dispatcher: %s returned empty string, advancing", adapter.name)
         except RendererError as e:
             if not fallback_fired:
                 fallback_fired = True
                 last_error_class = type(e).__name__
+                first_failed_adapter = adapter.name
             if isinstance(e, QuotaExhausted):
                 log.warning("dispatcher: %s quota exhausted", adapter.name)
             else:
@@ -161,11 +181,15 @@ async def _render_with_chain(intent: dict) -> dict:
             if not fallback_fired:
                 fallback_fired = True
                 last_error_class = "unexpected"
+                first_failed_adapter = adapter.name
             log.warning("dispatcher: %s unexpected error — %s", adapter.name, e)
             continue
 
     render_ms = int((time.perf_counter() - t0) * 1000)
-    log.error("dispatcher: all adapters exhausted — returning empty string")
+    log.error(
+        "dispatcher: all adapters exhausted (%d ms) — returning empty string",
+        render_ms,
+    )
     try:
         await eventlog.log_event(
             source="aegis",
@@ -174,6 +198,7 @@ async def _render_with_chain(intent: dict) -> dict:
                 "where": "dispatcher",
                 "error": "all_adapters_exhausted",
                 "error_class": last_error_class,
+                "fallback_latency_ms": render_ms,
             },
             severity="critical",
             sensitivity="internal",
@@ -191,7 +216,7 @@ async def _render_with_chain(intent: dict) -> dict:
         chain_order=chain_names,
         rendered_by="template",
         fallback_fired=True,
-        fallback_from=chain_names[0],
+        fallback_from=first_failed_adapter or chain_names[0],
         fallback_to="template",
         error_class=last_error_class,
     )
