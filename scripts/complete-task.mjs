@@ -33,8 +33,14 @@ async function main() {
   query.ilike('title', `%${TASK_TITLE}%`);
 
   const { data: tasks, error: findError } = await query;
-  if (findError) { console.error('Find error:', findError); process.exit(1); }
-  if (!tasks || tasks.length === 0) { console.log('No matching task found.'); process.exit(0); }
+  if (findError) {
+    console.error('Find error:', findError);
+    process.exit(1);
+  }
+  if (!tasks || tasks.length === 0) {
+    console.log('No matching task found.');
+    process.exit(0);
+  }
 
   const task = tasks[0];
   console.log(`Found task #${task.id}`);
@@ -44,7 +50,10 @@ async function main() {
     .update({ status: 'complete', result_summary: 'New Task form added to /todo' })
     .eq('id', task.id);
 
-  if (patchError) { console.error('PATCH error:', patchError); process.exit(1); }
+  if (patchError) {
+    console.error('PATCH error:', patchError);
+    process.exit(1);
+  }
   console.log(`Task #${task.id} marked complete.`);
 }
 

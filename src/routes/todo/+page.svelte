@@ -1,7 +1,14 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { page } from '$app/stores';
-  import { supabase, fetchTasks, fetchPhases, createTask, type Task, type Phase, type NewTaskInput } from '$lib/supabase';
+  import {
+    supabase,
+    fetchTasks,
+    fetchPhases,
+    createTask,
+    type Task,
+    type Phase
+  } from '$lib/supabase';
   import { config } from '$lib/config';
   import { fetchPRGates, type PRGateCheck } from '$lib/api/forgeClient';
 
@@ -76,25 +83,28 @@
     if (!newTitle.trim() || submitting) return;
     submitting = true;
     confirmMsg = null;
-    const result = await createTask({
-      title: newTitle.trim(),
-      description: newDesc.trim() || undefined,
-      phase: newPhase || undefined,
-      priority: newPriority,
-    });
-    submitting = false;
-    if (result) {
-      newTitle = '';
-      newDesc = '';
-      newPhase = '';
-      newPriority = 'medium';
-      showForm = false;
-      confirmMsg = 'Task created successfully.';
-      await loadData();
-      setTimeout(() => (confirmMsg = null), 3000);
-    } else {
-      confirmMsg = 'Failed to create task.';
-      setTimeout(() => (confirmMsg = null), 3000);
+    try {
+      const result = await createTask({
+        title: newTitle.trim(),
+        description: newDesc.trim() || undefined,
+        phase: newPhase || undefined,
+        priority: newPriority
+      });
+      if (result) {
+        newTitle = '';
+        newDesc = '';
+        newPhase = '';
+        newPriority = 'medium';
+        showForm = false;
+        confirmMsg = 'Task created successfully.';
+        await loadData();
+        setTimeout(() => (confirmMsg = null), 3000);
+      } else {
+        confirmMsg = 'Failed to create task.';
+        setTimeout(() => (confirmMsg = null), 3000);
+      }
+    } finally {
+      submitting = false;
     }
   }
 
@@ -267,7 +277,8 @@
 
     {#if confirmMsg}
       <div
-        class="rounded-lg border px-3 py-2 font-mono text-xs {confirmMsg === 'Task created successfully.'
+        class="rounded-lg border px-3 py-2 font-mono text-xs {confirmMsg ===
+        'Task created successfully.'
           ? 'border-signal-green/20 bg-signal-green/5 text-signal-green'
           : 'border-signal-red/20 bg-signal-red/5 text-signal-red'}"
       >
@@ -277,9 +288,7 @@
 
     {#if showForm}
       <div class="rounded-[20px] border border-hairline bg-bg-panel p-4">
-        <h3
-          class="mb-3 font-mono text-xs font-bold tracking-wider text-text-primary uppercase"
-        >
+        <h3 class="mb-3 font-mono text-xs font-bold tracking-wider text-text-primary uppercase">
           New Task
         </h3>
         <div class="flex flex-col gap-3">
