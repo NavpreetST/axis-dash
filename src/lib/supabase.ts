@@ -73,7 +73,7 @@ export async function createTask(input: NewTaskInput): Promise<Task | null> {
       pr_number: null,
       repo: '',
       gates_passed: 0,
-      gates_total: 0,
+      gates_total: 0
     })
     .select()
     .single();
