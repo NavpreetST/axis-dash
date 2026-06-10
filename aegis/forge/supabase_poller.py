@@ -42,7 +42,7 @@ async def run(dispatcher: ForgeDispatcher) -> None:
     """Poll Supabase every 15s for open forge tasks, claim and dispatch."""
     _read_config()
     if not _enabled:
-        log.info("forge supabase poller: skipped (no SUPABASE_URL / SUPABASE_ANON_KEY)")
+        log.info("forge supabase poller: skipped (no SUPABASE_URL / SUPABASE_SERVICE_KEY or SERVICE_ROLE or SUPABASE_ANON_KEY)")
         return
 
     log.info("forge supabase poller: polling %s/%s every %.0fs",

@@ -2,7 +2,7 @@
 
 ## Route
 
-```
+```http
 GET /api/status
 ```
 
@@ -102,7 +102,7 @@ Reuses existing `_daemon_uptime_seconds_for_pid()` from `server.py` — reads `/
 
 ## Box Agent Build Prompt
 
-```
+```markdown
 Target: Helios, File: aegis/web/server.py
 Branch: feat/api-status-endpoint (create from main)
 
@@ -112,7 +112,7 @@ Add a new FastAPI route after /health (around line 757):
 async def api_status(request: Request) -> dict:
     \"\"\"Project state snapshot for "what's going on?" context.\"\"\"
     # Auth
-    if not _token_matches(_extract_bearer(...)):
+    if not _token_matches(_extract_bearer(request.headers.get("authorization"))):
         raise HTTPException(401, detail="auth_required")
 
     # Git last merge

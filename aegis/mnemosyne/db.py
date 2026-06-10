@@ -79,19 +79,21 @@ _NEUTRAL_NEURO = json.dumps({
 })
 
 
-def reap_old_episodes(max_age_days: int = 90) -> int:
+def reap_old_episodes(conn: sqlite3.Connection | None = None, max_age_days: int = 90) -> int:
     """Delete low-salience consolidated episodes older than max_age_days.
 
     Only removes episodes that have been NIM-consolidated (consolidated=1)
     and have salience below threshold.  High-salience episodes are
     preserved regardless of age.
     """
+    if conn is None:
+        conn = CONN
     cutoff = time.time() - max_age_days * 86400
-    cur = CONN.execute(
+    cur = conn.execute(
         "DELETE FROM episodes WHERE ts < ? AND consolidated = 1 AND salience < 0.3",
         (cutoff,),
     )
-    CONN.commit()
+    conn.commit()
     if cur.rowcount:
         log.info("mnemosyne: reaped %d old episodes (>%dd, consolidated, salience<0.3)",
                  cur.rowcount, max_age_days)
