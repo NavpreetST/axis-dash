@@ -124,17 +124,23 @@ jobs:
               console.log('CodeRabbit state:', cr.state);
               return;
             }
+            const { data: pr } = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.issue.number,
+            });
+            const ref = pr.head.sha;
             const { data: checks } = await github.rest.checks.listForRef({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              ref: context.sha,
+              ref,
               check_name: 'CodeRabbit',
             });
             const crCheck = checks.check_runs?.[0];
             if (crCheck?.status === 'completed' && crCheck?.conclusion === 'success') {
               console.log('CodeRabbit review skipped (no code changes) — allow.');
             } else {
-              core.setFailed('No CodeRabbit review — block.');
+              core.setFailed(`No CodeRabbit review — block. (CR status=${crCheck?.status}, conclusion=${crCheck?.conclusion})`);
             }
 
   # ── Gate 4: Drift / Arch Guard (BLOCKING) ──────────────────────────────
