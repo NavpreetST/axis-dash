@@ -39,7 +39,7 @@ async function main() {
   }
   if (!tasks || tasks.length === 0) {
     console.log('No matching task found.');
-    process.exit(0);
+    process.exit(1);
   }
 
   const task = tasks[0];
