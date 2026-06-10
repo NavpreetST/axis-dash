@@ -31,6 +31,7 @@ from aegis.brain import ncp
 from aegis.forge.dispatcher import ForgeDispatcher, run_poller
 from aegis.forge.gate import GateStage
 from aegis.forge.manager import ForgeManager
+from aegis.forge import supabase_poller
 from aegis.hive import text_encoder
 from aegis.mnemosyne import retrieve, write
 from aegis.mnemosyne.db import CONN as _MNEMO_CONN
@@ -362,6 +363,7 @@ async def main() -> None:
         asyncio.create_task(_forge_reap_loop()),
         asyncio.create_task(_supabase_poll_loop()),
         asyncio.create_task(_supervised_consolidation()),
+        asyncio.create_task(supabase_poller.run(_forge_dispatcher)),
     ]
     if _HIVE_ENABLED:
         tasks.append(asyncio.create_task(_supervised_hive()))

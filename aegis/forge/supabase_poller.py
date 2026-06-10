@@ -34,7 +34,7 @@ _enabled: bool = False
 def _read_config() -> None:
     global SUPABASE_URL, SUPABASE_KEY, _enabled
     SUPABASE_URL = os.getenv("SUPABASE_URL", "")
-    SUPABASE_KEY = os.getenv("SUPABASE_ANON_KEY", "")
+    SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_KEY", "") or os.getenv("SERVICE_ROLE", "") or os.getenv("SUPABASE_ANON_KEY", "")
     _enabled = bool(SUPABASE_URL and SUPABASE_KEY)
 
 
