@@ -23,6 +23,7 @@ SELF_HIT_GUARD_S = 2
 RECENCY_BOOST = 0.3
 HALF_LIFE = 1800.0
 
+
 KB_PATH = Path("/opt/aegis/knowledge/helios_knowledge.db")
 
 
