@@ -124,6 +124,7 @@ def delete_expired() -> int:
     return cur.rowcount
 
 
+
 def query_by_subject(subj: str, min_confidence: float = 0.3) -> list[dict]:
     delete_expired()
     cur = CONN.execute(

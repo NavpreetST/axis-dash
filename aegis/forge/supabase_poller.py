@@ -34,7 +34,7 @@ _enabled: bool = False
 def _read_config() -> None:
     global SUPABASE_URL, SUPABASE_KEY, _enabled
     SUPABASE_URL = os.getenv("SUPABASE_URL", "")
-    SUPABASE_KEY = os.getenv("SUPABASE_ANON_KEY", "")
+    SUPABASE_KEY = os.getenv("SUPABASE_SERVICE_KEY", "") or os.getenv("SERVICE_ROLE", "") or os.getenv("SUPABASE_ANON_KEY", "")
     _enabled = bool(SUPABASE_URL and SUPABASE_KEY)
 
 
@@ -42,7 +42,7 @@ async def run(dispatcher: ForgeDispatcher) -> None:
     """Poll Supabase every 15s for open forge tasks, claim and dispatch."""
     _read_config()
     if not _enabled:
-        log.info("forge supabase poller: skipped (no SUPABASE_URL / SUPABASE_ANON_KEY)")
+        log.info("forge supabase poller: skipped (no SUPABASE_URL / SUPABASE_SERVICE_KEY or SERVICE_ROLE or SUPABASE_ANON_KEY)")
         return
 
     log.info("forge supabase poller: polling %s/%s every %.0fs",
@@ -104,7 +104,7 @@ async def _fetch_open_tasks() -> list[dict]:
         "status": "eq.open",
         "phase": "eq.forge",
         "limit": "1",
-        "order": "created_at.asc",
+        "order": "created_at.asc,id.asc",
     }
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:

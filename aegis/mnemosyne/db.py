@@ -42,10 +42,23 @@ def _migrate_consolidated_column(conn: sqlite3.Connection) -> None:
             log.warning("mnemosyne.db: consolidated column migration failed — %s", e)
 
 
+def _migrate_salience_column(conn: sqlite3.Connection) -> None:
+    cur = conn.execute("PRAGMA table_info(episodes)")
+    columns = {row[1] for row in cur.fetchall()}
+    if "salience" not in columns:
+        try:
+            conn.execute("ALTER TABLE episodes ADD COLUMN salience REAL DEFAULT 0.5")
+            conn.commit()
+            log.info("mnemosyne.db: added salience column")
+        except Exception as e:
+            log.warning("mnemosyne.db: salience column migration failed — %s", e)
+
+
 def get_conn() -> sqlite3.Connection:
     conn = sqlite3.connect(DB_PATH, check_same_thread=False)
     conn.executescript(SCHEMA)
     _migrate_consolidated_column(conn)
+    _migrate_salience_column(conn)
     return conn
 
 
@@ -64,6 +77,27 @@ _NEUTRAL_NEURO = json.dumps({
     "reward": 0.0, "novelty": 0.0, "attention": 0.5,
     "patience": 0.5, "threat": 0.0, "trust": 1.0,
 })
+
+
+def reap_old_episodes(conn: sqlite3.Connection | None = None, max_age_days: int = 90) -> int:
+    """Delete low-salience consolidated episodes older than max_age_days.
+
+    Only removes episodes that have been NIM-consolidated (consolidated=1)
+    and have salience below threshold.  High-salience episodes are
+    preserved regardless of age.
+    """
+    if conn is None:
+        conn = CONN
+    cutoff = time.time() - max_age_days * 86400
+    cur = conn.execute(
+        "DELETE FROM episodes WHERE ts < ? AND consolidated = 1 AND salience < 0.3",
+        (cutoff,),
+    )
+    conn.commit()
+    if cur.rowcount:
+        log.info("mnemosyne: reaped %d old episodes (>%dd, consolidated, salience<0.3)",
+                 cur.rowcount, max_age_days)
+    return cur.rowcount
 
 
 def seed_if_empty(conn: sqlite3.Connection) -> None:

@@ -31,6 +31,7 @@ from aegis.brain import ncp
 from aegis.forge.dispatcher import ForgeDispatcher, run_poller
 from aegis.forge.gate import GateStage
 from aegis.forge.manager import ForgeManager
+
 from aegis.hive import text_encoder
 from aegis.mnemosyne import retrieve, write
 from aegis.mnemosyne.db import CONN as _MNEMO_CONN
