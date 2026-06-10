@@ -167,7 +167,7 @@
             <div class="min-w-0 flex-1">
               <div class="flex items-center gap-2">
                 <div class="h-2 w-2 shrink-0 rounded-full {statusColor(phase.status)}"></div>
-                <h2 class="font-mono text-sm font-bold text-text-primary truncate">
+                <h2 class="truncate font-mono text-sm font-bold text-text-primary">
                   {phase.title}
                 </h2>
                 {#if phase.codename}
@@ -176,7 +176,8 @@
                     >{phase.codename}</span
                   >
                 {/if}
-                <span class="shrink-0 font-mono text-[8px] uppercase {statusTextClass(phase.status)}"
+                <span
+                  class="shrink-0 font-mono text-[8px] uppercase {statusTextClass(phase.status)}"
                   >{statusLabel(phase.status)}</span
                 >
               </div>
@@ -228,8 +229,14 @@
               {/if}
             </div>
             <button
-              onclick={(e) => { e.stopPropagation(); toggleCollapse(phase.id); }}
-              onkeydown={(e) => { e.stopPropagation(); if (e.key === 'Enter') toggleCollapse(phase.id); }}
+              onclick={(e) => {
+                e.stopPropagation();
+                toggleCollapse(phase.id);
+              }}
+              onkeydown={(e) => {
+                e.stopPropagation();
+                if (e.key === 'Enter') toggleCollapse(phase.id);
+              }}
               class="flex shrink-0 items-center justify-center rounded p-0.5 transition hover:bg-white/[0.05]"
               aria-label="Toggle phase details"
             >
@@ -241,7 +248,11 @@
                 stroke-width="2"
                 stroke="currentColor"
               >
-                <path stroke-linecap="round" stroke-linejoin="round" d="m19.5 8.25-7.5 7.5-7.5-7.5" />
+                <path
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  d="m19.5 8.25-7.5 7.5-7.5-7.5"
+                />
               </svg>
             </button>
           </div>
