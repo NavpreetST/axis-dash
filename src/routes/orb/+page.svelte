@@ -1,39 +1,29 @@
 <script lang="ts">
+  import { Canvas, T } from '@threlte/core';
+  import CoreOrbShell from '$lib/orb/components/CoreOrbShell.svelte';
+  import ResourceRings from '$lib/orb/components/ResourceRings.svelte';
+  import CameraOrbit from '$lib/orb/components/CameraOrbit.svelte';
   import { createMockOrbState } from '$lib/orb/mockState';
 
   const orbState = createMockOrbState();
+
+  const cpuNorm = orbState.resources.cpu != null ? orbState.resources.cpu / 100 : null;
+  const ramNorm = orbState.resources.ram != null ? orbState.resources.ram / 8_589_934_592 : null;
+  const storageNorm =
+    orbState.resources.storage != null ? orbState.resources.storage / 34_359_738_368 : null;
+  const apiNorm = orbState.resources.apiUsage != null ? orbState.resources.apiUsage / 500 : null;
 </script>
 
 <svelte:head>
-  <title>AXIS - Helios Orb — Phase 0</title>
+  <title>AXIS - Helios Orb</title>
 </svelte:head>
 
-<div class="mx-auto flex h-full w-full max-w-[1100px] flex-col gap-5">
-  <div class="flex flex-col gap-4 rounded-[20px] border border-hairline bg-bg-panel p-6">
-    <div class="flex items-center justify-between border-b border-hairline pb-2">
-      <h2 class="font-mono text-lg font-bold tracking-widest text-text-primary uppercase">
-        Helios Orb — Phase 0
-      </h2>
-      <span class="font-mono text-[10px] text-accent-cyan">stub</span>
-    </div>
+<div class="h-full w-full bg-[#0A0A0F]">
+  <Canvas>
+    <CameraOrbit />
+    <T.AmbientLight intensity={0.6} />
 
-    <p class="font-mono text-xs text-text-muted">
-      State contract scaffolding. No visual renderer yet — see
-      <code class="text-accent-cyan">src/lib/orb/</code> for types and mock data.
-    </p>
-  </div>
-
-  <div class="flex flex-col gap-3 rounded-[20px] border border-hairline bg-bg-panel p-6">
-    <div class="border-b border-hairline pb-2">
-      <h3 class="font-mono text-xs font-semibold tracking-wider text-text-muted uppercase">
-        Debug: Raw Orb State
-      </h3>
-    </div>
-    <pre
-      class="max-h-[600px] scrollbar-thin overflow-y-auto rounded-lg bg-bg-void p-4 font-mono text-[10px] leading-relaxed text-text-primary">{JSON.stringify(
-        orbState,
-        null,
-        2
-      )}</pre>
-  </div>
+    <CoreOrbShell neurobus={orbState.neurobus} />
+    <ResourceRings cpu={cpuNorm} ram={ramNorm} storage={storageNorm} api={apiNorm} />
+  </Canvas>
 </div>
