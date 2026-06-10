@@ -94,7 +94,7 @@ jobs:
               pull_number: context.issue.number,
             });
             const latestCR = [...reviews].reverse().find(
-              r => r.user?.login === 'coderabbitai' && r.commit_id === ref
+              r => r.user?.login === 'coderabbitai[bot]' && r.commit_id === ref
             );
             if (latestCR) {
               if (latestCR.state === 'CHANGES_REQUESTED') {
