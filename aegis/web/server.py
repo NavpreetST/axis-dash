@@ -1641,6 +1641,126 @@ async def api_list_tasks(request: Request) -> dict:
         raise HTTPException(status_code=502, detail=f"supabase_unreachable:{e}")
 
 
+# ---- P1 bridge: /api/system (DRIFT.md state in Supabase) -------------------
+# Auth: Bearer HELIOS_TOKEN.  These proxy to system_state table.
+# The system_state table stores key/value pairs (phase, daemon_pid, uptime, etc.)
+# and is the agent-queryable replacement for reading DRIFT.md §4.
+
+
+@app.get("/api/system")
+async def api_get_system(request: Request) -> dict:
+    """Return all system_state rows as {key: value, ...}."""
+    if not _check_token(request):
+        raise HTTPException(status_code=401, detail="auth_required")
+    if not _SUPABASE_REST:
+        raise HTTPException(status_code=503, detail="supabase_not_configured")
+    try:
+        with httpx.Client(timeout=10.0) as client:
+            r = client.get(
+                f"{_SUPABASE_REST}/system_state",
+                headers=_supabase_headers(prefer=""),
+            )
+        if r.status_code != 200:
+            raise HTTPException(status_code=502, detail=f"supabase_error:{r.status_code}")
+        rows = r.json()
+        if not isinstance(rows, list):
+            return {"system": {}}
+        return {"system": {row["key"]: row["value"] for row in rows if "key" in row and "value" in row}}
+    except httpx.RequestError as e:
+        raise HTTPException(status_code=502, detail=f"supabase_unreachable:{e}")
+
+
+@app.patch("/api/system")
+async def api_upsert_system(request: Request) -> dict:
+    """Upsert a key/value pair.  Body: {key, value}."""
+    if not _check_token(request):
+        raise HTTPException(status_code=401, detail="auth_required")
+    if not _SUPABASE_REST:
+        raise HTTPException(status_code=503, detail="supabase_not_configured")
+    body = await request.json()
+    key = body.get("key") if isinstance(body, dict) else None
+    value = body.get("value") if isinstance(body, dict) else None
+    if not isinstance(key, str) or not key.strip():
+        raise HTTPException(status_code=400, detail="key_required")
+    if not isinstance(value, str):
+        value = json.dumps(value) if value is not None else ""
+    try:
+        with httpx.Client(timeout=10.0) as client:
+            r = client.post(
+                f"{_SUPABASE_REST}/system_state",
+                headers=_supabase_headers(),
+                json={"key": key.strip(), "value": value},
+                params={"on_conflict": "key"},
+            )
+        if r.status_code not in (200, 201):
+            raise HTTPException(status_code=502, detail=f"supabase_error:{r.status_code}")
+        return {"status": "upserted", "key": key.strip()}
+    except httpx.RequestError as e:
+        raise HTTPException(status_code=502, detail=f"supabase_unreachable:{e}")
+
+
+# ---- P1 bridge: /api/exit-criteria (DRIFT.md §1 criteria) ------------------
+
+
+@app.get("/api/exit-criteria")
+async def api_list_exit_criteria(request: Request) -> dict:
+    """List exit criteria, filterable by ?phase=."""
+    if not _check_token(request):
+        raise HTTPException(status_code=401, detail="auth_required")
+    if not _SUPABASE_REST:
+        raise HTTPException(status_code=503, detail="supabase_not_configured")
+    params: dict[str, str] = {"select": "*", "order": "id.asc"}
+    phase = request.query_params.get("phase")
+    if phase:
+        params["phase"] = f"eq.{phase}"
+    try:
+        with httpx.Client(timeout=10.0) as client:
+            r = client.get(
+                f"{_SUPABASE_REST}/exit_criteria",
+                headers=_supabase_headers(prefer=""),
+                params=params,
+            )
+        if r.status_code != 200:
+            raise HTTPException(status_code=502, detail=f"supabase_error:{r.status_code}")
+        return {"exit_criteria": r.json()}
+    except httpx.RequestError as e:
+        raise HTTPException(status_code=502, detail=f"supabase_unreachable:{e}")
+
+
+# ---- P1 bridge: /api/prs (DRIFT.md §5 merged PRs) --------------------------
+
+
+@app.get("/api/prs")
+async def api_list_prs(request: Request) -> dict:
+    """List merged PRs, filterable by ?repo=, ?limit=."""
+    if not _check_token(request):
+        raise HTTPException(status_code=401, detail="auth_required")
+    if not _SUPABASE_REST:
+        raise HTTPException(status_code=503, detail="supabase_not_configured")
+    params: dict[str, str] = {"select": "*", "order": "merged_at.desc"}
+    repo = request.query_params.get("repo")
+    if repo:
+        params["repo"] = f"eq.{repo}"
+    limit = request.query_params.get("limit")
+    if limit:
+        try:
+            params["limit"] = str(min(int(limit), 100))
+        except (ValueError, TypeError):
+            pass
+    try:
+        with httpx.Client(timeout=10.0) as client:
+            r = client.get(
+                f"{_SUPABASE_REST}/merged_prs",
+                headers=_supabase_headers(prefer=""),
+                params=params,
+            )
+        if r.status_code != 200:
+            raise HTTPException(status_code=502, detail=f"supabase_error:{r.status_code}")
+        return {"prs": r.json()}
+    except httpx.RequestError as e:
+        raise HTTPException(status_code=502, detail=f"supabase_unreachable:{e}")
+
+
 if STATIC_DIR.exists():
     app.mount("/", StaticFiles(directory=str(STATIC_DIR), html=True), name="static")
 else:
