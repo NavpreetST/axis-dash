@@ -366,14 +366,38 @@
 
         <!-- DOCKED AEGIS CHAT PANEL (Hidden on tablet/mobile unless toggled active) -->
         <aside
-          class="relative z-10 flex w-full shrink-0 flex-col overflow-hidden border-t border-hairline bg-bg-panel/10 sm:w-72 sm:border-t-0 sm:border-l
-          {activeTab === 'chat' ? 'flex' : 'hidden lg:flex'}"
+          class="flex shrink-0 flex-col overflow-hidden border-t border-hairline bg-bg-panel/10 transition-all duration-300 ease-out
+            max-sm:fixed max-sm:inset-0 max-sm:z-50
+            {activeTab === 'chat' ? 'max-sm:translate-y-0' : 'max-sm:translate-y-full'}
+            sm:relative sm:inset-auto sm:z-10 sm:w-72 sm:translate-y-0 sm:border-t-0 sm:border-l
+            {activeTab === 'chat' ? 'flex' : 'hidden lg:flex'}"
         >
           <!-- Chat Header -->
           <div
             class="flex h-12 shrink-0 items-center justify-between border-b border-hairline px-4 select-none"
           >
             <div class="flex items-center gap-2">
+              <!-- Mobile close button -->
+              <button
+                onclick={() => (activeTab = 'dashboard')}
+                class="flex cursor-pointer items-center justify-center rounded-lg p-1 text-text-muted transition hover:bg-white/5 hover:text-text-primary sm:hidden"
+                aria-label="Close chat"
+              >
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke-width="2"
+                  stroke="currentColor"
+                  class="h-4 w-4"
+                >
+                  <path
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    d="m4.5 15.75 7.5-7.5 7.5 7.5"
+                  />
+                </svg>
+              </button>
               <div class="h-2 w-2 animate-pulse rounded-full bg-accent-violet"></div>
               <span class="font-sans text-xs font-semibold tracking-wider text-text-muted uppercase"
                 >Aegis Terminal</span

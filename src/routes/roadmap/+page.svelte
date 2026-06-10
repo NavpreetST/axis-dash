@@ -134,7 +134,7 @@
       <p class="font-mono text-xs text-text-muted">No phases found in Supabase.</p>
     </div>
   {:else}
-    <div class="flex items-center gap-3">
+    <div class="flex flex-wrap items-center gap-3">
       <h1 class="font-mono text-lg font-bold tracking-widest text-text-primary uppercase">
         Roadmap
       </h1>
@@ -153,7 +153,7 @@
       {/if}
     </div>
 
-    <div class="flex flex-1 scrollbar-thin flex-col gap-2 overflow-y-auto">
+    <div class="grid flex-1 grid-cols-1 gap-3 overflow-y-auto md:grid-cols-2">
       {#each phases as phase (phase.id)}
         <div
           class="cursor-pointer rounded-xl border bg-bg-panel p-3 transition hover:bg-white/[0.02]
@@ -166,7 +166,10 @@
           <div class="flex items-center justify-between gap-2">
             <div class="min-w-0 flex-1">
               <div class="flex items-center gap-2">
-                <div class="h-2 w-2 shrink-0 rounded-full {statusColor(phase.status)}"></div>
+                <div
+                  class="h-2 w-2 shrink-0 rounded-full {statusColor(phase.status)}"
+                  title={statusLabel(phase.status)}
+                ></div>
                 <h2 class="truncate font-mono text-sm font-bold text-text-primary">
                   {phase.title}
                 </h2>

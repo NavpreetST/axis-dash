@@ -152,8 +152,8 @@
       <p class="font-mono text-xs text-text-muted">Loading tasks…</p>
     </div>
   {:else}
-    <div class="flex items-center justify-between">
-      <div class="flex items-center gap-3">
+    <div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+      <div class="flex flex-wrap items-center gap-3">
         <h1 class="font-mono text-lg font-bold tracking-widest text-text-primary uppercase">
           Tasks
         </h1>
@@ -169,7 +169,7 @@
           >
         {/if}
       </div>
-      <div class="flex items-center gap-2 font-mono text-[10px]">
+      <div class="flex flex-wrap items-center gap-2 font-mono text-[10px]">
         <span
           class="rounded border border-signal-green/25 bg-signal-green/10 px-2 py-1 text-signal-green"
           >{counts('complete')} done</span
@@ -186,7 +186,7 @@
     </div>
 
     <div
-      class="sticky top-0 z-10 flex flex-wrap items-center gap-3 rounded-[20px] border border-hairline bg-bg-panel p-3"
+      class="sticky top-0 z-10 flex flex-wrap items-center gap-2 rounded-[20px] border border-hairline bg-bg-panel p-3 sm:gap-3"
     >
       <span class="font-mono text-[10px] font-semibold tracking-wider text-text-muted uppercase"
         >Filter</span
