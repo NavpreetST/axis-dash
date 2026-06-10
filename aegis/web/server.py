@@ -1626,7 +1626,7 @@ async def api_list_tasks(request: Request) -> dict:
     for key in ("phase", "status", "owner"):
         val = request.query_params.get(key)
         if val:
-            params[key] = f"eq.{val}"
+            params[key] = val
     try:
         with httpx.Client(timeout=10.0) as client:
             r = client.get(
