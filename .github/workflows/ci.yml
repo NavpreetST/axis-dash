@@ -111,18 +111,20 @@ jobs:
       - uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea # v7.0.1 pinned
         with:
           script: |
-            const reviews = await github.paginate(github.rest.pulls.listReviews, {
-              owner: context.repo.owner, repo: context.repo.repo, pull_number: context.issue.number,
-            });
-            const cr = [...reviews].reverse().find(r => r.user?.login === 'coderabbitai[bot]');
-            if (cr) {
-              if (cr.state === 'CHANGES_REQUESTED') {
-                core.setFailed('CodeRabbit has CHANGES_REQUESTED — fix before merge.');
-              }
-              console.log('CodeRabbit state:', cr.state);
-            } else {
-              console.log('::notice::No CodeRabbit review yet — advisory only.');
-            }
+            const { data: reviews } = await github.paginate(
+            github.rest.pulls.listReviews,
+            { owner: context.repo.owner, repo: context.repo.repo, pull_number: context.issue.number }
+          );
+          const cr = [...reviews].reverse().find(r => r.user?.login === 'coderabbitai[bot]');
+          if (!cr) {
+            core.setFailed('No CodeRabbit review found — block until review completes.');
+            return;
+          }
+          if (cr.state !== 'APPROVED') {
+            core.setFailed(`CodeRabbit state is "${cr.state}" — every comment must be reviewed before merge.`);
+            return;
+          }
+          console.log('CodeRabbit:', cr.state, '✅');
 
   # ── Gate 4: Drift / Arch Guard (BLOCKING) ──────────────────────────────
   drift-guard:
