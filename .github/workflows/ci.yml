@@ -86,10 +86,14 @@ jobs:
             });
             const crReviews = reviews.filter(r => r.user?.login === 'coderabbitai');
             const latestCR = crReviews.at(-1);
-            if (latestCR?.state === 'CHANGES_REQUESTED') {
+            if (!latestCR) {
+              core.setFailed('CodeRabbit review is still pending — wait for approval before merge.');
+            } else if (latestCR.state === 'CHANGES_REQUESTED') {
               core.setFailed(`CodeRabbit has CHANGES_REQUESTED — address comments before merge.`);
-            } else if (latestCR?.state === 'APPROVED') {
+            } else if (latestCR.state === 'APPROVED') {
               console.log('CodeRabbit review approved.');
+            } else {
+              core.setFailed(`Latest CodeRabbit review is ${latestCR.state} — approval is required before merge.`);
             }
 
   # ── Gate 4: Drift / Arch Guard (BLOCKING) ──────────────────────────────
