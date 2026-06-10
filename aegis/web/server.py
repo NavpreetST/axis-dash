@@ -1064,7 +1064,7 @@ async def forge_heal(task_id: str, request: Request) -> dict:
             fix_prompt = (
                 f"Fix the following CodeRabbit findings for the original task.\n\n"
                 f"ORIGINAL TASK:\n{spec}\n\n"
-                f"CODERRABBIT FINDINGS:\n{comment_texts}\n\n"
+                f"CODERABBIT FINDINGS:\n{comment_texts}\n\n"
                 f"Apply the fixes to the codebase. "
                 f"Do NOT change any workflow files or CI configuration. "
                 f"Make minimal, surgical changes."
@@ -1151,13 +1151,14 @@ async def forge_heal(task_id: str, request: Request) -> dict:
                     await fetch_proc.wait()
 
                 # Create/checkout branch and force-push
-                await asyncio.create_subprocess_exec(
+                co_proc = await asyncio.create_subprocess_exec(
                     "git", "-C", workdir,
                     "checkout", "-B", branch,
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE,
                     env=push_env,
                 )
+                await co_proc.wait()
 
                 push_proc = await asyncio.create_subprocess_exec(
                     "git", "-C", workdir,
