@@ -123,7 +123,6 @@ jobs:
             } else {
               console.log('::notice::No CodeRabbit review yet — advisory only.');
             }
-            }
 
   # ── Gate 4: Drift / Arch Guard (BLOCKING) ──────────────────────────────
   drift-guard:
