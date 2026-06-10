@@ -28,7 +28,7 @@ if _env.exists():
 
 from aegis import consolidation
 from aegis.brain import ncp
-from aegis.forge.dispatcher import ForgeDispatcher
+from aegis.forge.dispatcher import ForgeDispatcher, run_poller
 from aegis.forge.gate import GateStage
 from aegis.forge.manager import ForgeManager
 from aegis.hive import text_encoder
@@ -257,6 +257,11 @@ async def main() -> None:
                 except Exception as e:
                     log.error("forge: reap error: %s", e)
 
+    async def _supabase_poll_loop() -> None:
+        """Supabase forge task poller — safe to skip when unconfigured."""
+        if _forge_dispatcher:
+            await run_poller(_forge_dispatcher)
+
     async def _supervised_consolidation() -> None:
         """Supervised wrapper for consolidation.run()."""
         while True:
@@ -355,6 +360,7 @@ async def main() -> None:
         asyncio.create_task(retrieve.run()),
         asyncio.create_task(serve_unix_socket()),
         asyncio.create_task(_forge_reap_loop()),
+        asyncio.create_task(_supabase_poll_loop()),
         asyncio.create_task(_supervised_consolidation()),
     ]
     if _HIVE_ENABLED:
