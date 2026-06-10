@@ -108,7 +108,7 @@
     }
   }
 
-  function applyTemplate(kind: string) {
+  function applyTemplate(kind: 'tests' | 'lint' | 'refactor' | 'custom') {
     if (kind === 'tests') {
       newTitle = 'Write unit tests for <file>';
       newDesc =
@@ -311,7 +311,7 @@
           New Task
         </h3>
         {#if config.useLiveBridge}
-          <div class="flex flex-wrap gap-1.5">
+          <div class="mb-3 flex flex-wrap gap-1.5">
             <button
               type="button"
               onclick={() => applyTemplate('tests')}
