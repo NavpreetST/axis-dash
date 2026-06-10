@@ -132,6 +132,5 @@ jobs:
     name: 'Gate 5 · Merge Ready'
     runs-on: ubuntu-latest
     needs: [lint, tests, coderabbit-check, drift-guard]
-    if: success()
     steps:
       - run: echo "✅ All gates passed — ready for Navpreet's merge."
