@@ -111,10 +111,13 @@ jobs:
       - uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea # v7.0.1 pinned
         with:
           script: |
+            // Debug: dump available context info
+            const sha = context.sha;
+            const prNum = context.issue.number;
+            console.log(`PR=${prNum}, sha=${sha}`);
+            // 1. Check reviews
             const reviews = await github.paginate(github.rest.pulls.listReviews, {
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              pull_number: context.issue.number,
+              owner: context.repo.owner, repo: context.repo.repo, pull_number: prNum,
             });
             const cr = [...reviews].reverse().find(r => r.user?.login === 'coderabbitai');
             if (cr) {
@@ -124,45 +127,47 @@ jobs:
               console.log('CodeRabbit state:', cr.state);
               return;
             }
-            const { data: checks } = await github.rest.checks.listForRef({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              ref: context.sha,
-            });
-            const crCheck = checks.check_runs?.find(
-              r => r.name === 'CodeRabbit'
-            );
+            // 2. Check check runs via checks API for all possible refs
+            const refs = [sha, 'refs/pull/' + prNum + '/merge', 'refs/pull/' + prNum + '/head'];
+            let crCheck = null;
+            for (const ref of refs) {
+              try {
+                const { data: c } = await github.rest.checks.listForRef({
+                  owner: context.repo.owner, repo: context.repo.repo, ref,
+                });
+                console.log(`checks at ${ref}: ${c.check_runs?.length ?? 0} runs`);
+                for (const run of (c.check_runs ?? [])) {
+                  console.log(`  run: name="${run.name}", app="${run.app?.slug}", status=${run.status}, conclusion=${run.conclusion}`);
+                }
+                const found = c.check_runs?.find(x => x.name === 'CodeRabbit' || x.app?.slug === 'coderabbitai');
+                if (found) { crCheck = found; break; }
+              } catch (e) {
+                console.log(`checks(${ref}) error: ${e.message}`);
+              }
+            }
             if (crCheck) {
-              console.log(`CR check: name=${crCheck.name}, status=${crCheck.status}, conclusion=${crCheck.conclusion}`);
+              console.log(`CR found: status=${crCheck.status}, conclusion=${crCheck.conclusion}`);
               if (crCheck.status === 'completed' && crCheck.conclusion === 'success') {
-                console.log('CodeRabbit review skipped (no code changes) — allow.');
+                console.log('CodeRabbit check passed — allow.');
               } else {
                 core.setFailed(`CodeRabbit check not passed: status=${crCheck.status}, conclusion=${crCheck.conclusion}`);
               }
+              return;
+            }
+            // 3. Try combined status
+            for (const ref of [sha, 'refs/pull/' + prNum + '/merge']) {
+              try {
+                const { data: combined } = await github.rest.repos.getCombinedStatusForRef({
+                  owner: context.repo.owner, repo: context.repo.repo, ref,
+                });
+                const s = combined.statuses.find(x => x.context === 'CodeRabbit');
+                if (s) { console.log(`CR status at ${ref}: state=${s.state}`); crCheck = s; break; }
+              } catch (e) { /* skip */ }
+            }
+            if (crCheck?.state === 'success') {
+              console.log('CodeRabbit status passed — allow.');
             } else {
-              // Try combined status API
-              const refs = [context.sha, 'refs/pull/' + context.issue.number + '/merge'];
-              let crFound = null;
-              for (const ref of refs) {
-                try {
-                  const { data: combined } = await github.rest.repos.getCombinedStatusForRef({
-                    owner: context.repo.owner, repo: context.repo.repo, ref,
-                  });
-                  const s = combined.statuses.find(x => x.context === 'CodeRabbit');
-                  if (s) {
-                    console.log(`CR status at ${ref}: state=${s.state}, desc=${s.description}`);
-                    crFound = s;
-                    break;
-                  }
-                } catch (e) {
-                  console.log(`statuses(${ref}) failed: ${e.message}`);
-                }
-              }
-              if (crFound?.state === 'success') {
-                console.log('CodeRabbit check passed (skipped or approved) — allow.');
-              } else {
-                core.setFailed('No CodeRabbit review — block (checked statuses and check runs).');
-              }
+              core.setFailed('No CodeRabbit review found via any API.');
             }
 
   # ── Gate 4: Drift / Arch Guard (BLOCKING) ──────────────────────────────
