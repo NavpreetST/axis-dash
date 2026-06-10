@@ -140,22 +140,28 @@ jobs:
                 core.setFailed(`CodeRabbit check not passed: status=${crCheck.status}, conclusion=${crCheck.conclusion}`);
               }
             } else {
-              // Try the merge ref (PR head ref)
-              const { data: allChecks } = await github.rest.checks.listForRef({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                ref: 'refs/pull/' + context.issue.number + '/merge',
-              });
-              const crFound = allChecks.check_runs?.find(x => x.name === 'CodeRabbit');
-              if (crFound) {
-                console.log(`CR check on merge ref: status=${crFound.status}, conclusion=${crFound.conclusion}`);
-                if (crFound.status === 'completed' && crFound.conclusion === 'success') {
-                  console.log('CodeRabbit review skipped — allow.');
-                } else {
-                  core.setFailed(`CodeRabbit check not passed: status=${crFound.status}, conclusion=${crFound.conclusion}`);
+              // Try combined status API
+              const refs = [context.sha, 'refs/pull/' + context.issue.number + '/merge'];
+              let crFound = null;
+              for (const ref of refs) {
+                try {
+                  const { data: combined } = await github.rest.repos.getCombinedStatusForRef({
+                    owner: context.repo.owner, repo: context.repo.repo, ref,
+                  });
+                  const s = combined.statuses.find(x => x.context === 'CodeRabbit');
+                  if (s) {
+                    console.log(`CR status at ${ref}: state=${s.state}, desc=${s.description}`);
+                    crFound = s;
+                    break;
+                  }
+                } catch (e) {
+                  console.log(`statuses(${ref}) failed: ${e.message}`);
                 }
+              }
+              if (crFound?.state === 'success') {
+                console.log('CodeRabbit check passed (skipped or approved) — allow.');
               } else {
-                core.setFailed('No CodeRabbit review — block.');
+                core.setFailed('No CodeRabbit review — block (checked statuses and check runs).');
               }
             }
 
