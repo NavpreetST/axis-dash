@@ -1519,13 +1519,16 @@ async def api_gates(request: Request, pr_number: int = 0) -> list[dict]:
 _SUPABASE_REST = f"{_SUPABASE_URL}/rest/v1" if _SUPABASE_URL else None
 
 
-def _supabase_headers() -> dict[str, str]:
-    return {
+def _supabase_headers(*, prefer: str = "return=representation") -> dict[str, str]:
+    h = {
         "apikey": _SUPABASE_ANON_KEY or "",
         "Authorization": f"Bearer {_SUPABASE_ANON_KEY or ''}",
         "Accept": "application/json",
         "Content-Type": "application/json",
     }
+    if prefer:
+        h["Prefer"] = prefer
+    return h
 
 
 @app.post("/api/tasks")
@@ -1559,14 +1562,15 @@ async def api_create_task(request: Request) -> dict:
                 f"{_SUPABASE_REST}/tasks",
                 headers=_supabase_headers(),
                 json=payload,
-                params={"select": "*"},
             )
         if r.status_code not in (200, 201):
             raise HTTPException(status_code=502, detail=f"supabase_error:{r.status_code}")
-        created = r.json()
-        if isinstance(created, list):
-            created = created[0]
-        return {"task": created}
+        if r.text:
+            created = r.json()
+            if isinstance(created, list):
+                created = created[0]
+            return {"task": created}
+        return {"task_id": None, "status": "created"}
     except httpx.RequestError as e:
         raise HTTPException(status_code=502, detail=f"supabase_unreachable:{e}")
 
@@ -1594,11 +1598,11 @@ async def api_update_task(task_id: str, request: Request) -> dict:
                 f"{_SUPABASE_REST}/tasks",
                 headers=_supabase_headers(),
                 json=payload,
-                params={"id": f"eq.{task_id}", "select": "*"},
+                params={"id": f"eq.{task_id}"},
             )
         if r.status_code not in (200, 204):
             raise HTTPException(status_code=502, detail=f"supabase_error:{r.status_code}")
-        if r.status_code == 200 and r.text:
+        if r.text:
             updated = r.json()
             if isinstance(updated, list):
                 updated = updated[0] if updated else None
