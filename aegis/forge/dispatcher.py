@@ -32,6 +32,7 @@ from pathlib import Path
  
 from aegis.forge.gate import GateResult
 from aegis.forge.manager import FORGE_BASE, ForgeManager
+from aegis.forge.supabase_poller import run as run_poller  # noqa: F401 — re-exported for main.py
  
 log = logging.getLogger(__name__)
  
