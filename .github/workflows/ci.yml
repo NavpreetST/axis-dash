@@ -107,16 +107,18 @@ jobs:
     runs-on: ubuntu-latest
     if: always()
     steps:
-      - uses: actions/github-script@v7
+      - uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea # v7.0.1 pinned
         with:
           script: |
-            const { data: reviews } = await github.rest.pulls.listReviews({
+            const reviews = await github.paginate(github.rest.pulls.listReviews, {
               owner: context.repo.owner,
               repo: context.repo.repo,
               pull_number: context.issue.number,
             });
-            const cr = reviews.find(r => r.user?.login === 'coderabbitai');
-            if (cr && cr.state === 'CHANGES_REQUESTED') {
+            const cr = [...reviews].reverse().find(r => r.user?.login === 'coderabbitai');
+            if (!cr) {
+              core.setFailed('No CodeRabbit review — block.');
+            } else if (cr.state === 'CHANGES_REQUESTED') {
               core.setFailed('CodeRabbit has CHANGES_REQUESTED — fix before merge.');
             }
             console.log('CodeRabbit state:', cr?.state ?? 'no review');
@@ -158,7 +160,6 @@ jobs:
     name: 'Gate 5 · Merge Ready'
     runs-on: ubuntu-latest
     needs: [lint, tests, coderabbit-check, drift-guard]
-    if: success()
     steps:
       - run: echo "✅ All gates passed — ready for merge."
 
