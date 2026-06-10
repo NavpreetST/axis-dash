@@ -140,18 +140,28 @@ jobs:
                 core.setFailed(`CodeRabbit check not passed: status=${crCheck.status}, conclusion=${crCheck.conclusion}`);
               }
             } else {
-              // Fallback: check commit statuses
-              const { data: combined } = await github.rest.repos.getCombinedStatusForRef({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                ref: context.sha,
-              });
-              const crStatus = combined.statuses.find(s => s.context === 'CodeRabbit');
-              if (crStatus?.state === 'success') {
-                console.log('CodeRabbit status passed (skipped or approved) — allow.');
-              } else {
-                core.setFailed(`No CodeRabbit review — block. (checks=${checks.check_runs?.length ?? 0}, status=${crStatus?.state ?? 'none'})`);
+              // Try all possible refs to find CodeRabbit check run
+              const refs = [context.sha, pr.data.head.sha, 'refs/pull/' + context.issue.number + '/head'];
+              for (const r of refs) {
+                try {
+                  const { data: c } = await github.rest.checks.listForRef({
+                    owner: context.repo.owner, repo: context.repo.repo, ref: r,
+                  });
+                  const found = c.check_runs?.find(x => x.name === 'CodeRabbit');
+                  if (found) {
+                    console.log(`CR check found at ref=${r}: status=${found.status}, conclusion=${found.conclusion}`);
+                    if (found.status === 'completed' && found.conclusion === 'success') {
+                      console.log('CodeRabbit review skipped — allow.');
+                      return;
+                    }
+                    core.setFailed(`CodeRabbit check: status=${found.status}, conclusion=${found.conclusion}`);
+                    return;
+                  }
+                } catch (e) {
+                  console.log(`checks.listForRef(${r}) failed: ${e.message}`);
+                }
               }
+              core.setFailed('No CodeRabbit review — block (none of the refs matched).');
             }
 
   # ── Gate 4: Drift / Arch Guard (BLOCKING) ──────────────────────────────
