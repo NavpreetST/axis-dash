@@ -10,7 +10,9 @@ originated in Supabase (phase='forge'), never touches socket-submitted tasks.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
+import os
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
@@ -31,7 +33,6 @@ _enabled: bool = False
 
 def _read_config() -> None:
     global SUPABASE_URL, SUPABASE_KEY, _enabled
-    import os
     SUPABASE_URL = os.getenv("SUPABASE_URL", "")
     SUPABASE_KEY = os.getenv("SUPABASE_ANON_KEY", "")
     _enabled = bool(SUPABASE_URL and SUPABASE_KEY)
@@ -67,7 +68,9 @@ async def _poll_once(dispatcher: ForgeDispatcher) -> None:
     task_id = task.get("id")
     spec = task.get("spec") or task.get("description", "")
     if not task_id or not spec:
-        log.warning("forge supabase poller: open task missing id or spec — %s", task_id)
+        log.warning(
+            "forge supabase poller: open task %s missing id or spec", task_id
+        )
         return
 
     if not await _claim_task(task_id):
@@ -80,12 +83,16 @@ async def _poll_once(dispatcher: ForgeDispatcher) -> None:
         forge_task = await dispatcher.submit(spec)
         forge_task = await dispatcher.execute(forge_task.id)
 
-        result_status = "complete" if forge_task.status == TaskStatus.COMPLETED else "failed"
+        result_status = (
+            "complete" if forge_task.status == TaskStatus.COMPLETED else "failed"
+        )
         summary = json_summary(forge_task)
         await _write_result(task_id, result_status, summary)
         log.info("forge supabase poller: task %s -> %s", task_id, result_status)
     except Exception as e:
-        log.error("forge supabase poller: dispatch error for task %s — %s", task_id, e)
+        log.error(
+            "forge supabase poller: dispatch error for task %s — %s", task_id, e
+        )
         await _write_result(task_id, "failed", {"error": str(e)})
 
 
@@ -110,10 +117,7 @@ async def _fetch_open_tasks() -> list[dict]:
 
 
 async def _claim_task(task_id: str) -> bool:
-    """Claim task: UPDATE tasks SET status='in_progress', owner='forge' WHERE id=? AND status='open'.
-
-    Returns True if a row was actually updated.
-    """
+    """Claim an open task by id, returns True if row was updated."""
     url = f"{SUPABASE_URL}/rest/v1/{TABLE_NAME}"
     headers = _headers()
     headers["Prefer"] = "return=representation"
@@ -145,7 +149,6 @@ async def _write_result(task_id: str, status: str, summary: dict) -> None:
     url = f"{SUPABASE_URL}/rest/v1/{TABLE_NAME}"
     headers = _headers()
     headers["Prefer"] = "return=minimal"
-    import json
     body = {
         "status": status,
         "result_summary": json.dumps(summary) if isinstance(summary, dict) else summary,
