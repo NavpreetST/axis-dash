@@ -321,10 +321,9 @@
               <span class="font-mono text-[10px] text-text-primary">
                 {$forgeDiffData.diffs.length} file{$forgeDiffData.diffs.length !== 1 ? 's' : ''} changed
               </span>
-              {#if $forgeDetail.pr_number}
-                {@const repo = $forgeDetail.repo || 'NavpreetST/axis-dash'}
+              {#if $forgeDetail.pr_number && $forgeDetail.repo}
                 <a
-                  href="https://github.com/{repo}/pull/{$forgeDetail.pr_number}"
+                  href="https://github.com/{$forgeDetail.repo}/pull/{$forgeDetail.pr_number}"
                   target="_blank"
                   rel="noopener noreferrer"
                   class="font-mono text-[9px] text-accent-cyan transition hover:text-accent-cyan/70"
@@ -339,6 +338,7 @@
                   <button
                     type="button"
                     onclick={() => toggleFile(file.path)}
+                    aria-expanded={!!expandedFiles[file.path]}
                     class="flex w-full cursor-pointer items-center justify-between px-2 py-1.5 transition hover:bg-white/[0.02]"
                   >
                     <span class="min-w-0 truncate font-mono text-[10px] text-text-primary"
