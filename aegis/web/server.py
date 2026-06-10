@@ -1510,6 +1510,133 @@ async def api_gates(request: Request, pr_number: int = 0) -> list[dict]:
         return []
 
 
+# ---- P1 bridge: /api/tasks (CRUD proxy to Supabase) -----------------------
+# Auth: Bearer HELIOS_TOKEN (same as other bridge endpoints).
+#
+# These endpoints keep the Supabase API key server-side instead of exposing
+# it in PUBLIC_ env vars on the AXIS frontend.
+
+_SUPABASE_REST = f"{_SUPABASE_URL}/rest/v1" if _SUPABASE_URL else None
+
+
+def _supabase_headers() -> dict[str, str]:
+    return {
+        "apikey": _SUPABASE_ANON_KEY or "",
+        "Authorization": f"Bearer {_SUPABASE_ANON_KEY or ''}",
+        "Accept": "application/json",
+        "Content-Type": "application/json",
+    }
+
+
+@app.post("/api/tasks")
+async def api_create_task(request: Request) -> dict:
+    """Create a task. Requires auth token.
+
+    Body: {title, description?, phase?, priority?}
+    """
+    if not _check_token(request):
+        raise HTTPException(status_code=401, detail="auth_required")
+    if not _SUPABASE_REST:
+        raise HTTPException(status_code=503, detail="supabase_not_configured")
+    body = await request.json()
+    title = body.get("title") if isinstance(body, dict) else None
+    if not isinstance(title, str) or len(title.strip()) < 1:
+        raise HTTPException(status_code=400, detail="title_required")
+    payload: dict[str, Any] = {"title": title.strip()}
+    desc = body.get("description")
+    if isinstance(desc, str) and desc.strip():
+        payload["description"] = desc.strip()
+    phase = body.get("phase")
+    if isinstance(phase, str) and phase.strip():
+        payload["phase"] = phase.strip()
+    priority = body.get("priority")
+    if isinstance(priority, str) and priority.strip():
+        payload["priority"] = priority.strip()
+    payload["status"] = "open"
+    try:
+        with httpx.Client(timeout=10.0) as client:
+            r = client.post(
+                f"{_SUPABASE_REST}/tasks",
+                headers=_supabase_headers(),
+                json=payload,
+                params={"select": "*"},
+            )
+        if r.status_code not in (200, 201):
+            raise HTTPException(status_code=502, detail=f"supabase_error:{r.status_code}")
+        created = r.json()
+        if isinstance(created, list):
+            created = created[0]
+        return {"task": created}
+    except httpx.RequestError as e:
+        raise HTTPException(status_code=502, detail=f"supabase_unreachable:{e}")
+
+
+@app.patch("/api/tasks/{task_id}")
+async def api_update_task(task_id: str, request: Request) -> dict:
+    """Update a task. Requires auth token.
+
+    Body: {status?, result_summary?, phase?, priority?}
+    """
+    if not _check_token(request):
+        raise HTTPException(status_code=401, detail="auth_required")
+    if not _SUPABASE_REST:
+        raise HTTPException(status_code=503, detail="supabase_not_configured")
+    body = await request.json()
+    if not isinstance(body, dict) or not body:
+        raise HTTPException(status_code=400, detail="no_fields_to_update")
+    allowed = {"status", "result_summary", "phase", "priority", "description", "title"}
+    payload = {k: v for k, v in body.items() if k in allowed and isinstance(v, str) and v.strip()}
+    if not payload:
+        raise HTTPException(status_code=400, detail="no_valid_fields")
+    try:
+        with httpx.Client(timeout=10.0) as client:
+            r = client.patch(
+                f"{_SUPABASE_REST}/tasks",
+                headers=_supabase_headers(),
+                json=payload,
+                params={"id": f"eq.{task_id}", "select": "*"},
+            )
+        if r.status_code not in (200, 204):
+            raise HTTPException(status_code=502, detail=f"supabase_error:{r.status_code}")
+        if r.status_code == 200 and r.text:
+            updated = r.json()
+            if isinstance(updated, list):
+                updated = updated[0] if updated else None
+            return {"task": updated} if updated else {"status": "updated"}
+        return {"status": "updated"}
+    except httpx.RequestError as e:
+        raise HTTPException(status_code=502, detail=f"supabase_unreachable:{e}")
+
+
+@app.get("/api/tasks")
+async def api_list_tasks(request: Request) -> dict:
+    """List tasks, optionally filtered. Requires auth token.
+
+    Query params: phase, status, owner (all optional).
+    """
+    if not _check_token(request):
+        raise HTTPException(status_code=401, detail="auth_required")
+    if not _SUPABASE_REST:
+        raise HTTPException(status_code=503, detail="supabase_not_configured")
+    params: dict[str, str] = {"select": "*", "order": "created_at.desc"}
+    for key in ("phase", "status", "owner"):
+        val = request.query_params.get(key)
+        if val:
+            params[key] = f"eq.{val}"
+    try:
+        with httpx.Client(timeout=10.0) as client:
+            r = client.get(
+                f"{_SUPABASE_REST}/tasks",
+                headers=_supabase_headers(),
+                params=params,
+            )
+        if r.status_code != 200:
+            raise HTTPException(status_code=502, detail=f"supabase_error:{r.status_code}")
+        return {"tasks": r.json()}
+    except httpx.RequestError as e:
+        raise HTTPException(status_code=502, detail=f"supabase_unreachable:{e}")
+
+
 if STATIC_DIR.exists():
     app.mount("/", StaticFiles(directory=str(STATIC_DIR), html=True), name="static")
 else:
