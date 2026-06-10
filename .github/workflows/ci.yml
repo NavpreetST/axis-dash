@@ -140,28 +140,23 @@ jobs:
                 core.setFailed(`CodeRabbit check not passed: status=${crCheck.status}, conclusion=${crCheck.conclusion}`);
               }
             } else {
-              // Try all possible refs to find CodeRabbit check run
-              const refs = [context.sha, pr.data.head.sha, 'refs/pull/' + context.issue.number + '/head'];
-              for (const r of refs) {
-                try {
-                  const { data: c } = await github.rest.checks.listForRef({
-                    owner: context.repo.owner, repo: context.repo.repo, ref: r,
-                  });
-                  const found = c.check_runs?.find(x => x.name === 'CodeRabbit');
-                  if (found) {
-                    console.log(`CR check found at ref=${r}: status=${found.status}, conclusion=${found.conclusion}`);
-                    if (found.status === 'completed' && found.conclusion === 'success') {
-                      console.log('CodeRabbit review skipped — allow.');
-                      return;
-                    }
-                    core.setFailed(`CodeRabbit check: status=${found.status}, conclusion=${found.conclusion}`);
-                    return;
-                  }
-                } catch (e) {
-                  console.log(`checks.listForRef(${r}) failed: ${e.message}`);
+              // Try the merge ref (PR head ref)
+              const { data: allChecks } = await github.rest.checks.listForRef({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                ref: 'refs/pull/' + context.issue.number + '/merge',
+              });
+              const crFound = allChecks.check_runs?.find(x => x.name === 'CodeRabbit');
+              if (crFound) {
+                console.log(`CR check on merge ref: status=${crFound.status}, conclusion=${crFound.conclusion}`);
+                if (crFound.status === 'completed' && crFound.conclusion === 'success') {
+                  console.log('CodeRabbit review skipped — allow.');
+                } else {
+                  core.setFailed(`CodeRabbit check not passed: status=${crFound.status}, conclusion=${crFound.conclusion}`);
                 }
+              } else {
+                core.setFailed('No CodeRabbit review — block.');
               }
-              core.setFailed('No CodeRabbit review — block (none of the refs matched).');
             }
 
   # ── Gate 4: Drift / Arch Guard (BLOCKING) ──────────────────────────────
