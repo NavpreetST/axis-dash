@@ -152,38 +152,38 @@
       <p class="font-mono text-xs text-text-muted">Loading tasks…</p>
     </div>
   {:else}
-      <div class="flex items-center justify-between">
-        <div class="flex items-center gap-3">
-          <h1 class="font-mono text-lg font-bold tracking-widest text-text-primary uppercase">
-            Tasks
-          </h1>
-          {#if updating}
-            <span
-              class="rounded border border-accent-cyan/25 bg-accent-cyan/10 px-2 py-0.5 font-mono text-[9px] text-accent-cyan"
-              >updating…</span
-            >
-          {:else}
-            <span
-              class="rounded border border-hairline bg-bg-panel px-2 py-0.5 font-mono text-[10px] text-text-muted"
-              >{tasks.length} total</span
-            >
-          {/if}
-        </div>
-        <div class="flex items-center gap-2 font-mono text-[10px]">
+    <div class="flex items-center justify-between">
+      <div class="flex items-center gap-3">
+        <h1 class="font-mono text-lg font-bold tracking-widest text-text-primary uppercase">
+          Tasks
+        </h1>
+        {#if updating}
           <span
-            class="rounded border border-signal-green/25 bg-signal-green/10 px-2 py-1 text-signal-green"
-            >{counts('complete')} done</span
+            class="rounded border border-accent-cyan/25 bg-accent-cyan/10 px-2 py-0.5 font-mono text-[9px] text-accent-cyan"
+            >updating…</span
           >
+        {:else}
           <span
-            class="rounded border border-accent-cyan/25 bg-accent-cyan/10 px-2 py-1 text-accent-cyan"
-            >{counts('in_progress')} active</span
+            class="rounded border border-hairline bg-bg-panel px-2 py-0.5 font-mono text-[10px] text-text-muted"
+            >{tasks.length} total</span
           >
-          <span
-            class="rounded border border-accent-amber/25 bg-accent-amber/10 px-2 py-1 text-accent-amber"
-            >{counts('open')} open</span
-          >
-        </div>
+        {/if}
       </div>
+      <div class="flex items-center gap-2 font-mono text-[10px]">
+        <span
+          class="rounded border border-signal-green/25 bg-signal-green/10 px-2 py-1 text-signal-green"
+          >{counts('complete')} done</span
+        >
+        <span
+          class="rounded border border-accent-cyan/25 bg-accent-cyan/10 px-2 py-1 text-accent-cyan"
+          >{counts('in_progress')} active</span
+        >
+        <span
+          class="rounded border border-accent-amber/25 bg-accent-amber/10 px-2 py-1 text-accent-amber"
+          >{counts('open')} open</span
+        >
+      </div>
+    </div>
 
     <div
       class="sticky top-0 z-10 flex flex-wrap items-center gap-3 rounded-[20px] border border-hairline bg-bg-panel p-3"
@@ -230,29 +230,36 @@
     {:else}
       <div class="flex flex-1 scrollbar-thin flex-col gap-3 overflow-y-auto">
         {#each grouped as [phaseName, phaseTasks] (phaseName)}
-          <div
-            class="overflow-hidden rounded-[20px] border border-hairline bg-bg-panel"
-          >
+          <div class="overflow-hidden rounded-[20px] border border-hairline bg-bg-panel">
             <button
               class="flex w-full items-center justify-between gap-2 px-4 py-2.5 text-left transition hover:bg-white/[0.02]"
               onclick={() => togglePhase(phaseName)}
             >
-              <div class="flex items-center gap-2 min-w-0">
-                <span class="font-mono text-[11px] font-bold tracking-wider text-text-primary uppercase truncate">{phaseName}</span>
+              <div class="flex min-w-0 items-center gap-2">
+                <span
+                  class="truncate font-mono text-[11px] font-bold tracking-wider text-text-primary uppercase"
+                  >{phaseName}</span
+                >
                 <span
                   class="shrink-0 rounded border border-hairline bg-bg-void px-1.5 py-px font-mono text-[8px] text-text-muted"
                   >{phaseTasks.length}</span
                 >
               </div>
               <svg
-                class="h-3 w-3 shrink-0 text-text-muted transition {collapsed[phaseName] ? '-rotate-90' : ''}"
+                class="h-3 w-3 shrink-0 text-text-muted transition {collapsed[phaseName]
+                  ? '-rotate-90'
+                  : ''}"
                 xmlns="http://www.w3.org/2000/svg"
                 fill="none"
                 viewBox="0 0 24 24"
                 stroke-width="2"
                 stroke="currentColor"
               >
-                <path stroke-linecap="round" stroke-linejoin="round" d="m19.5 8.25-7.5 7.5-7.5-7.5" />
+                <path
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  d="m19.5 8.25-7.5 7.5-7.5-7.5"
+                />
               </svg>
             </button>
             {#if !collapsed[phaseName]}
@@ -261,7 +268,8 @@
                   <div class="flex items-start gap-3 px-4 py-2.5 transition hover:bg-white/[0.02]">
                     <div class="min-w-0 flex-1">
                       <div class="flex items-center gap-2">
-                        <span class="font-mono text-[13px] font-medium text-text-primary">{task.title}</span
+                        <span class="font-mono text-[13px] font-medium text-text-primary"
+                          >{task.title}</span
                         >
                         <span
                           class="rounded border px-1.5 py-px font-mono text-[9px] uppercase {statusClass(
@@ -291,7 +299,8 @@
                           <span
                             class={task.gates_passed === task.gates_total
                               ? 'text-signal-green'
-                              : 'text-accent-amber'}>{task.gates_passed}/{task.gates_total} gates</span
+                              : 'text-accent-amber'}
+                            >{task.gates_passed}/{task.gates_total} gates</span
                           >
                         {/if}
                       </div>
@@ -299,10 +308,34 @@
                         <div class="mt-1 flex items-center gap-2">
                           {#each gateStatuses[task.pr_number]! as gate (gate.name)}
                             <span
-                              class="inline-flex items-center gap-0.5 font-mono text-[8px] {gate.passed ? 'text-signal-green' : 'text-text-muted/40'}"
+                              class="inline-flex items-center gap-0.5 font-mono text-[8px] {gate.passed
+                                ? 'text-signal-green'
+                                : 'text-text-muted/40'}"
                             >
                               {gate.name}
-                              {#if gate.passed}<svg class="h-2.5 w-2.5" fill="none" viewBox="0 0 24 24" stroke-width="2.5" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="m4.5 12.75 6 6 9-13.5"/></svg>{:else}<svg class="h-2.5 w-2.5" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18 18 6M6 6l12 12"/></svg>{/if}
+                              {#if gate.passed}<svg
+                                  class="h-2.5 w-2.5"
+                                  fill="none"
+                                  viewBox="0 0 24 24"
+                                  stroke-width="2.5"
+                                  stroke="currentColor"
+                                  ><path
+                                    stroke-linecap="round"
+                                    stroke-linejoin="round"
+                                    d="m4.5 12.75 6 6 9-13.5"
+                                  /></svg
+                                >{:else}<svg
+                                  class="h-2.5 w-2.5"
+                                  fill="none"
+                                  viewBox="0 0 24 24"
+                                  stroke-width="2"
+                                  stroke="currentColor"
+                                  ><path
+                                    stroke-linecap="round"
+                                    stroke-linejoin="round"
+                                    d="M6 18 18 6M6 6l12 12"
+                                  /></svg
+                                >{/if}
                             </span>
                           {/each}
                         </div>
