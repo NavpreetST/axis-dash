@@ -18,6 +18,7 @@
   let actionBusy = $state(false);
   let submittedTaskId = $state<string | null>(null);
   let submitError = $state<string | null>(null);
+  let expandedFiles = $state<Record<string, boolean>>({});
 
   const STATUS_COLORS: Record<string, string> = {
     pending: 'bg-accent-amber/10 text-accent-amber',
@@ -96,6 +97,10 @@
 
   function selectTask(id: string) {
     forge.selectTask(id);
+  }
+
+  function toggleFile(path: string) {
+    expandedFiles[path] = !expandedFiles[path];
   }
 </script>
 
@@ -310,18 +315,61 @@
           {#if $forgeDiffData.diffs.length === 0}
             <div class="font-mono text-[10px] text-text-muted">no file changes</div>
           {:else}
-            <div class="flex max-h-60 scrollbar-thin flex-col gap-2 overflow-y-auto">
+            <div
+              class="flex items-center justify-between rounded-lg border border-hairline bg-bg-void px-3 py-1.5"
+            >
+              <span class="font-mono text-[10px] text-text-primary">
+                {$forgeDiffData.diffs.length} file{$forgeDiffData.diffs.length !== 1 ? 's' : ''} changed
+              </span>
+              {#if $forgeDetail.pr_number}
+                {@const repo = $forgeDetail.repo || 'NavpreetST/axis-dash'}
+                <a
+                  href="https://github.com/{repo}/pull/{$forgeDetail.pr_number}"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  class="font-mono text-[9px] text-accent-cyan transition hover:text-accent-cyan/70"
+                >
+                  View PR #{$forgeDetail.pr_number} &rarr;
+                </a>
+              {/if}
+            </div>
+            <div class="flex max-h-60 scrollbar-thin flex-col gap-1 overflow-y-auto">
               {#each $forgeDiffData.diffs as file (file.path)}
                 <div class="rounded-lg border border-hairline bg-bg-void">
-                  <div class="flex items-center justify-between border-b border-hairline px-2 py-1">
-                    <span class="font-mono text-[10px] text-text-primary">{file.path}</span>
-                    <span class="font-mono text-[9px] text-text-muted">
-                      <span class="text-signal-green">+{file.additions}</span>
-                      <span class="text-signal-red">-{file.deletions}</span>
+                  <button
+                    type="button"
+                    onclick={() => toggleFile(file.path)}
+                    class="flex w-full cursor-pointer items-center justify-between px-2 py-1.5 transition hover:bg-white/[0.02]"
+                  >
+                    <span class="min-w-0 truncate font-mono text-[10px] text-text-primary"
+                      >{file.path}</span
+                    >
+                    <span class="flex shrink-0 items-center gap-2">
+                      <span class="font-mono text-[9px]">
+                        <span class="text-signal-green">+{file.additions}</span>
+                        <span class="text-signal-red">-{file.deletions}</span>
+                      </span>
+                      <svg
+                        class="h-2.5 w-2.5 text-text-muted transition {expandedFiles[file.path]
+                          ? 'rotate-180'
+                          : ''}"
+                        fill="none"
+                        viewBox="0 0 24 24"
+                        stroke-width="2"
+                        stroke="currentColor"
+                      >
+                        <path
+                          stroke-linecap="round"
+                          stroke-linejoin="round"
+                          d="m19.5 8.25-7.5 7.5-7.5-7.5"
+                        />
+                      </svg>
                     </span>
-                  </div>
-                  <pre
-                    class="overflow-x-auto p-2 font-mono text-[9px] leading-relaxed text-text-primary">{file.patch}</pre>
+                  </button>
+                  {#if expandedFiles[file.path]}
+                    <pre
+                      class="border-t border-hairline p-2 font-mono text-[9px] leading-relaxed text-text-primary">{file.patch}</pre>
+                  {/if}
                 </div>
               {/each}
             </div>

@@ -108,6 +108,25 @@
     }
   }
 
+  function applyTemplate(kind: string) {
+    if (kind === 'tests') {
+      newTitle = 'Write unit tests for <file>';
+      newDesc =
+        'Create comprehensive unit tests covering edge cases, happy path, and error handling. Follow existing test patterns from __tests__/.';
+    } else if (kind === 'lint') {
+      newTitle = 'Fix lint errors in <file>';
+      newDesc =
+        'Run the linter and fix all reported errors. Ensure the file passes all lint rules before committing.';
+    } else if (kind === 'refactor') {
+      newTitle = 'Refactor <function> in <file>';
+      newDesc =
+        'Refactor for improved readability and maintainability. Extract helpers, improve naming, and add JSDoc comments.';
+    } else if (kind === 'custom') {
+      newTitle = '';
+      newDesc = '';
+    }
+  }
+
   onMount(() => {
     const phaseParam = $page.url.searchParams.get('phase');
     if (phaseParam) phaseFilter = phaseParam;
@@ -291,6 +310,38 @@
         <h3 class="mb-3 font-mono text-xs font-bold tracking-wider text-text-primary uppercase">
           New Task
         </h3>
+        {#if config.useLiveBridge}
+          <div class="flex flex-wrap gap-1.5">
+            <button
+              type="button"
+              onclick={() => applyTemplate('tests')}
+              class="cursor-pointer rounded-lg border border-hairline bg-bg-void px-2.5 py-1 font-mono text-[9px] text-text-muted transition hover:border-accent-cyan hover:text-accent-cyan"
+            >
+              Write unit tests for &lt;file&gt;
+            </button>
+            <button
+              type="button"
+              onclick={() => applyTemplate('lint')}
+              class="cursor-pointer rounded-lg border border-hairline bg-bg-void px-2.5 py-1 font-mono text-[9px] text-text-muted transition hover:border-accent-cyan hover:text-accent-cyan"
+            >
+              Fix lint errors in &lt;file&gt;
+            </button>
+            <button
+              type="button"
+              onclick={() => applyTemplate('refactor')}
+              class="cursor-pointer rounded-lg border border-hairline bg-bg-void px-2.5 py-1 font-mono text-[9px] text-text-muted transition hover:border-accent-cyan hover:text-accent-cyan"
+            >
+              Refactor &lt;function&gt; in &lt;file&gt;
+            </button>
+            <button
+              type="button"
+              onclick={() => applyTemplate('custom')}
+              class="cursor-pointer rounded-lg border border-accent-cyan/20 bg-accent-cyan/5 px-2.5 py-1 font-mono text-[9px] text-accent-cyan transition hover:bg-accent-cyan/10"
+            >
+              Custom
+            </button>
+          </div>
+        {/if}
         <div class="flex flex-col gap-3">
           <input
             type="text"
