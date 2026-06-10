@@ -93,9 +93,10 @@ jobs:
               repo: context.repo.repo,
               pull_number: context.issue.number,
             });
-            const latestCR = [...reviews].reverse().find(
-              r => r.user?.login === 'coderabbitai[bot]' && r.commit_id === ref
+            const allCR = [...reviews].reverse().filter(
+              r => r.user?.login === 'coderabbitai[bot]'
             );
+            const latestCR = allCR.find(r => r.commit_id === ref) ?? allCR[0];
             if (latestCR) {
               if (latestCR.state === 'CHANGES_REQUESTED') {
                 core.setFailed(`CodeRabbit has CHANGES_REQUESTED — address comments before merge.`);
@@ -106,27 +107,7 @@ jobs:
               }
               return;
             }
-            const refs = [context.sha, ref, 'refs/pull/' + context.issue.number + '/head'];
-            for (const r of refs) {
-              try {
-                const { data: c } = await github.rest.checks.listForRef({
-                  owner: context.repo.owner, repo: context.repo.repo, ref: r,
-                });
-                const found = c.check_runs?.find(x => x.name === 'CodeRabbit');
-                if (found) {
-                  console.log(`CR check found at ref=${r}: status=${found.status}, conclusion=${found.conclusion}`);
-                  if (found.status === 'completed' && found.conclusion === 'success') {
-                    console.log('CodeRabbit review skipped — allow.');
-                  } else {
-                    core.setFailed(`CodeRabbit check: status=${found.status}, conclusion=${found.conclusion}`);
-                  }
-                  return;
-                }
-              } catch (e) {
-                console.log(`checks.listForRef(${r}) failed: ${e.message}`);
-              }
-            }
-            core.setFailed('No CodeRabbit review — block (none of the refs matched).');
+            core.setFailed('No CodeRabbit review found on this PR.');
 
   # ── Gate 4: Drift / Arch Guard (BLOCKING) ──────────────────────────────
   drift-guard:
