@@ -83,10 +83,10 @@
   }
 
   // Bridge status for the header heartbeat dot.
-  // 'live-ok'   → green   : live mode on, /state socket is open
-  // 'live-down' → red     : live mode on, but disconnected (startup or error)
-  // 'misconfig' → red     : live mode on, but token or URLs are missing
-  // 'mock'      → green   : mock mode (default; intentional, not an error)
+  // 'mock'      → green : mock mode (default; intentional, not an error)
+  // 'live-ok'   → green : live mode on, /state socket is open
+  // 'misconfig' → amber : live mode on, but token or URLs are missing
+  // 'live-down' → red   : live mode on, but disconnected (startup or error)
   let hasToken = $state(false);
   let hasUrls = $state(false);
   let bridgeStatus = $derived.by(() => {
@@ -268,7 +268,7 @@
             class="h-2.5 w-2.5 animate-pulse rounded-full {bridgeStatus === 'live-ok' ||
             bridgeStatus === 'mock'
               ? 'bg-signal-green shadow-[0_0_8px_var(--color-signal-green)]'
-              : bridgeStatus === 'live-down'
+              : bridgeStatus === 'misconfig'
                 ? 'bg-accent-amber shadow-[0_0_8px_var(--color-accent-amber)]'
                 : 'bg-signal-red shadow-[0_0_8px_var(--color-signal-red)]'}"
             title={bridgeStatusLabel}
@@ -434,9 +434,11 @@
           </div>
 
           <!-- Message Input area -->
-          <div class="shrink-0 border-t border-hairline bg-bg-panel/25 p-3">
+          <div class="shrink-0 border-t border-hairline bg-bg-panel/25 p-2">
             <div
-              class="flex items-center gap-2 rounded-xl border border-hairline bg-bg-void p-1 transition duration-200 focus-within:border-accent-cyan"
+              class="flex items-center gap-1.5 rounded-xl border bg-bg-void p-1 transition duration-200 {chatInput.trim()
+                ? 'border-accent-cyan/60'
+                : 'border-hairline'} focus-within:border-accent-cyan"
             >
               <input
                 type="text"
@@ -445,6 +447,9 @@
                 onkeypress={handleKeyPress}
                 class="flex-1 border-0 bg-transparent px-2.5 py-1.5 font-mono text-xs text-text-primary outline-none placeholder:text-text-muted"
               />
+              {#if chatInput.trim()}
+                <div class="h-1.5 w-1.5 rounded-full bg-signal-green" title="ready"></div>
+              {/if}
               <button
                 onclick={handleSendChat}
                 disabled={!chatInput.trim()}
