@@ -167,7 +167,31 @@ jobs:
             if (crCheck?.state === 'success') {
               console.log('CodeRabbit status passed — allow.');
             } else {
-              core.setFailed('No CodeRabbit review found via any API.');
+              // 4. Try check suites
+              for (const ref of [sha, 'refs/pull/' + prNum + '/head']) {
+                try {
+                  const { data: suites } = await github.rest.checks.listSuitesForRef({
+                    owner: context.repo.owner, repo: context.repo.repo, ref,
+                  });
+                  console.log(`suites at ${ref}: ${suites.check_suites?.length ?? 0} suites`);
+                  for (const s of (suites.check_suites ?? [])) {
+                    const ls = await github.rest.checks.listForSuite({
+                      owner: context.repo.owner, repo: context.repo.repo,
+                      check_suite_id: s.id,
+                    });
+                    const sr = ls.check_runs?.find(x => x.name === 'CodeRabbit' || x.app?.slug === 'coderabbitai');
+                    if (sr) { console.log(`CR from suite ${s.id}: status=${sr.status}, conclusion=${sr.conclusion}`); crCheck = sr; break; }
+                  }
+                  if (crCheck) break;
+                } catch (e) { console.log(`suites(${ref}) error: ${e.message}`); }
+              }
+              if (crCheck?.status === 'completed' && crCheck?.conclusion === 'success') {
+                console.log('CodeRabbit check passed (from suite) — allow.');
+              } else if (crCheck) {
+                core.setFailed(`CodeRabbit check not passed: status=${crCheck.status}, conclusion=${crCheck.conclusion}`);
+              } else {
+                core.setFailed('No CodeRabbit review found via any API.');
+              }
             }
 
   # ── Gate 4: Drift / Arch Guard (BLOCKING) ──────────────────────────────
