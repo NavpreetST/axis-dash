@@ -33,19 +33,20 @@
 <div class="grid w-full shrink-0 grid-cols-2 gap-4 lg:grid-cols-4">
   <!-- Uptime Card -->
   <div
-    class="kpi-card flex min-h-[112px] flex-col justify-between rounded-[20px] border border-hairline bg-bg-panel p-5"
+    class="kpi-card flex min-h-[112px] flex-col justify-between overflow-hidden rounded-[20px] border border-hairline bg-bg-panel p-3 sm:p-5"
   >
     <span class="font-sans text-[10px] font-semibold tracking-wider text-text-muted uppercase"
       >Uptime</span
     >
     <div class="my-1.5 flex items-baseline">
       {#if $telemetry.connected}
-        <span class="font-mono text-[30px] leading-none font-bold tracking-tight text-accent-cyan"
+        <span
+          class="font-mono leading-none font-bold tracking-tight text-accent-cyan max-sm:text-[22px] sm:text-[30px]"
           >{uptimeDisplay}</span
         >
       {:else}
         <span
-          class="flex items-center gap-1.5 font-mono text-[30px] leading-none font-bold text-text-muted"
+          class="flex items-center gap-1.5 font-mono leading-none font-bold text-text-muted max-sm:text-[22px] sm:text-[30px]"
         >
           -- <span class="text-lg text-accent-amber">⚠</span>
         </span>
@@ -56,20 +57,21 @@
 
   <!-- Tick Rate Card -->
   <div
-    class="kpi-card flex min-h-[112px] flex-col justify-between rounded-[20px] border border-hairline bg-bg-panel p-5"
+    class="kpi-card flex min-h-[112px] flex-col justify-between overflow-hidden rounded-[20px] border border-hairline bg-bg-panel p-3 sm:p-5"
   >
     <span class="font-sans text-[10px] font-semibold tracking-wider text-text-muted uppercase"
       >Tick Rate</span
     >
     <div class="my-1.5 flex items-baseline gap-1">
       {#if $telemetry.connected}
-        <span class="font-mono text-[30px] leading-none font-bold tracking-tight text-text-primary"
+        <span
+          class="font-mono leading-none font-bold tracking-tight text-text-primary max-sm:text-[22px] sm:text-[30px]"
           >{tickDisplay}</span
         >
         <span class="font-sans text-[11px] text-text-muted">tick/s</span>
       {:else}
         <span
-          class="flex items-center gap-1.5 font-mono text-[30px] leading-none font-bold text-text-muted"
+          class="flex items-center gap-1.5 font-mono leading-none font-bold text-text-muted max-sm:text-[22px] sm:text-[30px]"
         >
           -- <span class="text-lg text-accent-amber">⚠</span>
         </span>
@@ -80,7 +82,7 @@
 
   <!-- PAM Coherence Card -->
   <div
-    class="kpi-card flex min-h-[112px] flex-col justify-between rounded-[20px] border border-hairline bg-bg-panel p-5"
+    class="kpi-card flex min-h-[112px] flex-col justify-between overflow-hidden rounded-[20px] border border-hairline bg-bg-panel p-3 sm:p-5"
   >
     <div class="flex items-center justify-between">
       <span class="font-sans text-[10px] font-semibold tracking-wider text-text-muted uppercase"
@@ -90,7 +92,7 @@
     <div class="my-1.5 flex items-baseline">
       {#if $telemetry.connected && $telemetry.pam !== null}
         <span
-          class="font-mono text-[30px] font-bold tracking-tight {pamColorMap[
+          class="font-mono font-bold tracking-tight max-sm:text-[22px] sm:text-[30px] {pamColorMap[
             pamBucket
           ]} leading-none"
         >
@@ -98,7 +100,7 @@
         </span>
       {:else}
         <span
-          class="flex items-center gap-1.5 font-mono text-[30px] leading-none font-bold text-text-muted"
+          class="flex items-center gap-1.5 font-mono leading-none font-bold text-text-muted max-sm:text-[22px] sm:text-[30px]"
         >
           -- <span class="text-lg text-accent-amber">⚠</span>
         </span>
@@ -118,7 +120,7 @@
 
   <!-- RPD Usage Card -->
   <div
-    class="kpi-card flex min-h-[112px] flex-col justify-between rounded-[20px] border border-hairline bg-bg-panel p-5"
+    class="kpi-card flex min-h-[112px] flex-col justify-between overflow-hidden rounded-[20px] border border-hairline bg-bg-panel p-3 sm:p-5"
   >
     <div class="flex items-center justify-between">
       <span class="font-sans text-[10px] font-semibold tracking-wider text-text-muted uppercase"
@@ -128,7 +130,7 @@
     <div class="my-1.5 flex items-baseline">
       {#if $telemetry.connected}
         <span
-          class="font-mono text-[30px] font-bold tracking-tight {rpdIsWarningOrOver
+          class="font-mono font-bold tracking-tight max-sm:text-[22px] sm:text-[30px] {rpdIsWarningOrOver
             ? 'text-signal-red'
             : 'text-accent-amber'} leading-none"
         >
@@ -137,7 +139,7 @@
         </span>
       {:else}
         <span
-          class="flex items-center gap-1.5 font-mono text-[30px] leading-none font-bold text-text-muted"
+          class="flex items-center gap-1.5 font-mono leading-none font-bold text-text-muted max-sm:text-[22px] sm:text-[30px]"
         >
           -- <span class="text-lg text-accent-amber">⚠</span>
         </span>

@@ -128,7 +128,7 @@
     <textarea
       bind:value={specInput}
       onkeydown={handleKeydown}
-      placeholder="Describe the task for the forge agent (min 10 chars)…"
+      placeholder="Describe the spec for the forge agent — e.g. 'fix lint in forgeClient.ts' (min 10 chars)…"
       rows="8"
       class="w-full resize-y rounded-lg border border-hairline bg-bg-void px-3 py-2 font-mono text-xs text-text-primary outline-none placeholder:text-text-muted focus:border-accent-cyan"
     ></textarea>
