@@ -958,9 +958,10 @@ async def forge_heal(task_id: str, request: Request) -> dict:
         raise HTTPException(status_code=503, detail="supabase_not_configured")
 
     # 1. Read task from Supabase
+    task_row = None
     try:
-        with httpx.Client(timeout=10.0) as client:
-            r = client.get(
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            r = await client.get(
                 f"{_SUPABASE_REST}/tasks",
                 headers=_supabase_headers(prefer=""),
                 params={"id": f"eq.{task_id}", "select": "*"},
@@ -984,195 +985,227 @@ async def forge_heal(task_id: str, request: Request) -> dict:
     if not spec:
         raise HTTPException(status_code=400, detail="task_has_no_spec")
 
-    # 2. Check CR review state via GitHub API
+    # Validate inputs for command injection prevention (🔴 CRITICAL)
+    if not re.match(r'^[a-zA-Z0-9._/-]+$', repo):
+        raise HTTPException(status_code=400, detail="invalid_repo_chars")
+    if not re.match(r'^[a-zA-Z0-9_.\-\/]+$', branch):
+        raise HTTPException(status_code=400, detail="invalid_branch_chars")
+
     gh_headers = _gh_headers()
-    try:
-        with httpx.Client(timeout=15.0) as client:
-            r = client.get(
-                f"{_GITHUB_API}/repos/{repo}/pulls/{pr_number}/reviews",
-                headers=gh_headers,
-            )
-        if r.status_code != 200:
-            raise HTTPException(status_code=502, detail=f"github_error:{r.status_code}")
-        reviews = r.json()
-    except httpx.RequestError as e:
-        raise HTTPException(status_code=502, detail=f"github_unreachable:{e}")
-
-    # Find latest CR review
-    cr_reviews = [rv for rv in reviews if rv.get("user", {}).get("login") == _CODERABBIT_LOGIN]
-    if not cr_reviews:
-        return {"healed": False, "reason": "no_cr_review", "iterations": 0}
-
-    latest_cr = cr_reviews[-1]
-    if latest_cr.get("state") != "CHANGES_REQUESTED":
-        return {"healed": False, "reason": f"cr_state_{latest_cr.get('state', 'unknown')}", "iterations": 0}
-
-    # 3. Fetch CR comments
-    try:
-        with httpx.Client(timeout=15.0) as client:
-            r = client.get(
-                f"{_GITHUB_API}/repos/{repo}/pulls/{pr_number}/comments",
-                headers=gh_headers,
-            )
-        if r.status_code != 200:
-            raise HTTPException(status_code=502, detail=f"github_comments_error:{r.status_code}")
-        comments = r.json()
-    except httpx.RequestError as e:
-        raise HTTPException(status_code=502, detail=f"github_comments_error:{e}")
-
-    cr_comments = [c for c in comments if c.get("user", {}).get("login") == _CODERABBIT_LOGIN]
-    if not cr_comments:
-        return {"healed": False, "reason": "no_cr_comments", "iterations": 0}
-
-    # 4-6. Self-heal loop
     iteration = 0
     last_error: str | None = None
     fix_task_id: str | None = None
 
-    while iteration < _FORGE_CR_MAX_ITERATIONS:
-        iteration += 1
+    # 2-6. Wrapped in try/finally so Supabase status update always runs (🟠)
+    try:
+        while iteration < _FORGE_CR_MAX_ITERATIONS:
+            iteration += 1
 
-        # Build fix prompt from CR comments
-        comment_texts = "\n".join(
-            f"- {c.get('body', '')}" for c in cr_comments if c.get("body")
-        )
-        fix_prompt = (
-            f"Fix the following CodeRabbit findings for the original task.\n\n"
-            f"ORIGINAL TASK:\n{spec}\n\n"
-            f"CODERRABBIT FINDINGS:\n{comment_texts}\n\n"
-            f"Apply the fixes to the codebase. "
-            f"Do NOT change any workflow files or CI configuration. "
-            f"Make minimal, surgical changes."
-        )
-
-        # Submit fix as new forge task via socket
-        safe_fix = _sanitize_field(fix_prompt, "spec")
-        resp = await _forge_socket_cmd(f"FORGE:SUBMIT:{safe_fix}")
-
-        if not resp.startswith("FORGE:OK:"):
-            last_error = f"submit_failed:{resp}"
-            log.warning("forge heal: iteration %d submit failed: %s", iteration, resp)
-            break
-
-        fix_task_id = resp.split(":", 2)[2]
-
-        # Poll until fix task completes
-        for _ in range(30):  # wait up to ~150s (5s per poll)
-            await asyncio.sleep(5)
-            status_resp = await _forge_socket_cmd(f"FORGE:POLL:{fix_task_id}")
-            if status_resp.startswith("FORGE:STATUS:"):
-                payload = status_resp.split(":", 2)[2]
-                try:
-                    status_data = json.loads(payload)
-                except json.JSONDecodeError:
-                    continue
-                st = status_data.get("status", "")
-                if st == "completed":
+            # 2a. Fetch CR reviews (🟠 — now inside loop, re-fetched each iteration)
+            try:
+                async with httpx.AsyncClient(timeout=15.0) as client:
+                    r = await client.get(
+                        f"{_GITHUB_API}/repos/{repo}/pulls/{pr_number}/reviews",
+                        headers=gh_headers,
+                    )
+                if r.status_code != 200:
+                    last_error = f"github_error:{r.status_code}"
                     break
-                elif st in ("failed", "rejected"):
-                    last_error = f"fix_{st}"
-                    break
-        else:
-            last_error = "fix_timed_out"
-            break
+                reviews = r.json()
+            except httpx.RequestError as e:
+                last_error = f"github_unreachable:{e}"
+                break
 
-        if last_error:
-            break
+            cr_reviews = [rv for rv in reviews if rv.get("user", {}).get("login") == _CODERABBIT_LOGIN]
+            if not cr_reviews:
+                last_error = "no_cr_review"
+                break
 
-        # Force-push to the PR branch
-        gh_push_cmd = (
-            f"cd /opt/aegis/forge/{fix_task_id} && "
-            f"git remote add origin-tmp https://github.com/{repo}.git 2>/dev/null; "
-            f"git fetch origin-tmp {branch} 2>/dev/null; "
-            f"git checkout -B {branch} && "
-            f"git push --force origin-tmp {branch}"
-        )
-
-        gh_token = os.environ.get(_GITHUB_TOKEN_ENV)
-        if gh_token:
-            # Use token-authenticated push
-            push_url = f"https://x-access-token:{gh_token}@github.com/{repo}.git"
-            gh_push_cmd = (
-                f"cd /opt/aegis/forge/{fix_task_id} && "
-                f"git remote add origin-tmp {push_url} 2>/dev/null; "
-                f"git fetch origin-tmp {branch} 2>/dev/null; "
-                f"git checkout -B {branch} && "
-                f"git push --force origin-tmp {branch}"
-            )
-
-        proc = await asyncio.create_subprocess_exec(
-            *["bash", "-c", gh_push_cmd],
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        try:
-            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=30.0)
-        except TimeoutError:
-            proc.kill()
-            last_error = "push_timed_out"
-            break
-
-        if proc.returncode != 0:
-            last_error = f"push_failed:{stderr.decode(errors='replace')[:200]}"
-            log.warning("forge heal: push failed — %s", last_error)
-            break
-
-        log.info("forge heal: iteration %d — pushed fixes to %s %s", iteration, repo, branch)
-
-        # Brief pause for CR to process the new changes, then check again
-        await asyncio.sleep(15)
-
-        # Re-check CR review state
-        try:
-            with httpx.Client(timeout=15.0) as client:
-                r = client.get(
-                    f"{_GITHUB_API}/repos/{repo}/pulls/{pr_number}/reviews",
-                    headers=gh_headers,
-                )
-            next_reviews = r.json()
-            next_cr = [
-                rv for rv in next_reviews
-                if rv.get("user", {}).get("login") == _CODERABBIT_LOGIN
-            ]
-            if next_cr:
-                next_state = next_cr[-1].get("state", "")
-                if next_state == "APPROVED":
+            latest_cr = cr_reviews[-1]
+            if latest_cr.get("state") != "CHANGES_REQUESTED":
+                if latest_cr.get("state") == "APPROVED":
                     return {
                         "healed": True,
                         "iterations": iteration,
                         "final_cr_state": "APPROVED",
                         "note": "CR approved — PR is still a draft, owner must review & merge",
                     }
-                elif next_state != "CHANGES_REQUESTED":
-                    return {
-                        "healed": True,
-                        "iterations": iteration,
-                        "final_cr_state": next_state,
-                        "note": "CR no longer requests changes — owner review required",
-                    }
-                # Still CHANGES_REQUESTED — continue loop
-                log.info(
-                    "forge heal: iteration %d — CR still CHANGES_REQUESTED, continuing",
-                    iteration,
-                )
-        except Exception as e:
-            log.warning("forge heal: re-check failed — %s", e)
-            # Don't break on re-check failure; continue the loop
-    else:
-        # If we exit the loop normally (all iterations used):
-        last_error = f"max_iterations_reached:{_FORGE_CR_MAX_ITERATIONS}"
+                return {
+                    "healed": True,
+                    "iterations": iteration,
+                    "final_cr_state": latest_cr.get("state", "unknown"),
+                    "note": "CR no longer requests changes — owner review required",
+                }
 
-    # Mark task for human review
-    try:
-        with httpx.Client(timeout=10.0) as client:
-            client.patch(
-                f"{_SUPABASE_REST}/tasks",
-                headers=_supabase_headers(),
-                json={"status": "needs_review", "result_summary": f"heal stopped after {iteration} iterations: {last_error}"},
-                params={"id": f"eq.{task_id}"},
+            # 2b. Fetch CR comments inside loop (🟠 — was outside, now fresh each iteration)
+            try:
+                async with httpx.AsyncClient(timeout=15.0) as client:
+                    r = await client.get(
+                        f"{_GITHUB_API}/repos/{repo}/pulls/{pr_number}/comments",
+                        headers=gh_headers,
+                    )
+                if r.status_code != 200:
+                    last_error = f"github_comments_error:{r.status_code}"
+                    break
+                comments = r.json()
+            except httpx.RequestError as e:
+                last_error = f"github_comments_error:{e}"
+                break
+
+            cr_comments = [c for c in comments if c.get("user", {}).get("login") == _CODERABBIT_LOGIN]
+            if not cr_comments:
+                last_error = "no_cr_comments"
+                break
+
+            # Build fix prompt from fresh CR comments
+            comment_texts = "\n".join(
+                f"- {c.get('body', '')}" for c in cr_comments if c.get("body")
             )
+            fix_prompt = (
+                f"Fix the following CodeRabbit findings for the original task.\n\n"
+                f"ORIGINAL TASK:\n{spec}\n\n"
+                f"CODERRABBIT FINDINGS:\n{comment_texts}\n\n"
+                f"Apply the fixes to the codebase. "
+                f"Do NOT change any workflow files or CI configuration. "
+                f"Make minimal, surgical changes."
+            )
+
+            # Submit fix as new forge task via socket
+            safe_fix = _sanitize_field(fix_prompt, "spec")
+            resp = await _forge_socket_cmd(f"FORGE:SUBMIT:{safe_fix}")
+
+            if not resp.startswith("FORGE:OK:"):
+                last_error = f"submit_failed:{resp}"
+                log.warning("forge heal: iteration %d submit failed: %s", iteration, resp)
+                break
+
+            fix_task_id = resp.split(":", 2)[2]
+
+            # Poll until fix task completes
+            for _ in range(30):
+                await asyncio.sleep(5)
+                status_resp = await _forge_socket_cmd(f"FORGE:POLL:{fix_task_id}")
+                if status_resp.startswith("FORGE:STATUS:"):
+                    payload = status_resp.split(":", 2)[2]
+                    try:
+                        status_data = json.loads(payload)
+                    except json.JSONDecodeError:
+                        continue
+                    st = status_data.get("status", "")
+                    if st == "completed":
+                        break
+                    elif st in ("failed", "rejected"):
+                        last_error = f"fix_{st}"
+                        break
+            else:
+                last_error = "fix_timed_out"
+                break
+
+            if last_error:
+                break
+
+            # Validate fix_task_id chars (🔴 CRITICAL)
+            if not re.match(r'^[a-zA-Z0-9_-]+$', fix_task_id):
+                last_error = "invalid_task_id_chars"
+                break
+
+            # Force-push to the PR branch via subprocess_exec argv (🔴 CRITICAL — was bash -c)
+            workdir = f"/opt/aegis/forge/{fix_task_id}"
+            push_env = os.environ.copy()
+            gh_token = push_env.pop(_GITHUB_TOKEN_ENV, None)
+            askpass_path = ""
+            if gh_token:
+                import stat as _stat
+                askpass_path = f"/tmp/.git-askpass-{fix_task_id}"
+                try:
+                    with open(askpass_path, 'w') as _f:
+                        _f.write("#!/bin/sh\n")
+                        _f.write('case "$1" in\n')
+                        _f.write('  *Username*) echo "git" ;;\n')
+                        _f.write('  *Password*) echo "$GIT_TOKEN" ;;\n')
+                        _f.write('  *) exit 1 ;;\n')
+                        _f.write('esac\n')
+                    os.chmod(askpass_path, _stat.S_IRWXU)
+                    push_env["GIT_ASKPASS"] = askpass_path
+                    push_env["GIT_TOKEN"] = gh_token
+                except Exception as e:
+                    log.warning("forge heal: failed to create askpass — %s", e)
+                    last_error = "askpass_setup_failed"
+                    break
+
+            try:
+                # Fetch target branch (best-effort, may fail for new branches)
+                fetch_proc = await asyncio.create_subprocess_exec(
+                    "git", "-C", workdir,
+                    "fetch", "--quiet",
+                    f"https://github.com/{repo}.git",
+                    branch,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                    env=push_env,
+                )
+                try:
+                    await asyncio.wait_for(fetch_proc.communicate(), timeout=30.0)
+                except TimeoutError:
+                    fetch_proc.kill()
+                    await fetch_proc.wait()
+
+                # Create/checkout branch and force-push
+                await asyncio.create_subprocess_exec(
+                    "git", "-C", workdir,
+                    "checkout", "-B", branch,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                    env=push_env,
+                )
+
+                push_proc = await asyncio.create_subprocess_exec(
+                    "git", "-C", workdir,
+                    "push", "--force",
+                    f"https://github.com/{repo}.git",
+                    branch,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                    env=push_env,
+                )
+                try:
+                    _, push_stderr = await asyncio.wait_for(push_proc.communicate(), timeout=30.0)
+                except TimeoutError:
+                    push_proc.kill()
+                    await push_proc.wait()
+                    last_error = "push_timed_out"
+                    break
+            finally:
+                if askpass_path and os.path.exists(askpass_path):
+                    os.unlink(askpass_path)
+
+            if push_proc.returncode != 0:
+                last_error = f"push_failed:{push_stderr.decode(errors='replace')[:200]}"
+                log.warning("forge heal: push failed — %s", last_error)
+                break
+
+            log.info("forge heal: iteration %d — pushed fixes to %s %s", iteration, repo, branch)
+
+            # Brief pause for CR to process the new changes
+            await asyncio.sleep(15)
     except Exception:
-        pass
+        last_error = last_error or "unexpected_error"
+        log.exception("forge heal: unexpected error in heal loop")
+    finally:
+        if last_error or iteration > 0:
+            try:
+                async with httpx.AsyncClient(timeout=10.0) as client:
+                    await client.patch(
+                        f"{_SUPABASE_REST}/tasks",
+                        headers=_supabase_headers(),
+                        json={
+                            "status": "needs_review",
+                            "result_summary": f"heal stopped after {iteration} iterations: {last_error or 'unknown'}",
+                        },
+                        params={"id": f"eq.{task_id}"},
+                    )
+            except Exception:
+                log.warning("forge heal: failed to update Supabase status")
 
     return {
         "healed": False,
