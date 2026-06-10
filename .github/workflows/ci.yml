@@ -114,7 +114,7 @@ jobs:
             const reviews = await github.paginate(github.rest.pulls.listReviews, {
               owner: context.repo.owner, repo: context.repo.repo, pull_number: context.issue.number,
             });
-            const cr = [...reviews].reverse().find(r => r.user?.login === 'coderabbitai');
+            const cr = [...reviews].reverse().find(r => r.user?.login === 'coderabbitai[bot]');
             if (cr) {
               if (cr.state === 'CHANGES_REQUESTED') {
                 core.setFailed('CodeRabbit has CHANGES_REQUESTED — fix before merge.');
