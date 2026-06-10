@@ -101,19 +101,25 @@ jobs:
             --repo ${{ github.repository }} \
             --run-url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
 
-  # ── Gate 3: CodeRabbit Review (ADVISORY — never blocks) ────────────────
-  coderabbit:
-    name: "Gate 3 · CodeRabbit"
+  # ── Gate 3: CodeRabbit Review (BLOCKING if CHANGES_REQUESTED) ───────────
+  coderabbit-check:
+    name: 'Gate 3 · CodeRabbit'
     runs-on: ubuntu-latest
     if: always()
     steps:
-      - name: Advisory note
-        run: |
-          echo "::notice::CodeRabbit review is advisory only — never blocks merge."
-          echo "If CodeRabbit has comments, address them before requesting Navpreet's review."
-  # NOTE: CodeRabbit's actual review is triggered by the GitHub App webhook.
-  # This job simply documents the gate in the Actions graph.  The app itself
-  # posts inline PR comments independently of this workflow.
+      - uses: actions/github-script@v7
+        with:
+          script: |
+            const { data: reviews } = await github.rest.pulls.listReviews({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.issue.number,
+            });
+            const cr = reviews.find(r => r.user?.login === 'coderabbitai');
+            if (cr && cr.state === 'CHANGES_REQUESTED') {
+              core.setFailed('CodeRabbit has CHANGES_REQUESTED — fix before merge.');
+            }
+            console.log('CodeRabbit state:', cr?.state ?? 'no review');
 
   # ── Gate 4: Drift / Arch Guard (BLOCKING) ──────────────────────────────
   drift-guard:
@@ -147,8 +153,14 @@ jobs:
             --repo ${{ github.repository }} \
             --run-url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
 
-  # ── Gate 5: Human merge (MANUAL — Navpreet is sole merger) ─────────────
-  # No auto-merge.  Navpreet reviews and merges manually.
+  # ── Gate 5: Merge Ready (aggregate gate) ────────────────────────────────
+  merge-ready:
+    name: 'Gate 5 · Merge Ready'
+    runs-on: ubuntu-latest
+    needs: [lint, tests, coderabbit-check, drift-guard]
+    if: success()
+    steps:
+      - run: echo "✅ All gates passed — ready for merge."
 
   # ── Post-merge: task_activity sync ─────────────────────────────────────
   merge-sync:
