@@ -139,3 +139,22 @@ export async function forgeGate(taskId: string, approve: boolean): Promise<HttpR
 export async function forgeCleanup(taskId: string): Promise<HttpResult<ForgeCleanupResponse>> {
   return httpPost<ForgeCleanupResponse>(`/forge/${encodeURIComponent(taskId)}/cleanup`);
 }
+
+// ---------------------------------------------------------------------------
+// Gate status per PR
+// ---------------------------------------------------------------------------
+
+export interface PRGateCheck {
+  name: string;
+  passed: boolean;
+}
+
+export interface PRGateStatus {
+  pr_number: number;
+  gates: PRGateCheck[];
+}
+
+/** GET /api/gates?pr_number=N  → { pr_number, gates: [...] } */
+export async function fetchPRGates(prNumber: number): Promise<HttpResult<PRGateStatus>> {
+  return httpGet<PRGateStatus>(`/api/gates?pr_number=${prNumber}`);
+}
