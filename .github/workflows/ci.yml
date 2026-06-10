@@ -9,6 +9,7 @@ on:
 permissions:
   contents: read
   pull-requests: read
+  checks: read
 
 concurrency:
   group: ci-${{ github.head_ref || github.run_id }}
@@ -116,12 +117,25 @@ jobs:
               pull_number: context.issue.number,
             });
             const cr = [...reviews].reverse().find(r => r.user?.login === 'coderabbitai');
-            if (!cr) {
-              core.setFailed('No CodeRabbit review — block.');
-            } else if (cr.state === 'CHANGES_REQUESTED') {
-              core.setFailed('CodeRabbit has CHANGES_REQUESTED — fix before merge.');
+            if (cr) {
+              if (cr.state === 'CHANGES_REQUESTED') {
+                core.setFailed('CodeRabbit has CHANGES_REQUESTED — fix before merge.');
+              }
+              console.log('CodeRabbit state:', cr.state);
+              return;
             }
-            console.log('CodeRabbit state:', cr?.state ?? 'no review');
+            const { data: checks } = await github.rest.checks.listForRef({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              ref: context.sha,
+              check_name: 'CodeRabbit',
+            });
+            const crCheck = checks.check_runs?.[0];
+            if (crCheck?.status === 'completed' && crCheck?.conclusion === 'success') {
+              console.log('CodeRabbit review skipped (no code changes) — allow.');
+            } else {
+              core.setFailed('No CodeRabbit review — block.');
+            }
 
   # ── Gate 4: Drift / Arch Guard (BLOCKING) ──────────────────────────────
   drift-guard:
