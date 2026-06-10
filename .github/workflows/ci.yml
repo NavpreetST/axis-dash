@@ -106,18 +106,27 @@ jobs:
               }
               return;
             }
-            const { data: checks } = await github.rest.checks.listForRef({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              ref,
-              check_name: 'CodeRabbit',
-            });
-            const crCheck = checks.check_runs?.[0];
-            if (crCheck?.status === 'completed' && crCheck?.conclusion === 'success') {
-              console.log('CodeRabbit review approved (no code changes).');
-            } else {
-              core.setFailed(`No CodeRabbit review on head commit — block. (CR status=${crCheck?.status}, conclusion=${crCheck?.conclusion})`);
+            const refs = [context.sha, ref, 'refs/pull/' + context.issue.number + '/head'];
+            for (const r of refs) {
+              try {
+                const { data: c } = await github.rest.checks.listForRef({
+                  owner: context.repo.owner, repo: context.repo.repo, ref: r,
+                });
+                const found = c.check_runs?.find(x => x.name === 'CodeRabbit');
+                if (found) {
+                  console.log(`CR check found at ref=${r}: status=${found.status}, conclusion=${found.conclusion}`);
+                  if (found.status === 'completed' && found.conclusion === 'success') {
+                    console.log('CodeRabbit review skipped — allow.');
+                  } else {
+                    core.setFailed(`CodeRabbit check: status=${found.status}, conclusion=${found.conclusion}`);
+                  }
+                  return;
+                }
+              } catch (e) {
+                console.log(`checks.listForRef(${r}) failed: ${e.message}`);
+              }
             }
+            core.setFailed('No CodeRabbit review — block (none of the refs matched).');
 
   # ── Gate 4: Drift / Arch Guard (BLOCKING) ──────────────────────────────
   drift-guard:
