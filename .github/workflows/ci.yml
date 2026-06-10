@@ -76,7 +76,7 @@ jobs:
     runs-on: ubuntu-latest
     if: always()
     steps:
-      - uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
+      - uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea # v7.0.1 pinned
         with:
           script: |
             const { data: reviews } = await github.rest.pulls.listReviews({
@@ -84,8 +84,7 @@ jobs:
               repo: context.repo.repo,
               pull_number: context.issue.number,
             });
-            const crReviews = reviews.filter(r => r.user?.login === 'coderabbitai');
-            const latestCR = crReviews.at(-1);
+            const latestCR = [...reviews].reverse().find(r => r.user?.login === 'coderabbitai');
             if (!latestCR) {
               core.setFailed('CodeRabbit review is still pending — wait for approval before merge.');
             } else if (latestCR.state === 'CHANGES_REQUESTED') {
