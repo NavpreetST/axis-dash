@@ -64,7 +64,8 @@ _SANDBOX_ALLOWLIST: frozenset[str] = frozenset(
 )
 
 # Hard timeout for a single opencode run subprocess (loop guard).
-_RUN_TIMEOUT_SECONDS: float = 120.0
+# Configurable via env var (e.g. MAX_FORGE_TIMEOUT=300 for T4/multi-file tasks).
+_RUN_TIMEOUT_SECONDS: float = float(os.getenv("MAX_FORGE_TIMEOUT", "300"))
 
 
 class ForgeManager:

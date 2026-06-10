@@ -104,7 +104,7 @@ async def _fetch_open_tasks() -> list[dict]:
         "status": "eq.open",
         "phase": "eq.forge",
         "limit": "1",
-        "order": "created_at.asc",
+        "order": "created_at.asc,id.asc",
     }
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
