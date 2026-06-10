@@ -116,6 +116,10 @@ jobs:
             { owner: context.repo.owner, repo: context.repo.repo, pull_number: context.issue.number }
           );
           const cr = [...reviews].reverse().find(r => r.user?.login === 'coderabbitai[bot]');
+          if (context.eventName !== 'pull_request') {
+            console.log('Not a pull_request event — skipping CodeRabbit check.');
+            return;
+          }
           if (!cr) {
             core.setFailed('No CodeRabbit review found — block until review completes.');
             return;
