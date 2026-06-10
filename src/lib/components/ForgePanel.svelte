@@ -157,11 +157,35 @@
   {#if submittedTaskId}
     {@const detail = $forgeDetail}
     {@const ts = $forgeLastPoll}
+    {@const isFinal =
+      detail && ['completed', 'gated', 'rejected', 'failed'].includes(detail.status)}
     <div
-      class="flex flex-col gap-1.5 rounded-lg border border-accent-cyan/20 bg-accent-cyan/5 px-3 py-2 font-mono text-[10px]"
+      class="flex flex-col gap-1.5 rounded-lg border px-3 py-2 font-mono text-[10px]
+        {isFinal && detail.status === 'completed'
+        ? 'border-signal-green/20 bg-signal-green/5'
+        : isFinal
+          ? 'border-signal-red/20 bg-signal-red/5'
+          : 'border-accent-cyan/20 bg-accent-cyan/5'}"
     >
       <div class="flex items-center justify-between">
-        <span class="font-semibold text-accent-cyan">submitted</span>
+        <span
+          class="flex items-center gap-1.5 font-semibold {isFinal && detail.status === 'completed'
+            ? 'text-signal-green'
+            : 'text-accent-cyan'}"
+        >
+          {#if isFinal && detail.status === 'completed'}
+            <svg
+              class="h-3 w-3"
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke-width="2.5"
+              stroke="currentColor"
+            >
+              <path stroke-linecap="round" stroke-linejoin="round" d="m4.5 12.75 6 6 9-13.5" />
+            </svg>
+          {/if}
+          {isFinal ? (detail.status === 'completed' ? 'complete' : detail.status) : 'running'}
+        </span>
         <span class="text-text-muted">id: {submittedTaskId.slice(0, 12)}</span>
       </div>
       {#if detail}
@@ -190,7 +214,12 @@
       {:else if $forgeConnStatus === 'error'}
         <div class="text-signal-red">waiting for status…</div>
       {:else}
-        <div class="text-text-muted">waiting for status…</div>
+        <div class="flex items-center gap-2">
+          <div
+            class="h-3 w-3 animate-spin rounded-full border border-bg-void border-t-accent-cyan"
+          ></div>
+          <span class="text-text-muted">waiting for status…</span>
+        </div>
       {/if}
     </div>
   {/if}
@@ -201,7 +230,16 @@
     <div
       class="flex w-48 shrink-0 scrollbar-thin flex-col gap-1 overflow-y-auto border-r border-hairline pr-3"
     >
-      {#if $forgeTasks.length === 0}
+      {#if $forgeConnStatus === 'loading'}
+        <div
+          class="flex flex-1 items-center justify-center gap-2 font-mono text-[10px] text-text-muted"
+        >
+          <div
+            class="h-3 w-3 animate-spin rounded-full border border-bg-void border-t-accent-cyan"
+          ></div>
+          loading…
+        </div>
+      {:else if $forgeTasks.length === 0}
         <div class="flex flex-1 items-center justify-center font-mono text-[10px] text-text-muted">
           no tasks yet
         </div>
@@ -234,7 +272,12 @@
           select a task to view details
         </div>
       {:else if !$forgeDetail && $forgeConnStatus !== 'error'}
-        <div class="flex flex-1 items-center justify-center font-mono text-[10px] text-text-muted">
+        <div
+          class="flex flex-1 items-center justify-center gap-2 font-mono text-[10px] text-text-muted"
+        >
+          <div
+            class="h-3 w-3 animate-spin rounded-full border border-bg-void border-t-accent-cyan"
+          ></div>
           loading task…
         </div>
       {:else if $forgeDetail}
