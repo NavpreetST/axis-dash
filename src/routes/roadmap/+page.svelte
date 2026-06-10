@@ -1,20 +1,46 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import { goto } from '$app/navigation';
   import { supabase, fetchPhases, type Phase } from '$lib/supabase';
+
+  const REFRESH_MS = 30000;
 
   let phases = $state<Phase[]>([]);
   let loading = $state(true);
+  let updating = $state(false);
 
   let currentPhase = $derived(phases.find((p) => p.status === 'active'));
 
-  onMount(async () => {
+  async function loadData() {
     if (!supabase) {
       loading = false;
       return;
     }
     phases = await fetchPhases();
     loading = false;
+    updating = false;
+  }
+
+  onMount(() => {
+    loadData();
+
+    const intervalId = setInterval(async () => {
+      updating = true;
+      await loadData();
+    }, REFRESH_MS);
+
+    return () => clearInterval(intervalId);
   });
+
+  let collapsed = $state<Record<number, boolean>>({});
+
+  function toggleCollapse(id: number) {
+    collapsed[id] = !collapsed[id];
+  }
+
+  function goToPhase(title: string) {
+    goto(`/todo?phase=${encodeURIComponent(title)}`);
+  }
 
   function statusColor(s: string): string {
     switch (s) {
@@ -108,10 +134,16 @@
       <p class="font-mono text-xs text-text-muted">No phases found in Supabase.</p>
     </div>
   {:else}
-    <div class="flex items-center gap-3">
+    <div class="flex flex-wrap items-center gap-3">
       <h1 class="font-mono text-lg font-bold tracking-widest text-text-primary uppercase">
         Roadmap
       </h1>
+      {#if updating}
+        <span
+          class="rounded border border-accent-cyan/25 bg-accent-cyan/10 px-2 py-0.5 font-mono text-[9px] text-accent-cyan"
+          >updating…</span
+        >
+      {/if}
       {#if currentPhase}
         <span
           class="rounded border border-accent-cyan/25 bg-accent-cyan/10 px-2 py-0.5 font-mono text-[10px] text-accent-cyan"
@@ -121,72 +153,111 @@
       {/if}
     </div>
 
-    <div class="flex flex-1 scrollbar-thin flex-col gap-4 overflow-y-auto">
+    <div class="grid flex-1 grid-cols-1 gap-3 overflow-y-auto md:grid-cols-2">
       {#each phases as phase (phase.id)}
         <div
-          class="rounded-[20px] border bg-bg-panel p-5 transition hover:bg-white/[0.02]
-          {phase.status === 'active' ? 'border-accent-cyan/30' : 'border-hairline'}"
+          class="cursor-pointer rounded-xl border bg-bg-panel p-3 transition hover:bg-white/[0.02]
+          {phase.status === 'active' ? 'border-accent-cyan/25' : 'border-hairline'}"
+          onclick={() => goToPhase(phase.title)}
+          role="button"
+          tabindex="0"
+          onkeydown={(e) => e.key === 'Enter' && goToPhase(phase.title)}
         >
-          <div class="flex items-start justify-between gap-4">
+          <div class="flex items-center justify-between gap-2">
             <div class="min-w-0 flex-1">
-              <div class="flex items-center gap-2.5">
-                <div class="h-2.5 w-2.5 shrink-0 rounded-full {statusColor(phase.status)}"></div>
-                <h2 class="font-mono text-base font-bold text-text-primary">
+              <div class="flex items-center gap-2">
+                <div
+                  class="h-2 w-2 shrink-0 rounded-full {statusColor(phase.status)}"
+                  title={statusLabel(phase.status)}
+                ></div>
+                <h2 class="truncate font-mono text-sm font-bold text-text-primary">
                   {phase.title}
                 </h2>
                 {#if phase.codename}
                   <span
-                    class="rounded border border-hairline bg-bg-void px-1.5 py-px font-mono text-[9px] text-text-muted"
+                    class="hidden shrink-0 rounded border border-hairline bg-bg-void px-1 py-px font-mono text-[8px] text-text-muted sm:inline"
                     >{phase.codename}</span
                   >
                 {/if}
-                <span class="font-mono text-[9px] uppercase {statusTextClass(phase.status)}"
+                <span
+                  class="shrink-0 font-mono text-[8px] uppercase {statusTextClass(phase.status)}"
                   >{statusLabel(phase.status)}</span
                 >
               </div>
 
-              {#if phase.headline}
-                <p class="mt-1.5 font-sans text-[11px] leading-relaxed text-text-muted">
+              {#if phase.headline && !collapsed[phase.id]}
+                <p class="mt-1 truncate font-sans text-[10px] leading-snug text-text-muted">
                   {phase.headline}
                 </p>
               {/if}
 
-              <div class="mt-3 flex items-center gap-4 font-mono text-[10px] text-text-muted">
-                {#if phase.timeline}
-                  <span>{phase.timeline}</span>
-                {/if}
-                <div class="flex items-center gap-1.5">
-                  <div class="h-1.5 w-24 overflow-hidden rounded-full bg-bg-void">
-                    <div
-                      class="h-full rounded-full transition-all duration-500 {progressColor(
-                        phase.completion_pct
-                      )}"
-                      style="width: {Math.min(phase.completion_pct, 100)}%"
-                    ></div>
+              {#if !collapsed[phase.id]}
+                <div class="mt-2 flex items-center gap-3 font-mono text-[9px] text-text-muted">
+                  {#if phase.timeline}
+                    <span>{phase.timeline}</span>
+                  {/if}
+                  <div class="flex items-center gap-1">
+                    <div class="h-1.5 w-20 overflow-hidden rounded-full bg-bg-void">
+                      <div
+                        class="h-full rounded-full transition-all duration-500 {progressColor(
+                          phase.completion_pct
+                        )}"
+                        style="width: {Math.min(phase.completion_pct, 100)}%"
+                      ></div>
+                    </div>
+                    <span
+                      class={phase.completion_pct >= 100
+                        ? 'text-signal-green'
+                        : phase.completion_pct > 0
+                          ? 'text-accent-cyan'
+                          : 'text-text-muted'}>{phase.completion_pct}%</span
+                    >
                   </div>
-                  <span
-                    class={phase.completion_pct >= 100
-                      ? 'text-signal-green'
-                      : phase.completion_pct > 0
-                        ? 'text-accent-cyan'
-                        : 'text-text-muted'}>{phase.completion_pct}%</span
-                  >
                 </div>
-              </div>
 
-              {#if phase.exit_criteria}
-                <details class="group mt-2">
-                  <summary
-                    class="cursor-pointer font-mono text-[9px] text-text-muted transition hover:text-text-primary"
-                  >
-                    Exit criteria
-                  </summary>
-                  <p class="mt-1 font-sans text-[10px] leading-relaxed text-text-muted">
-                    {phase.exit_criteria}
-                  </p>
-                </details>
+                {#if phase.exit_criteria}
+                  <details class="group mt-1.5">
+                    <summary
+                      class="cursor-pointer font-mono text-[8px] text-text-muted transition hover:text-text-primary"
+                      onclick={(e) => e.stopPropagation()}
+                      onkeydown={(e) => e.key === 'Enter' && e.stopPropagation()}
+                    >
+                      Exit criteria
+                    </summary>
+                    <p class="mt-0.5 font-sans text-[9px] leading-relaxed text-text-muted">
+                      {phase.exit_criteria}
+                    </p>
+                  </details>
+                {/if}
               {/if}
             </div>
+            <button
+              onclick={(e) => {
+                e.stopPropagation();
+                toggleCollapse(phase.id);
+              }}
+              onkeydown={(e) => {
+                e.stopPropagation();
+                if (e.key === 'Enter') toggleCollapse(phase.id);
+              }}
+              class="flex shrink-0 items-center justify-center rounded p-0.5 transition hover:bg-white/[0.05]"
+              aria-label="Toggle phase details"
+            >
+              <svg
+                class="h-3 w-3 text-text-muted transition {collapsed[phase.id] ? '-rotate-90' : ''}"
+                xmlns="http://www.w3.org/2000/svg"
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke-width="2"
+                stroke="currentColor"
+              >
+                <path
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  d="m19.5 8.25-7.5 7.5-7.5-7.5"
+                />
+              </svg>
+            </button>
           </div>
         </div>
       {/each}

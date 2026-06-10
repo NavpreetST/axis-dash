@@ -27,7 +27,7 @@
 </svelte:head>
 
 <!-- Main Grid Content — always visible, cards handle offline inline -->
-<div class="mx-auto flex w-full max-w-[1100px] flex-col gap-6">
+<div class="mx-auto flex w-full max-w-[1100px] flex-col gap-5">
   <!-- KPI Strip -->
   <KpiStrip />
 
