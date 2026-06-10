@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { page } from '$app/stores';
-  import { supabase, fetchTasks, type Task } from '$lib/supabase';
+  import { supabase, fetchTasks, fetchPhases, createTask, type Task, type Phase, type NewTaskInput } from '$lib/supabase';
   import { config } from '$lib/config';
   import { fetchPRGates, type PRGateCheck } from '$lib/api/forgeClient';
 
@@ -16,6 +16,15 @@
   let phaseFilter = $state('all');
   let statusFilter = $state('all');
   let priorityFilter = $state('all');
+
+  let showForm = $state(false);
+  let newTitle = $state('');
+  let newDesc = $state('');
+  let newPhase = $state('');
+  let newPriority: 'high' | 'medium' | 'low' = $state('medium');
+  let submitting = $state(false);
+  let confirmMsg = $state<string | null>(null);
+  let phases = $state<Phase[]>([]);
 
   let phaseNames = $derived([...new Set(tasks.map((t) => t.phase))].sort());
 
@@ -63,10 +72,37 @@
     updating = false;
   }
 
+  async function handleCreateTask() {
+    if (!newTitle.trim() || submitting) return;
+    submitting = true;
+    confirmMsg = null;
+    const result = await createTask({
+      title: newTitle.trim(),
+      description: newDesc.trim() || undefined,
+      phase: newPhase || undefined,
+      priority: newPriority,
+    });
+    submitting = false;
+    if (result) {
+      newTitle = '';
+      newDesc = '';
+      newPhase = '';
+      newPriority = 'medium';
+      showForm = false;
+      confirmMsg = 'Task created successfully.';
+      await loadData();
+      setTimeout(() => (confirmMsg = null), 3000);
+    } else {
+      confirmMsg = 'Failed to create task.';
+      setTimeout(() => (confirmMsg = null), 3000);
+    }
+  }
+
   onMount(() => {
     const phaseParam = $page.url.searchParams.get('phase');
     if (phaseParam) phaseFilter = phaseParam;
 
+    fetchPhases().then((p) => (phases = p));
     loadData();
 
     const intervalId = setInterval(async () => {
@@ -219,7 +255,83 @@
         <option value="medium">Medium</option>
         <option value="low">Low</option>
       </select>
+      <div class="ml-auto">
+        <button
+          onclick={() => (showForm = !showForm)}
+          class="cursor-pointer rounded-lg bg-accent-cyan px-3 py-1.5 font-mono text-[10px] font-semibold text-bg-void transition hover:bg-accent-cyan/80"
+        >
+          {showForm ? 'Cancel' : '+ New Task'}
+        </button>
+      </div>
     </div>
+
+    {#if confirmMsg}
+      <div
+        class="rounded-lg border px-3 py-2 font-mono text-xs {confirmMsg === 'Task created successfully.'
+          ? 'border-signal-green/20 bg-signal-green/5 text-signal-green'
+          : 'border-signal-red/20 bg-signal-red/5 text-signal-red'}"
+      >
+        {confirmMsg}
+      </div>
+    {/if}
+
+    {#if showForm}
+      <div class="rounded-[20px] border border-hairline bg-bg-panel p-4">
+        <h3
+          class="mb-3 font-mono text-xs font-bold tracking-wider text-text-primary uppercase"
+        >
+          New Task
+        </h3>
+        <div class="flex flex-col gap-3">
+          <input
+            type="text"
+            placeholder="Title (required)"
+            bind:value={newTitle}
+            class="w-full rounded-lg border border-hairline bg-bg-void px-3 py-2 font-mono text-xs text-text-primary outline-none placeholder:text-text-muted focus:border-accent-cyan"
+          />
+          <textarea
+            placeholder="Description (optional)"
+            bind:value={newDesc}
+            rows="3"
+            class="w-full resize-y rounded-lg border border-hairline bg-bg-void px-3 py-2 font-mono text-xs text-text-primary outline-none placeholder:text-text-muted focus:border-accent-cyan"
+          ></textarea>
+          <div class="flex gap-3">
+            <select
+              bind:value={newPhase}
+              class="flex-1 cursor-pointer rounded-lg border border-hairline bg-bg-void px-3 py-2 font-mono text-xs text-text-primary outline-none focus:border-accent-cyan"
+            >
+              <option value="">Phase (optional)</option>
+              {#each phases as phase (phase.id)}
+                <option value={phase.title}>{phase.title}</option>
+              {/each}
+            </select>
+            <select
+              bind:value={newPriority}
+              class="flex-1 cursor-pointer rounded-lg border border-hairline bg-bg-void px-3 py-2 font-mono text-xs text-text-primary outline-none focus:border-accent-cyan"
+            >
+              <option value="medium">Priority: Medium</option>
+              <option value="high">Priority: High</option>
+              <option value="low">Priority: Low</option>
+            </select>
+          </div>
+          <div class="flex justify-end gap-2">
+            <button
+              onclick={() => (showForm = false)}
+              class="cursor-pointer rounded-lg border border-hairline px-3 py-1.5 font-mono text-[10px] text-text-muted transition hover:bg-white/5"
+            >
+              Cancel
+            </button>
+            <button
+              onclick={handleCreateTask}
+              disabled={!newTitle.trim() || submitting}
+              class="cursor-pointer rounded-lg bg-accent-cyan px-3 py-1.5 font-mono text-[10px] font-semibold text-bg-void transition hover:bg-accent-cyan/80 disabled:cursor-not-allowed disabled:opacity-30"
+            >
+              {submitting ? 'Creating…' : 'Create Task'}
+            </button>
+          </div>
+        </div>
+      </div>
+    {/if}
 
     {#if filtered.length === 0}
       <div

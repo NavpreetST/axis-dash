@@ -51,6 +51,39 @@ export interface GateStatus {
   updated_at: string;
 }
 
+export interface NewTaskInput {
+  title: string;
+  description?: string;
+  phase?: string;
+  priority?: 'high' | 'medium' | 'low';
+}
+
+export async function createTask(input: NewTaskInput): Promise<Task | null> {
+  if (!supabase) return null;
+  const { data, error } = await supabase
+    .from('tasks')
+    .insert({
+      title: input.title,
+      description: input.description ?? '',
+      phase: input.phase ?? '',
+      owner: '',
+      priority: input.priority ?? 'medium',
+      status: 'open',
+      branch: '',
+      pr_number: null,
+      repo: '',
+      gates_passed: 0,
+      gates_total: 0,
+    })
+    .select()
+    .single();
+  if (error) {
+    console.error('[supabase] createTask error:', error);
+    return null;
+  }
+  return data;
+}
+
 export async function fetchTasks(): Promise<Task[]> {
   if (!supabase) return [];
   const { data, error } = await supabase
