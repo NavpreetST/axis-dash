@@ -5,7 +5,6 @@ on:
     branches: [main]
   pull_request_review:
     types: [submitted, edited, dismissed]
-    branches: [main]
 
 permissions:
   contents: read
@@ -78,17 +77,25 @@ jobs:
   coderabbit-check:
     name: 'Gate 3 · CodeRabbit'
     runs-on: ubuntu-latest
-    if: always()
+    if: always() && (github.event_name != 'pull_request_review' || github.event.pull_request.base.ref == 'main')
     steps:
       - uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea # v7.0.1 pinned
         with:
           script: |
+            const { data: pr } = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.issue.number,
+            });
+            const ref = pr.head.sha;
             const { data: reviews } = await github.rest.pulls.listReviews({
               owner: context.repo.owner,
               repo: context.repo.repo,
               pull_number: context.issue.number,
             });
-            const latestCR = [...reviews].reverse().find(r => r.user?.login === 'coderabbitai');
+            const latestCR = [...reviews].reverse().find(
+              r => r.user?.login === 'coderabbitai' && r.commit_id === ref
+            );
             if (latestCR) {
               if (latestCR.state === 'CHANGES_REQUESTED') {
                 core.setFailed(`CodeRabbit has CHANGES_REQUESTED — address comments before merge.`);
@@ -99,12 +106,6 @@ jobs:
               }
               return;
             }
-            const { data: pr } = await github.rest.pulls.get({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              pull_number: context.issue.number,
-            });
-            const ref = pr.head.sha;
             const { data: checks } = await github.rest.checks.listForRef({
               owner: context.repo.owner,
               repo: context.repo.repo,
@@ -113,9 +114,9 @@ jobs:
             });
             const crCheck = checks.check_runs?.[0];
             if (crCheck?.status === 'completed' && crCheck?.conclusion === 'success') {
-              console.log('CodeRabbit review skipped (no code changes) — allow.');
+              console.log('CodeRabbit review approved (no code changes).');
             } else {
-              core.setFailed(`No CodeRabbit review — block. (CR status=${crCheck?.status}, conclusion=${crCheck?.conclusion})`);
+              core.setFailed(`No CodeRabbit review on head commit — block. (CR status=${crCheck?.status}, conclusion=${crCheck?.conclusion})`);
             }
 
   # ── Gate 4: Drift / Arch Guard (BLOCKING) ──────────────────────────────
