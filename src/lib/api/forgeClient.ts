@@ -27,6 +27,8 @@ export interface ForgeTaskDetail {
   completed_at: number | null;
   error: string | null;
   gate_result: GateResult | null;
+  pr_number?: number | null;
+  repo?: string | null;
 }
 
 export interface ForgeDiffFile {
