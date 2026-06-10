@@ -7,6 +7,7 @@ on:
 permissions:
   contents: read
   pull-requests: read
+  checks: read
 
 concurrency:
   group: ci-${{ github.head_ref || github.run_id }}
@@ -85,14 +86,27 @@ jobs:
               pull_number: context.issue.number,
             });
             const latestCR = [...reviews].reverse().find(r => r.user?.login === 'coderabbitai');
-            if (!latestCR) {
-              core.setFailed('CodeRabbit review is still pending — wait for approval before merge.');
-            } else if (latestCR.state === 'CHANGES_REQUESTED') {
-              core.setFailed(`CodeRabbit has CHANGES_REQUESTED — address comments before merge.`);
-            } else if (latestCR.state === 'APPROVED') {
-              console.log('CodeRabbit review approved.');
+            if (latestCR) {
+              if (latestCR.state === 'CHANGES_REQUESTED') {
+                core.setFailed(`CodeRabbit has CHANGES_REQUESTED — address comments before merge.`);
+              } else if (latestCR.state === 'APPROVED') {
+                console.log('CodeRabbit review approved.');
+              } else {
+                core.setFailed(`Latest CodeRabbit review is ${latestCR.state} — approval is required before merge.`);
+              }
+              return;
+            }
+            const { data: checks } = await github.rest.checks.listForRef({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              ref: context.sha,
+              check_name: 'CodeRabbit',
+            });
+            const crCheck = checks.check_runs?.[0];
+            if (crCheck?.status === 'completed' && crCheck?.conclusion === 'success') {
+              console.log('CodeRabbit review skipped (no code changes) — allow.');
             } else {
-              core.setFailed(`Latest CodeRabbit review is ${latestCR.state} — approval is required before merge.`);
+              core.setFailed('No CodeRabbit review — block.');
             }
 
   # ── Gate 4: Drift / Arch Guard (BLOCKING) ──────────────────────────────
