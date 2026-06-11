@@ -142,14 +142,34 @@ def retrieve(query_emb: list[float], query_text: str = "", k: int = TOP_K) -> li
         for score, _id, text, ts in scored[:k]
     ]
     seed = _seed_rows()
+    sf_cur = CONN.execute(
+        "SELECT id, subj, pred, obj, confidence, embedding "
+        "FROM semantic_facts WHERE confidence >= 0.5 AND embedding IS NOT NULL"
+    )
+    sf_hits = []
+    for row in sf_cur.fetchall():
+        sf_emb = _blob_to_emb(row[5])
+        if sf_emb.shape == q.shape:
+            sim = float(np.dot(q, sf_emb))
+            text = f"FACT: {row[1]} {row[2]} {row[3]}"
+            sf_hits.append({"id": f"sf-{row[0]}", "text": text, "ts": time.time(), "kind": "semantic", "score": sim})
+    sf_hits.sort(key=lambda x: x["score"], reverse=True)
     knowledge = _search_knowledge(query_text) if query_text else []
     for h in knowledge:
         h["kind"] = "kb"
 
-    candidates = seed + knowledge + cosine_hits
+    # seed facts reliably first, then top-k cosine hits
     seen: set[str] = set()
     merged = []
-    for h in sorted(candidates, key=lambda x: x.get("score", 0.0), reverse=True):
+    for h in seed:
+        if h["id"] not in seen:
+            merged.append(h)
+            seen.add(h["id"])
+    for h in cosine_hits:
+        if h["id"] not in seen:
+            merged.append(h)
+            seen.add(h["id"])
+    for h in knowledge:
         if h["id"] not in seen:
             merged.append(h)
             seen.add(h["id"])

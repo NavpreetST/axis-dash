@@ -5,5 +5,12 @@
     "edit": "allow",
     "write": "allow",
     "bash": "allow"
+  },
+  "mcp": {
+    "colab": {
+      "type": "local",
+      "command": ["uvx", "git+https://github.com/googlecolab/colab-mcp", "--ws-port", "34021"],
+      "enabled": true
+    }
   }
 }

@@ -92,6 +92,8 @@ def hidden_state_vec() -> list[float]:
 WM: deque[list[float]] = deque(maxlen=WM_SLOTS)
 LAST_ACTION_EMB = [0.0] * ACTION_EMB_DIM
 CONTEXT_TEXTS: list[str] = []
+_MEMORY_PENDING = False
+_MEM_EVENT = asyncio.Event()
 LAST_TEXT_INPUT = ""
 
 
@@ -146,10 +148,12 @@ async def run() -> None:
     mem_q  = BUS.subscribe("memory.retrieved")
 
     async def consume_text() -> None:
-        global LAST_TEXT_INPUT
+        global LAST_TEXT_INPUT, _MEMORY_PENDING
         while True:
             msg = await text_q.get()
             LAST_TEXT_INPUT = msg.payload["text"]
+            _MEMORY_PENDING = True
+            _MEM_EVENT.clear()
             emb = msg.payload["embedding"]
             chunk = max(1, len(emb) // WM_DIM)
             WM.append([
@@ -158,10 +162,13 @@ async def run() -> None:
             ])
 
     async def consume_mem() -> None:
+        global _MEMORY_PENDING
         while True:
             msg = await mem_q.get()
             CONTEXT_TEXTS.clear()
             CONTEXT_TEXTS.extend(msg.payload.get("texts", [])[:10])
+            _MEMORY_PENDING = False
+            _MEM_EVENT.set()
 
     async def consume_tick() -> None:
         global LAST_TEXT_INPUT, _last_crash_emit
@@ -195,6 +202,11 @@ async def run() -> None:
                         log.debug("ncp: failed to emit crash event", exc_info=True)
                 log.warning("ncp: forward-pass error — %s", e)
                 continue
+            if _MEMORY_PENDING:
+                try:
+                    await asyncio.wait_for(_MEM_EVENT.wait(), timeout=2.0)
+                except asyncio.TimeoutError:
+                    pass
             action = "speak"  # nudge: v1 brain is random-init, always speak (was: noop->speak only)
             await BUS.publish("intent.packet", {
                 "action":        action,

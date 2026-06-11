@@ -4,16 +4,83 @@
   "title": "aegis-event",
   "description": "Canonical event envelope for all aegis subsystem sources.",
   "type": "object",
-  "required": ["schema_version","timestamp","source","event_type","payload","severity","provenance","sensitivity"],
+  "required": [
+    "schema_version",
+    "timestamp",
+    "source",
+    "event_type",
+    "payload",
+    "severity",
+    "provenance",
+    "sensitivity"
+  ],
   "properties": {
-    "schema_version": { "type": "integer", "const": 1, "description": "Schema version; currently 1." },
-    "timestamp": { "type": "string", "format": "date-time", "description": "ISO-8601 timestamp of when the event was produced." },
-    "source": { "enum": ["notion","antigravity","opencode","helios","aegis","coderabbit","ci"], "description": "Subsystem that produced the event." },
-    "event_type": { "enum": ["chat_turn","error","task_created","task_updated","task_done","pr_opened","review_posted","gate_result","merge","drift_flag"], "description": "Semantic event kind." },
-    "payload": { "type": "object", "description": "Event-specific data; shape varies by event_type." },
-    "severity": { "enum": ["info","warn","error","critical"], "description": "Severity level of the event." },
-    "provenance": { "type": "object", "description": "Traceability metadata (commit, run-id, trigger)." },
-    "sensitivity": { "enum": ["public","internal","secret"], "description": "Data classification of the event payload." }
+    "schema_version": {
+      "type": "integer",
+      "const": 1,
+      "description": "Schema version; currently 1."
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO-8601 timestamp of when the event was produced."
+    },
+    "source": {
+      "enum": [
+        "notion",
+        "antigravity",
+        "opencode",
+        "helios",
+        "aegis",
+        "coderabbit",
+        "ci",
+        "cr_watcher"
+      ],
+      "description": "Subsystem that produced the event."
+    },
+    "event_type": {
+      "enum": [
+        "chat_turn",
+        "error",
+        "task_created",
+        "task_updated",
+        "task_done",
+        "pr_opened",
+        "review_posted",
+        "gate_result",
+        "merge",
+        "drift_flag",
+        "cr_changes_requested",
+        "cr_heal_attempt",
+        "cr_flag"
+      ],
+      "description": "Semantic event kind."
+    },
+    "payload": {
+      "type": "object",
+      "description": "Event-specific data; shape varies by event_type."
+    },
+    "severity": {
+      "enum": [
+        "info",
+        "warn",
+        "error",
+        "critical"
+      ],
+      "description": "Severity level of the event."
+    },
+    "provenance": {
+      "type": "object",
+      "description": "Traceability metadata (commit, run-id, trigger)."
+    },
+    "sensitivity": {
+      "enum": [
+        "public",
+        "internal",
+        "secret"
+      ],
+      "description": "Data classification of the event payload."
+    }
   },
   "additionalProperties": false
 }

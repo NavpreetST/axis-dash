@@ -27,6 +27,14 @@ import urllib.request
 import urllib.error
 from datetime import UTC, datetime
 from pathlib import Path
+_env = Path(__file__).resolve().parent.parent.parent / ".env"
+if _env.exists():
+    for line in _env.read_text().splitlines():
+        line = line.strip()
+        if line and not line.startswith("#") and "=" in line:
+            k, v = line.split("=", 1)
+            os.environ.setdefault(k.strip(), v.strip())
+
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect

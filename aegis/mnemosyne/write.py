@@ -18,6 +18,7 @@ from aegis.nexus.bus import BUS
 from aegis.nexus.neurobus import STATE as NEURO_STATE
 
 from .db import CONN
+from .t2_semantic import extract_facts, insert_batch
 
 log = logging.getLogger("mnemosyne.write")
 
@@ -58,6 +59,14 @@ async def run() -> None:
             )
             CONN.commit()
             _EVENT_QUEUE.append({"tier": "T1", "op": "write", "ts": time.time()})
+            try:
+                user_text = msg.payload['text']
+                facts = extract_facts(user_text, source=f"user_turn")
+                if facts:
+                    insert_batch(facts)
+                    log.debug("t2: extracted %d facts", len(facts))
+            except Exception:
+                log.debug("t2: extraction failed", exc_info=True)
             log.debug("stored user turn")
 
     async def consume_speak() -> None:
