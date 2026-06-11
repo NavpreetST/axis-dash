@@ -199,21 +199,31 @@ def run_eval(path: Path = NCP_TRACE_PATH) -> EvalReport:
 
 # ── spec runner (replaces MSE gate with behavioral predicates) ────────────
 
+_HARD_GATE_NAMES = {"ablation_brain", "ablation_zero"}
+
 @dataclass
 class SpecReport:
     spec: str
     n: int
-    passed: int
     pass_rate: float
+    passed: bool
+    is_hard_gate: bool = False
     details: list[dict] = field(default_factory=list)
 
     def summary(self) -> str:
-        status = "✅" if self.passed == self.n else ("⚠️" if self.pass_rate > 0.5 else "❌")
-        return f"  {status} {self.spec}: {self.passed}/{self.n} ({self.pass_rate:.1%})"
+        if self.is_hard_gate:
+            # Hard gates are go/no-go, not averaged into anything
+            status = "✅" if self.passed else "🚨 FAIL"
+            return f"  [{status}] {self.spec} (HARD GATE): {'PASS' if self.passed else 'BRAIN IS DECORATIVE'}"
+        status = "✅" if self.passed else "❌"
+        return f"  {status} {self.spec}: {self.pass_rate:.1%} ({'PASS' if self.passed else 'FAIL'})"
 
 
 def run_specs(datasets: list[SpecDataset]) -> list[SpecReport]:
     """Run brain forward pass on each spec dataset and evaluate predicates.
+
+    Returns per-spec reports.  Hard gates (ablation) are reported with
+    is_hard_gate=True and must NEVER be averaged into a composite score.
 
     Lazy-imports BRAIN so this works without torch at import time.
     """
@@ -226,20 +236,40 @@ def run_specs(datasets: list[SpecDataset]) -> list[SpecReport]:
 
     for ds in datasets:
         if not ds.episodes:
-            reports.append(SpecReport(spec=ds.name, n=0, passed=0, pass_rate=0.0, details=[]))
+            reports.append(SpecReport(spec=ds.name, n=0, pass_rate=0.0, passed=False, details=[]))
             continue
 
         inputs = ds.inputs.to(device)
+
+        baseline_outputs = None
+        if ds.baseline_inputs is not None:
+            bl = ds.baseline_inputs.to(device)
+            with torch.no_grad():
+                BRAIN.hx = None
+                baseline_outputs = BRAIN(bl.unsqueeze(1)).squeeze(1)
+
         with torch.no_grad():
             BRAIN.hx = None
             outputs = BRAIN(inputs.unsqueeze(1)).squeeze(1)
 
-        result = ds.evaluate(outputs.cpu())
+        result = ds.evaluate(
+            outputs.cpu(),
+            baseline_outputs=baseline_outputs.cpu() if baseline_outputs is not None else None,
+        )
+
+        is_hard = ds.name in _HARD_GATE_NAMES
+        pass_rate = result["pass_rate"]
+        if is_hard:
+            passed = pass_rate > 0.0  # any detectable signal means non-decorative
+        else:
+            passed = pass_rate >= 0.8  # 80% per-spec threshold
+
         reports.append(SpecReport(
             spec=result["spec"],
             n=result["n"],
-            passed=result["passed"],
-            pass_rate=result["pass_rate"],
+            pass_rate=pass_rate,
+            passed=passed,
+            is_hard_gate=is_hard,
             details=result["details"],
         ))
 
