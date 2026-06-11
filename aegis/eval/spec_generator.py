@@ -212,9 +212,14 @@ class SpecGenerator:
     def threat_urgency(self, n: int = 512) -> SpecDataset:
         """Sweep NeuroBus threat value, hold everything else fixed.
 
-        Predicate: Spearman ρ(threat, urgency) > 0.8.
-        ρ is properly ordinal — ranks matter, not magnitudes.
-        The threshold 0.8 is set against the empirical floor (ρ ≈ 0 at random init).
+        Predicate: Spearman ρ(threat, urgency) > 0.8 AND
+                   top-quartile mean urgency > 0.5.
+
+        ρ ensures ordinal correctness (higher threat → higher urgency).
+        Top-quartile > 0.5 ensures the magnitude reaches the action gate
+        threshold.  The urgency scale [0, 1] has a well-defined midpoint 0.5
+        where the reflex should fire — this is not an arbitrary threshold.
+        Random-init floor: 0.0% (both conditions fail).
         """
         episodes = []
         threat_vals = torch.linspace(-1.0, 1.0, n)
@@ -246,7 +251,9 @@ class SpecGenerator:
         def _pred(outputs: torch.Tensor) -> list[bool]:
             urgencies = outputs[:, 39].sigmoid()
             rho = self._spearman_rho(threat_vals_saved, urgencies)
-            return [rho > 0.8] * n
+            n_high = max(1, n // 4)
+            top_q = urgencies[-n_high:].mean().item()
+            return [rho > 0.8 and top_q > 0.5] * n
 
         return SpecDataset(
             name="threat_urgency",
