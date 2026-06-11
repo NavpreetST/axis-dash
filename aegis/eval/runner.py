@@ -21,6 +21,7 @@ from pathlib import Path
 import numpy as np
 
 from aegis.observability.paths import NCP_TRACE_PATH
+from aegis.eval.spec_generator import SpecDataset
 
 log = logging.getLogger("eval.runner")
 
@@ -194,6 +195,60 @@ def run_eval(path: Path = NCP_TRACE_PATH) -> EvalReport:
     report.vestigial = detect_vestigial(records)
 
     return report
+
+
+# ── spec runner (replaces MSE gate with behavioral predicates) ────────────
+
+@dataclass
+class SpecReport:
+    spec: str
+    n: int
+    passed: int
+    pass_rate: float
+    details: list[dict] = field(default_factory=list)
+
+    def summary(self) -> str:
+        status = "✅" if self.passed == self.n else ("⚠️" if self.pass_rate > 0.5 else "❌")
+        return f"  {status} {self.spec}: {self.passed}/{self.n} ({self.pass_rate:.1%})"
+
+
+def run_specs(datasets: list[SpecDataset]) -> list[SpecReport]:
+    """Run brain forward pass on each spec dataset and evaluate predicates.
+
+    Lazy-imports BRAIN so this works without torch at import time.
+    """
+    from aegis.brain.ncp import BRAIN
+    import torch
+
+    device = next(BRAIN.parameters()).device
+    BRAIN.eval()
+    reports = []
+
+    for ds in datasets:
+        if not ds.episodes:
+            reports.append(SpecReport(spec=ds.name, n=0, passed=0, pass_rate=0.0, details=[]))
+            continue
+
+        inputs = ds.inputs.to(device)
+        with torch.no_grad():
+            BRAIN.hx = None
+            outputs = BRAIN(inputs.unsqueeze(1)).squeeze(1)
+
+        result = ds.evaluate(outputs.cpu())
+        reports.append(SpecReport(
+            spec=result["spec"],
+            n=result["n"],
+            passed=result["passed"],
+            pass_rate=result["pass_rate"],
+            details=result["details"],
+        ))
+
+    return reports
+
+
+def run_spec(spec_dataset: SpecDataset) -> SpecReport:
+    """Convenience wrapper for a single spec."""
+    return run_specs([spec_dataset])[0]
 
 
 def main() -> None:
