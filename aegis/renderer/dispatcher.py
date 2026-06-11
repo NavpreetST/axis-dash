@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import logging
 import os
+import math
 import time
 
 from aegis.nexus.bus import BUS
@@ -56,7 +57,7 @@ class Groq:
         return await groq.render(intent)
 
 
-class NimNano:
+class NimMid:
     """Thin wrapper around nim_mid.render()."""
     name = "nim_mid"
 
@@ -72,7 +73,7 @@ class Template:
         return await fallback.render(intent)
 
 
-CHAIN = [Gemini, NimNano, Groq, Template]
+CHAIN = [Gemini, NimMid, Groq, Template]
 _gemini_quota_exhausted = False
 
 
@@ -149,6 +150,7 @@ async def _render_with_chain(intent: dict) -> dict:
     else:
         effective_chain = [a for a in CHAIN if not (a is Gemini and _gemini_quota_exhausted)]
 
+    intent = {**intent, "urgency": urgency}
     if skip_reason:
         try:
             await eventlog.log_event(
