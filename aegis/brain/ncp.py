@@ -50,6 +50,7 @@ NEUROBUS_CAPACITY = 16
 NEUROBUS_LIVE = 6
 ACTION_EMB_DIM = 32
 ACTION_VOCAB = ["speak", "noop", "exec"]
+DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
 class NCPBrain(nn.Module):
@@ -74,7 +75,7 @@ class NCPBrain(nn.Module):
         return out
 
 
-BRAIN = NCPBrain().eval()
+BRAIN = NCPBrain().eval().to(DEVICE)
 
 def hidden_state_vec() -> list[float]:
     """Return the NCP's current hidden state h(t) as a flat list.
