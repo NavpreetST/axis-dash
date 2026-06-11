@@ -20,6 +20,7 @@ Once the cutover ships and smoke passes:
 from __future__ import annotations
 
 import logging
+import os
 import time
 
 from aegis.nexus.bus import BUS
@@ -29,6 +30,9 @@ from aegis.renderer import nim_nano
 from aegis.renderer._quota import pop_day_rollover
 
 log = logging.getLogger(__name__)
+
+_URGENCY_LOW = float(os.environ.get("AEGIS_URGENCY_LOW", "0.3"))
+_URGENCY_HIGH = float(os.environ.get("AEGIS_URGENCY_HIGH", "0.7"))
 
 
 class Gemini:
@@ -118,7 +122,38 @@ async def _render_with_chain(intent: dict) -> dict:
     last_error_class = None
     first_failed_adapter: str | None = None
     chain_names = [a.name for a in [cls() for cls in CHAIN]]
-    effective_chain = [a for a in CHAIN if not (a is Gemini and _gemini_quota_exhausted)]
+
+    urgency = intent.get("urgency", 0.5)
+    effective_chain = list(CHAIN)
+    skip_reason = None
+
+    if urgency < _URGENCY_LOW:
+        skip_reason = "gemini_skipped_low_urgency"
+        effective_chain = [a for a in CHAIN if a is not Gemini]
+    elif urgency > _URGENCY_HIGH:
+        skip_reason = "groq_direct_high_urgency"
+        effective_chain = [a for a in CHAIN if a not in (Gemini, NimNano)]
+    else:
+        effective_chain = [a for a in CHAIN if not (a is Gemini and _gemini_quota_exhausted)]
+
+    if skip_reason:
+        try:
+            await eventlog.log_event(
+                source="aegis",
+                event_type="urgency_gate",
+                payload={
+                    "where": "dispatcher",
+                    "urgency": urgency,
+                    "gate": skip_reason,
+                    "low": _URGENCY_LOW,
+                    "high": _URGENCY_HIGH,
+                },
+                severity="info",
+                sensitivity="internal",
+            )
+        except Exception:
+            log.debug("dispatcher: failed to emit urgency-gate event", exc_info=True)
+        log.info("dispatcher: %s urgency=%.3f", skip_reason, urgency)
     for adapter_cls in effective_chain:
         adapter = adapter_cls()
         try:

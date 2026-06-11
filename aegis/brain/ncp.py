@@ -27,7 +27,7 @@ from dataclasses import dataclass
 import torch
 import torch.nn as nn
 from ncps.torch import CfC
-from ncps.wirings import AutoNCP
+from ncps.wirings import NCP
 
 from aegis.nexus.bus import BUS
 from aegis.nexus.neurobus import STATE as NEURO_STATE
@@ -41,7 +41,6 @@ _CRASH_WINDOW_S = 30.0
 _last_crash_emit: float = 0.0
 
 INPUT_DIM = 388
-HIDDEN = 64
 OUTPUT_DIM = 40
 WM_SLOTS = 7
 WM_DIM = 48
@@ -52,7 +51,17 @@ ACTION_VOCAB = ["speak", "noop", "exec"]
 class NCPBrain(nn.Module):
     def __init__(self):
         super().__init__()
-        wiring = AutoNCP(HIDDEN, OUTPUT_DIM)
+        # Helios cluster mapping: inter=PFC, command=Broca, motor=action
+        # 10% sparse: fanout = 0.1 × target layer size
+        wiring = NCP(
+            inter_neurons=80,
+            command_neurons=40,
+            motor_neurons=40,
+            sensory_fanout=8,
+            inter_fanout=4,
+            recurrent_command_synapses=4,
+            motor_fanin=4,
+        )
         self.rnn = CfC(INPUT_DIM, wiring, batch_first=True)
         self.hx = None
 
