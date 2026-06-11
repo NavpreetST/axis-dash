@@ -82,7 +82,8 @@ def hidden_state_vec() -> list[float]:
         return []
     # hx can be a tuple or single tensor depending on ncps version
     h = BRAIN.hx[0] if isinstance(BRAIN.hx, tuple) else BRAIN.hx
-    return h.squeeze().tolist()
+    flat = h.squeeze().tolist()
+    return flat[:64]
 WM: deque[list[float]] = deque(maxlen=WM_SLOTS)
 LAST_ACTION_EMB = [0.0] * ACTION_EMB_DIM
 CONTEXT_TEXTS: list[str] = []

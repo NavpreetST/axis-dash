@@ -31,8 +31,13 @@ from aegis.renderer._quota import pop_day_rollover
 
 log = logging.getLogger(__name__)
 
-_URGENCY_LOW = float(os.environ.get("AEGIS_URGENCY_LOW", "0.3"))
-_URGENCY_HIGH = float(os.environ.get("AEGIS_URGENCY_HIGH", "0.7"))
+try:
+    _URGENCY_LOW = float(os.environ.get("AEGIS_URGENCY_LOW", "0.3"))
+    _URGENCY_HIGH = float(os.environ.get("AEGIS_URGENCY_HIGH", "0.7"))
+except (TypeError, ValueError):
+    _URGENCY_LOW, _URGENCY_HIGH = 0.3, 0.7
+if not (0.0 <= _URGENCY_LOW < _URGENCY_HIGH <= 1.0):
+    _URGENCY_LOW, _URGENCY_HIGH = 0.3, 0.7
 
 
 class Gemini:
