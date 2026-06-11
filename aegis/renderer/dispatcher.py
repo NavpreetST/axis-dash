@@ -20,15 +20,25 @@ Once the cutover ships and smoke passes:
 from __future__ import annotations
 
 import logging
+import os
+import math
 import time
 
 from aegis.nexus.bus import BUS
 from aegis.observability import eventlog
 from aegis.renderer import QuotaExhausted, RendererError, fallback, gemini, groq
-from aegis.renderer import nim_nano
+from aegis.renderer import nim_mid, nim_nano
 from aegis.renderer._quota import pop_day_rollover
 
 log = logging.getLogger(__name__)
+
+try:
+    _URGENCY_LOW = float(os.environ.get("AEGIS_URGENCY_LOW", "0.3"))
+    _URGENCY_HIGH = float(os.environ.get("AEGIS_URGENCY_HIGH", "0.7"))
+except (TypeError, ValueError):
+    _URGENCY_LOW, _URGENCY_HIGH = 0.3, 0.7
+if not (0.0 <= _URGENCY_LOW < _URGENCY_HIGH <= 1.0):
+    _URGENCY_LOW, _URGENCY_HIGH = 0.3, 0.7
 
 
 class Gemini:
@@ -47,12 +57,12 @@ class Groq:
         return await groq.render(intent)
 
 
-class NimNano:
-    """Thin wrapper around nim_nano.render()."""
-    name = "nim_nano"
+class NimMid:
+    """Thin wrapper around nim_mid.render()."""
+    name = "nim_mid"
 
     async def render(self, intent: dict) -> str:
-        return await nim_nano.render(intent)
+        return await nim_mid.render(intent)
 
 
 class Template:
@@ -63,7 +73,7 @@ class Template:
         return await fallback.render(intent)
 
 
-CHAIN = [Gemini, NimNano, Groq, Template]
+CHAIN = [Gemini, NimMid, Groq, Template]
 _gemini_quota_exhausted = False
 
 
@@ -99,9 +109,11 @@ async def run() -> None:
             continue
 
         import aegis.renderer as _renderer; _renderer._is_speaking = True
-        result = await _render_with_chain(intent)
-        await BUS.publish("action.speak", result)
-        _renderer._is_speaking = False
+        try:
+            result = await _render_with_chain(intent)
+            await BUS.publish("action.speak", result)
+        finally:
+            _renderer._is_speaking = False
 
 
 async def _render_with_chain(intent: dict) -> dict:
@@ -118,7 +130,47 @@ async def _render_with_chain(intent: dict) -> dict:
     last_error_class = None
     first_failed_adapter: str | None = None
     chain_names = [a.name for a in [cls() for cls in CHAIN]]
-    effective_chain = [a for a in CHAIN if not (a is Gemini and _gemini_quota_exhausted)]
+
+    urgency = intent.get("urgency", 0.5)
+    try:
+        urgency = float(urgency)
+        if not math.isfinite(urgency) or urgency < 0.0 or urgency > 1.0:
+            urgency = 0.5
+    except (TypeError, ValueError):
+        urgency = 0.5
+    effective_chain = list(CHAIN)
+    skip_reason = None
+
+    if urgency < _URGENCY_LOW:
+        skip_reason = "gemini_skipped_low_urgency"
+        effective_chain = [a for a in CHAIN if a.name != Gemini.name]
+    elif urgency > _URGENCY_HIGH:
+        # High urgency: skip Gemini (quota-limited) and NimNano (slower)
+        # to route directly to Groq for fast, quota-free response.
+        skip_reason = "groq_direct_high_urgency"
+        effective_chain = [a for a in CHAIN if a not in (Gemini, NimNano)]
+    else:
+        effective_chain = [a for a in CHAIN if not (a is Gemini and _gemini_quota_exhausted)]
+
+    intent = {**intent, "urgency": urgency}
+    if skip_reason:
+        try:
+            await eventlog.log_event(
+                source="aegis",
+                event_type="urgency_gate",
+                payload={
+                    "where": "dispatcher",
+                    "urgency": urgency,
+                    "gate": skip_reason,
+                    "low": _URGENCY_LOW,
+                    "high": _URGENCY_HIGH,
+                },
+                severity="info",
+                sensitivity="internal",
+            )
+        except Exception:
+            log.debug("dispatcher: failed to emit urgency-gate event", exc_info=True)
+        log.info("dispatcher: %s urgency=%.3f", skip_reason, urgency)
     for adapter_cls in effective_chain:
         adapter = adapter_cls()
         try:
