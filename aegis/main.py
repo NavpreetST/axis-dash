@@ -26,7 +26,16 @@ if _env.exists():
             k, v = line.split("=", 1)
             os.environ.setdefault(k.strip(), v.strip())
 
+_env2 = Path(__file__).resolve().parent.parent / ".env"
+if _env2.exists():
+    for line in _env2.read_text().splitlines():
+        line = line.strip()
+        if line and not line.startswith("#") and "=" in line:
+            k, v = line.split("=", 1)
+            os.environ.setdefault(k.strip(), v.strip())
+
 from aegis import consolidation
+from aegis import cr_watcher
 from aegis.brain import ncp
 from aegis.forge.dispatcher import ForgeDispatcher, run_poller
 from aegis.forge.gate import GateStage
@@ -362,6 +371,7 @@ async def main() -> None:
         asyncio.create_task(serve_unix_socket()),
         asyncio.create_task(_forge_reap_loop()),
         asyncio.create_task(_supabase_poll_loop()),
+        asyncio.create_task(cr_watcher.run()),
         asyncio.create_task(_supervised_consolidation()),
     ]
     if _HIVE_ENABLED:

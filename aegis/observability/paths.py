@@ -10,6 +10,7 @@ STATE_DIR = Path(os.getenv("AEGIS_STATE_DIR", "/var/lib/aegis"))
 TURNS_PATH = STATE_DIR / "turns.jsonl"
 RENDERER_STATE_PATH = STATE_DIR / "renderer_state.json"
 NEUROBUS_STATE_PATH = STATE_DIR / "neurobus_state.json"
+NCP_TRACE_PATH = STATE_DIR / "ncp_trace.jsonl"
 
 
 def atomic_write_json(path: Path, data: dict | list) -> None:

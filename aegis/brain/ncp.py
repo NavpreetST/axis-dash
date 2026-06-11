@@ -1,13 +1,14 @@
-"""Aegis NCP brain — ~200k-param Liquid Neural Network (CfC + AutoNCP wiring).
+"""Aegis NCP brain — ~200k-param Liquid Neural Network (CfC + NCP wiring).
 
-For v1, weights are random-init. Real training comes later via Crucible.
-What matters here: every tick with text input → one valid intent packet.
-
-Input vector layout (388 dims):
+input_schema_v1 — frozen 388-dim contract (2026-06-11):
   [0:336]   7 working-memory slots × 48 dims (MiniLM-compressed)
-  [336:342] 6 NeuroBus scalars
-  [342:374] last-action embedding (32 dims)
-  [374:388] 14-dim misc (time-of-day sin/cos, tick phase, padding)
+  [336:352] 16 NeuroBus scalars (6 live + 10 over-provisioned reserve for affect)
+  [352:384] last-action embedding (32 dims)
+  [384:388] 4-dim time-of-day sin/cos
+
+The 10 reserved NeuroBus slots are zero-fed at construction; they become live
+when affect sources come online. No INPUT_DIM change needed — the wiring mask
+already connects them. Zero-init preserves attractors at swap time.
 
 Output head (40 dims):
   [0:3]   action logits (speak / noop / exec)
@@ -22,13 +23,14 @@ import logging
 import math
 import time
 from collections import deque
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 
 import torch
 import torch.nn as nn
 from ncps.torch import CfC
 from ncps.wirings import NCP
 
+from aegis.brain.trace import write as write_trace
 from aegis.nexus.bus import BUS
 from aegis.nexus.neurobus import STATE as NEURO_STATE
 from aegis.observability import eventlog
@@ -44,6 +46,8 @@ INPUT_DIM = 388
 OUTPUT_DIM = 40
 WM_SLOTS = 7
 WM_DIM = 48
+NEUROBUS_CAPACITY = 16
+NEUROBUS_LIVE = 6
 ACTION_EMB_DIM = 32
 ACTION_VOCAB = ["speak", "noop", "exec"]
 
@@ -94,14 +98,14 @@ def _build_input_vec() -> torch.Tensor:
     wm_flat: list[float] = []
     for i in range(WM_SLOTS):
         wm_flat.extend(WM[i] if i < len(WM) else [0.0] * WM_DIM)
-    neuro = NEURO_STATE.vec()
+    neuro = NEURO_STATE.vec() + [0.0] * (NEUROBUS_CAPACITY - NEUROBUS_LIVE)
     t = time.time()
     misc = [
         math.sin(2 * math.pi * (t % 60) / 60),
         math.cos(2 * math.pi * (t % 60) / 60),
         math.sin(2 * math.pi * (t % 86400) / 86400),
         math.cos(2 * math.pi * (t % 86400) / 86400),
-    ] + [0.0] * 10
+    ]
     vec = wm_flat + neuro + LAST_ACTION_EMB + misc
     assert len(vec) == INPUT_DIM, f"expected {INPUT_DIM}, got {len(vec)}"
     return torch.tensor(vec, dtype=torch.float32).view(1, 1, -1)
@@ -160,13 +164,19 @@ async def run() -> None:
 
     async def consume_tick() -> None:
         global LAST_TEXT_INPUT, _last_crash_emit
+        _last_tick_ts = 0.0
         while True:
             await tick_q.get()
             if not LAST_TEXT_INPUT:
+                _last_tick_ts = time.time()
                 continue
+            now = time.time()
+            tick_dt = now - _last_tick_ts if _last_tick_ts > 0 else 0.0
+            _last_tick_ts = now
             try:
+                input_vec = _build_input_vec()
                 with torch.no_grad():
-                    out = BRAIN(_build_input_vec())
+                    out = BRAIN(input_vec)
                 intent = _decode(out)
             except Exception as e:
                 now = time.monotonic()
@@ -192,6 +202,17 @@ async def run() -> None:
                 "urgency":       intent.urgency,
                 "context_texts": list(CONTEXT_TEXTS),
             })
+            try:
+                write_trace(
+                    input_vec=input_vec.squeeze().tolist(),
+                    output=out.squeeze().tolist(),
+                    intent={"action": action, "tone": intent.tone, "urgency": intent.urgency},
+                    neurobus=asdict(NEURO_STATE),
+                    text_input=LAST_TEXT_INPUT,
+                    tick_dt=tick_dt,
+                )
+            except Exception:
+                log.debug("ncp: trace write failed", exc_info=True)
             LAST_TEXT_INPUT = ""
 
     await asyncio.gather(consume_text(), consume_mem(), consume_tick())

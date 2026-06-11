@@ -148,7 +148,7 @@ async def _render_with_chain(intent: dict) -> dict:
         # High urgency: skip Gemini (quota-limited) and NimNano (slower)
         # to route directly to Groq for fast, quota-free response.
         skip_reason = "groq_direct_high_urgency"
-        effective_chain = [a for a in CHAIN if a not in (Gemini, NimNano)]
+        effective_chain = [a for a in CHAIN if a not in (Gemini, NimMid)]
     else:
         effective_chain = [a for a in CHAIN if not (a is Gemini and _gemini_quota_exhausted)]
 

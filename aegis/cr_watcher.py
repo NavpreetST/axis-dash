@@ -1,10 +1,11 @@
-"""CR Watcher — polls open PRs for CodeRabbit CHANGES_REQUESTED and triggers forge heal."""
+"""CR Watcher — polls open PRs for CodeRabbit and triggers forge heal."""
 
 from __future__ import annotations
 
 import asyncio
 import logging
 import os
+import re
 
 import httpx
 
@@ -17,7 +18,7 @@ _POLL_INTERVAL_S = float(os.getenv("AEGIS_CR_WATCHER_INTERVAL", "60"))
 _CODERABBIT_LOGIN = "coderabbitai[bot]"
 _GITHUB_API = "https://api.github.com"
 _MAX_HEAL_ITERATIONS = int(os.getenv("FORGE_CR_MAX_ITERATIONS", "3"))
-_HEAL_ENABLED = int(os.getenv("FORGE_CR_MAX_ITERATIONS", "0")) > 0
+_HEAL_ENABLED = os.getenv("AEGIS_CR_WATCHER_ENABLED", "true").lower() in ("true", "1", "yes")
 _HEAL_URL = os.getenv("AEGIS_FORGE_HEAL_URL", "http://localhost:8080/forge/heal/0")
 _healed_prs: set[str] = set()
 
@@ -57,10 +58,7 @@ async def _process_pr(repo: str, pr: dict) -> None:
     if not cr_reviews or cr_reviews[-1].get("state", "") == "APPROVED":
         return
     review_state = cr_reviews[-1].get("state", "")
-    if review_state == "CHANGES_REQUESTED" or review_state == "COMMENTED":
-        pass  # trigger heal below
-    else:
-        return
+    if review_state not in ("CHANGES_REQUESTED", "COMMENTED"):
         return
 
     comments = await _gh_get(f"{_GITHUB_API}/repos/{repo}/pulls/{pr_number}/comments?per_page=50")
@@ -76,7 +74,10 @@ async def _process_pr(repo: str, pr: dict) -> None:
         severity="warn", sensitivity="internal",
     )
 
-    result = await _trigger_heal(repo, pr_number, branch) if _HEAL_ENABLED else {}
+    if _HEAL_ENABLED:
+        result = await _trigger_heal(repo, pr_number, branch)
+    else:
+        result = {}
     success = result.get("healed", False)
     iterations = result.get("iterations", 0)
     log.info("CR watcher: PR #%s in %s — %d findings — healed in %d iterations",
@@ -89,9 +90,8 @@ async def _process_pr(repo: str, pr: dict) -> None:
     )
 
     if iterations >= _MAX_HEAL_ITERATIONS:
-        body = latest_review.get("body", "")
-        import re
-        finding_match = re.search(r"Actionable comments posted: (\\d+)", body)
+        body = cr_reviews[-1].get("body", "")
+        finding_match = re.search(r"Actionable comments posted: (\d+)", body)
         finding_count = int(finding_match.group(1)) if finding_match else 0
         await eventlog.log_event(
             source="cr_watcher", event_type="cr_flag",
