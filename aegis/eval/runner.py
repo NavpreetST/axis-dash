@@ -200,6 +200,7 @@ def run_eval(path: Path = NCP_TRACE_PATH) -> EvalReport:
 # ── spec runner (replaces MSE gate with behavioral predicates) ────────────
 
 _HARD_GATE_NAMES = {"ablation_brain", "ablation_zero"}
+_PRECONDITION_NAMES = {"listens"}
 
 @dataclass
 class SpecReport:
@@ -208,22 +209,33 @@ class SpecReport:
     pass_rate: float
     passed: bool
     is_hard_gate: bool = False
+    is_precondition: bool = False
+    metrics: dict = field(default_factory=dict)
     details: list[dict] = field(default_factory=list)
 
     def summary(self) -> str:
         if self.is_hard_gate:
-            # Hard gates are go/no-go, not averaged into anything
             status = "✅" if self.passed else "🚨 FAIL"
             return f"  [{status}] {self.spec} (HARD GATE): {'PASS' if self.passed else 'BRAIN IS DECORATIVE'}"
+        if self.is_precondition:
+            status = "✅" if self.passed else "🚨 FAIL"
+            return f"  [{status}] {self.spec} (PRECONDITION): {'wiring OK' if self.passed else 'WIRING BROKEN — abort'}"
+        extra = ""
+        if self.metrics:
+            extra = f"  [{', '.join(f'{k}={v}' for k, v in self.metrics.items())}]"
         status = "✅" if self.passed else "❌"
-        return f"  {status} {self.spec}: {self.pass_rate:.1%} ({'PASS' if self.passed else 'FAIL'})"
+        return f"  {status} {self.spec}: {self.pass_rate:.1%} ({'PASS' if self.passed else 'FAIL'}){extra}"
 
 
 def run_specs(datasets: list[SpecDataset]) -> list[SpecReport]:
     """Run brain forward pass on each spec dataset and evaluate predicates.
 
-    Returns per-spec reports.  Hard gates (ablation) are reported with
-    is_hard_gate=True and must NEVER be averaged into a composite score.
+    Returns per-spec reports.  Callers must check preconditions first:
+      - If any precondition fails → wiring broken, abort.
+      - Hard gates (ablation) are go/no-go, never averaged.
+      - Behavioral specs are tracked individually. No pooled average exists.
+      - Each behavioral spec flipping pass→fail is a real signal, regardless
+        of the others' scores.
 
     Lazy-imports BRAIN so this works without torch at import time.
     """
@@ -257,12 +269,17 @@ def run_specs(datasets: list[SpecDataset]) -> list[SpecReport]:
             baseline_outputs=baseline_outputs.cpu() if baseline_outputs is not None else None,
         )
 
+        is_precondition = ds.name in _PRECONDITION_NAMES
         is_hard = ds.name in _HARD_GATE_NAMES
         pass_rate = result["pass_rate"]
+        metrics = result.get("metrics", {})
+
         if is_hard:
-            passed = pass_rate > 0.0  # any detectable signal means non-decorative
+            passed = pass_rate > 0.0
+        elif is_precondition:
+            passed = pass_rate > 0.0  # any detectable variance means wiring is alive
         else:
-            passed = pass_rate >= 0.8  # 80% per-spec threshold
+            passed = pass_rate >= 0.8
 
         reports.append(SpecReport(
             spec=result["spec"],
@@ -270,6 +287,8 @@ def run_specs(datasets: list[SpecDataset]) -> list[SpecReport]:
             pass_rate=pass_rate,
             passed=passed,
             is_hard_gate=is_hard,
+            is_precondition=is_precondition,
+            metrics=metrics,
             details=result["details"],
         ))
 

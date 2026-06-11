@@ -76,6 +76,7 @@ class SpecDataset:
     seed: int
     version: str = ""
     baseline_inputs: torch.Tensor | None = None
+    is_precondition: bool = False  # True for liveness checks (listens), not behavioral specs
 
     def __post_init__(self):
         self.version = _version_stamp(self.seed, self.name)
@@ -98,6 +99,7 @@ class SpecDataset:
             {"idx": i, "passed": p, "meta": ep.metadata}
             for i, (p, ep) in enumerate(zip(passed_mask, self.episodes))
         ]
+        metrics = getattr(self.predicate, "_metrics", {})
         return {
             "spec": self.name,
             "version": self.version,
@@ -105,6 +107,7 @@ class SpecDataset:
             "passed": passed,
             "pass_rate": passed / max(len(self.episodes), 1),
             "details": details,
+            "metrics": metrics,
         }
 
 
@@ -209,9 +212,9 @@ class SpecGenerator:
     def threat_urgency(self, n: int = 512) -> SpecDataset:
         """Sweep NeuroBus threat value, hold everything else fixed.
 
-        Predicate: Spearman ρ(threat, urgency) > 0.8 AND
-                   top-quartile mean urgency > 0.5.
-        Ordinal, robust. Replaces brittle "monotonic non-decreasing."
+        Predicate: Spearman ρ(threat, urgency) > 0.8.
+        ρ is properly ordinal — ranks matter, not magnitudes.
+        The threshold 0.8 is set against the empirical floor (ρ ≈ 0 at random init).
         """
         episodes = []
         threat_vals = torch.linspace(-1.0, 1.0, n)
@@ -243,10 +246,7 @@ class SpecGenerator:
         def _pred(outputs: torch.Tensor) -> list[bool]:
             urgencies = outputs[:, 39].sigmoid()
             rho = self._spearman_rho(threat_vals_saved, urgencies)
-            n_high = max(1, n // 4)
-            top_q = urgencies[-n_high:].mean().item()
-            passed = rho > 0.8 and top_q > 0.5
-            return [passed] * n
+            return [rho > 0.8] * n
 
         return SpecDataset(
             name="threat_urgency",
@@ -305,8 +305,8 @@ class SpecGenerator:
             episodes=episodes,
             predicate=_pred,
             seed=self._seed,
+            is_precondition=True,
         )
-        # replicate baseline N times so batch variance is measurable
         ds.baseline_inputs = baseline_inp.unsqueeze(0).expand(n, -1)
         return ds
 
@@ -322,6 +322,11 @@ class SpecGenerator:
         The distractor baseline is computed per episode as the mean cosine
         between the cue and 32 unrelated distractors.  This replaces the
         brittle 0.8 absolute threshold.
+
+        The key metric is the MEMORY HORIZON: the largest N where the cosine
+        margin stays above 0.15.  This is reported as `metrics.memory_horizon`
+        alongside the pass/fail boolean.  A horizon that grows with training
+        is the real signal; the boolean is a secondary indicator.
         """
         episodes = []
         cues = []
@@ -354,9 +359,9 @@ class SpecGenerator:
         def _pred(outputs: torch.Tensor) -> list[bool]:
             recalled = outputs[:, 3:35]
             results = []
+            margins_by_horizon: dict[int, list[float]] = {}
             for i, cue in enumerate(cues_tensor):
                 cos = F.cosine_similarity(recalled[i].unsqueeze(0), cue.unsqueeze(0)).item()
-                # distractor baseline: mean cosine between this cue and 32 random distractors
                 rng = torch.Generator()
                 rng.manual_seed(i)
                 distractors = torch.randn(32, 32, generator=rng)
@@ -366,7 +371,25 @@ class SpecGenerator:
                     distractors,
                 ).mean().item()
                 margin = cos - baseline
+                h = episodes[i].metadata.get("horizon", 0)
+                if h not in margins_by_horizon:
+                    margins_by_horizon[h] = []
+                margins_by_horizon[h].append(margin)
                 results.append(margin > 0.15)
+
+            # memory horizon: largest N where mean margin stays above 0.15
+            horizon_margins = sorted(
+                ((h, sum(ms) / len(ms)) for h, ms in margins_by_horizon.items()),
+                key=lambda x: x[0],
+            )
+            memory_horizon = 0
+            for h, mean_margin in horizon_margins:
+                if mean_margin > 0.15:
+                    memory_horizon = h
+                else:
+                    break
+
+            _pred._metrics = {"memory_horizon": memory_horizon, "max_horizon_tested": max_horizon}
             return results
 
         return SpecDataset(
@@ -482,19 +505,26 @@ class SpecGenerator:
         This spec NEVER appears in any training seed's output.  It is an
         eval-only compositional generalization test.
 
+        Predicate: Spearman ρ(threat, urgency) > 0.8 — same as threat_urgency.
+        The threat→urgency reflex is isolated by using ρ, not a base-rate
+        urgency threshold.  This ensures the floor is ~0% (same as threat_urgency),
+        not polluted by the always-speak nudge's mid-range urgency.
+
         Raises ValueError if seed is not in EVAL_SEED_NAMESPACE.
         """
         self._assert_eval("compositional_holdout")
 
         episodes = []
+        threat_vals = []
         base = self._empty_input()
         self._fill_wm(base, [self._wm_slot() for _ in range(WM_SLOTS)])
         base[352:384] = self._randn(ACTION_EMB_DIM, scale=0.2)
 
         for i in range(n):
             inp = base.clone()
-            # threat high
-            self._set_neuro(inp, {2: self._rand(1, lo=0.6, hi=1.0).item()})
+            threat = self._rand(1, lo=0.6, hi=1.0).item()
+            self._set_neuro(inp, {2: threat})
+            threat_vals.append(threat)
             # 3am: time sin/cos near midnight
             inp[384] = -0.8
             inp[385] = -0.6
@@ -512,12 +542,15 @@ class SpecGenerator:
             episodes.append(SpecEpisode(
                 input_vec=inp,
                 expected=expected,
-                metadata={"idx": i, "threat_high": True, "off_hours": True},
+                metadata={"idx": i, "threat": threat, "off_hours": True},
             ))
+
+        threat_tensor = torch.tensor(threat_vals)
 
         def _pred(outputs: torch.Tensor, **kw) -> list[bool]:
             urgencies = outputs[:, 39].sigmoid()
-            return [u.item() > 0.5 for u in urgencies]
+            rho = self._spearman_rho(threat_tensor, urgencies)
+            return [rho > 0.8] * n
 
         return SpecDataset(
             name="compositional_holdout",
@@ -526,12 +559,35 @@ class SpecGenerator:
             seed=self._seed,
         )
 
-    # ── mixed: all specs in one dataset (for curriculum training) ─────────
+    # ── preconditions (liveness checks, not behavioral specs) ───────────
+
+    def preconditions(self, n: int = 256) -> list[SpecDataset]:
+        """Liveness checks that gate whether eval is valid to run at all.
+
+        listens failing → wiring broken → abort eval.
+        These are NOT behavioral capabilities. Never averaged into a behavioral score.
+        """
+        return [self.listens(n)]
+
+    # ── behavioral specs (the actual gate) ──────────────────────────────
+
+    def behavioral_specs(self, n_per_spec: int = 256) -> list[SpecDataset]:
+        """All behavioral specs for the pass/fail gate.
+
+        Excludes compositional_holdout (eval-only) and preconditions (liveness).
+        """
+        return [
+            self.threat_urgency(n_per_spec),
+            self.n_tick_memory(n_per_spec),
+            self.calibration(n_per_spec),
+        ]
+
+    # ── mixed: all trainable specs for curriculum training ──────────────
 
     def mixed(self, n_per_spec: int = 256) -> list[SpecDataset]:
-        """All specs combined into one training curriculum.
+        """All trainable specs for curriculum training.
 
-        Excludes compositional_holdout (eval-only).
+        Includes listens for diversity.  Excludes compositional_holdout (eval-only).
         """
         return [
             self.threat_urgency(n_per_spec),
