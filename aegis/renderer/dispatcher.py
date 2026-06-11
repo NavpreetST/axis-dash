@@ -26,7 +26,7 @@ import time
 from aegis.nexus.bus import BUS
 from aegis.observability import eventlog
 from aegis.renderer import QuotaExhausted, RendererError, fallback, gemini, groq
-from aegis.renderer import nim_nano
+from aegis.renderer import nim_mid, nim_nano
 from aegis.renderer._quota import pop_day_rollover
 
 log = logging.getLogger(__name__)
@@ -52,11 +52,11 @@ class Groq:
 
 
 class NimNano:
-    """Thin wrapper around nim_nano.render()."""
-    name = "nim_nano"
+    """Thin wrapper around nim_mid.render()."""
+    name = "nim_mid"
 
     async def render(self, intent: dict) -> str:
-        return await nim_nano.render(intent)
+        return await nim_mid.render(intent)
 
 
 class Template:
@@ -124,13 +124,21 @@ async def _render_with_chain(intent: dict) -> dict:
     chain_names = [a.name for a in [cls() for cls in CHAIN]]
 
     urgency = intent.get("urgency", 0.5)
+    try:
+        urgency = float(urgency)
+        if not math.isfinite(urgency) or urgency < 0.0 or urgency > 1.0:
+            urgency = 0.5
+    except (TypeError, ValueError):
+        urgency = 0.5
     effective_chain = list(CHAIN)
     skip_reason = None
 
     if urgency < _URGENCY_LOW:
         skip_reason = "gemini_skipped_low_urgency"
-        effective_chain = [a for a in CHAIN if a is not Gemini]
+        effective_chain = [a for a in CHAIN if a.name != Gemini.name]
     elif urgency > _URGENCY_HIGH:
+        # High urgency: skip Gemini (quota-limited) and NimNano (slower)
+        # to route directly to Groq for fast, quota-free response.
         skip_reason = "groq_direct_high_urgency"
         effective_chain = [a for a in CHAIN if a not in (Gemini, NimNano)]
     else:
