@@ -114,21 +114,29 @@ jobs:
             const { data: reviews } = await github.paginate(
             github.rest.pulls.listReviews,
             { owner: context.repo.owner, repo: context.repo.repo, pull_number: context.issue.number }
-          );
-          const cr = [...reviews].reverse().find(r => r.user?.login === 'coderabbitai[bot]');
-          if (context.eventName !== 'pull_request') {
+            });
+            const cr = [...reviews].reverse().find(r => r.user?.login === 'coderabbitai[bot]');
+
+            if (context.eventName !== 'pull_request') {
+
             console.log('Not a pull_request event — skipping CodeRabbit check.');
             return;
-          }
-          if (!cr) {
+            }
+
+            if (!cr) {
+
             core.setFailed('No CodeRabbit review found — block until review completes.');
             return;
-          }
-          if (cr.state !== 'APPROVED') {
+            }
+
+            if (cr.state !== 'APPROVED') {
+
             core.setFailed(`CodeRabbit state is "${cr.state}" — every comment must be reviewed before merge.`);
             return;
-          }
-          console.log('CodeRabbit:', cr.state, '✅');
+            }
+
+            console.log('CodeRabbit:', cr.state, '✅');
+
 
   # ── Gate 4: Drift / Arch Guard (BLOCKING) ──────────────────────────────
   drift-guard:
