@@ -109,9 +109,11 @@ async def run() -> None:
             continue
 
         import aegis.renderer as _renderer; _renderer._is_speaking = True
-        result = await _render_with_chain(intent)
-        await BUS.publish("action.speak", result)
-        _renderer._is_speaking = False
+        try:
+            result = await _render_with_chain(intent)
+            await BUS.publish("action.speak", result)
+        finally:
+            _renderer._is_speaking = False
 
 
 async def _render_with_chain(intent: dict) -> dict:
