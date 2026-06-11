@@ -114,7 +114,7 @@ jobs:
             const { data: reviews } = await github.paginate(
             github.rest.pulls.listReviews,
             { owner: context.repo.owner, repo: context.repo.repo, pull_number: context.issue.number }
-            });
+            );
             const cr = [...reviews].reverse().find(r => r.user?.login === 'coderabbitai[bot]');
 
             if (context.eventName !== 'pull_request') {
